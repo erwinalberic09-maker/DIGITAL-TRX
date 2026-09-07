@@ -1,0 +1,155 @@
+// Styles spécifiques au module Caisse Transimex
+// Conforme au design épuré, minimaliste et fidèle à la maquette Odoo
+
+.cashier-page {
+  font-family: inherit;
+  color: var(--app-text);
+
+  #back-to-dashboard-btn {
+    background-color: var(--app-surface);
+    color: var(--app-text);
+    border-color: var(--app-border);
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+
+    &:hover {
+      background-color: var(--app-surface-hover);
+      color: var(--odoo-text-teal);
+    }
+  }
+
+  // Tableau
+  table {
+    border-color: var(--app-border);
+
+    thead tr {
+      border-color: var(--app-border) !important;
+
+      th {
+        color: var(--app-text-muted) !important;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+
+        button, span {
+          color: var(--app-text-muted);
+        }
+
+        mat-icon {
+          color: var(--app-text-subtle);
+        }
+      }
+    }
+
+    tbody {
+      border-color: var(--app-border-subtle) !important;
+
+      tr {
+        border-color: var(--app-border-subtle) !important;
+
+        &:hover {
+          background-color: var(--app-surface-hover) !important;
+        }
+
+        td {
+          vertical-align: middle;
+          color: var(--app-text);
+
+          span:not(.text-rose-500):not(.text-emerald-700):not(.text-blue-800) {
+            color: inherit;
+          }
+        }
+      }
+    }
+  }
+
+  // Checkbox stylisée discrète
+  input[type="checkbox"] {
+    accent-color: var(--odoo-text-teal, #008f8c);
+    transition: transform 0.15s ease;
+
+    &:active {
+      transform: scale(0.92);
+    }
+  }
+
+  // Ligne d'ajout rapide (inline editable)
+  #inline-add-row {
+    background-color: rgba(245, 158, 11, 0.08);
+    border-color: rgba(245, 158, 11, 0.25);
+
+    input, select {
+      color: var(--app-text);
+
+      &::placeholder {
+        color: var(--app-text-muted);
+      }
+
+      option {
+        background-color: var(--app-surface, #2b2f33);
+        color: var(--app-text, #ffffff);
+      }
+    }
+  }
+
+  // Micro-animations sur les boutons de pagination
+  #cashier-prev-page-btn,
+  #cashier-next-page-btn {
+    transition: all 0.2s ease-in-out;
+    &:not(:disabled):hover {
+      transform: scale(1.1);
+    }
+  }
+
+  // Animation d'ouverture modale
+  dialog,
+  [role="dialog"] > div {
+    animation: cashierModalFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+// Adaptations spécifiques mode sombre
+:host-context(.dark),
+:host-context([data-theme="dark"]) {
+  .cashier-page {
+    #inline-add-row {
+      background-color: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.35);
+    }
+
+    .bg-blue-50\/80 {
+      background-color: rgba(37, 99, 235, 0.18) !important;
+      color: #93c5fd !important;
+      border-color: rgba(59, 130, 246, 0.4) !important;
+    }
+
+    .text-slate-900,
+    .text-slate-800,
+    .text-slate-700 {
+      color: var(--app-text) !important;
+    }
+
+    .text-slate-600,
+    .text-slate-500 {
+      color: var(--app-text-muted) !important;
+    }
+
+    .text-slate-400 {
+      color: var(--app-text-subtle) !important;
+    }
+
+    .text-emerald-700 {
+      color: #34d399 !important;
+    }
+  }
+}
+
+@keyframes cashierModalFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+

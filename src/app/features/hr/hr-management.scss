@@ -1,0 +1,80 @@
+:host {
+  display: block;
+  width: 100%;
+}
+
+:host-context(.dark),
+:host-context([data-theme="dark"]) {
+  #hr-management-container {
+    color: var(--app-text, #f1f5f9);
+
+    .bg-white {
+      background-color: var(--app-surface, #2b2f33) !important;
+      border-color: var(--app-border, #343a40) !important;
+      color: var(--app-text, #f1f5f9);
+    }
+
+    h1, h3 {
+      color: var(--app-text, #f1f5f9) !important;
+    }
+
+    p {
+      color: var(--app-text-muted, #94a3b8);
+    }
+
+    .border-slate-100,
+    .border-slate-200 {
+      border-color: var(--app-border, #343a40) !important;
+    }
+
+    // Champs de recherche et filtres
+    #hr-search-input,
+    #hr-dept-filter {
+      background-color: var(--odoo-bg-search, #1a1d20);
+      border-color: var(--app-border, #343a40);
+      color: var(--app-text, #ffffff);
+
+      &::placeholder {
+        color: var(--app-text-muted, #94a3b8);
+      }
+
+      option {
+        background-color: var(--app-surface, #2b2f33);
+        color: var(--app-text, #ffffff);
+      }
+    }
+
+    // Fiches collaborateurs
+    [id^="hr-card-"] {
+      &:hover {
+        border-color: var(--odoo-text-teal, #00a09d) !important;
+        background-color: var(--app-surface-hover, #343a40) !important;
+      }
+
+      .text-slate-800 {
+        color: var(--app-text, #f1f5f9) !important;
+      }
+
+      .text-slate-600,
+      .text-slate-500 {
+        color: var(--app-text-muted, #94a3b8) !important;
+      }
+
+      .text-slate-400 {
+        color: var(--app-text-subtle, #64748b) !important;
+      }
+
+      .bg-slate-100 {
+        background-color: rgba(255, 255, 255, 0.08) !important;
+        color: var(--app-text, #f1f5f9) !important;
+        border-color: var(--app-border, #343a40) !important;
+      }
+
+      .bg-slate-200 {
+        background-color: rgba(255, 255, 255, 0.15) !important;
+        color: #ffffff !important;
+      }
+    }
+  }
+}
+

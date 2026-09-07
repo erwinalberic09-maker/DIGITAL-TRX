@@ -1,0 +1,163 @@
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { CashierManagement } from './cashier-management';
+import { CashierService } from '../../core/services/cashier.service';
+import { SupabaseService } from '../../core/services/supabase.service';
+import { AuthService } from '../../core/services/auth.service';
+
+describe('CashierManagement', () => {
+  let component: CashierManagement;
+  let fixture: ComponentFixture<CashierManagement>;
+  let service: CashierService;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      imports: [CashierManagement],
+      providers: [
+        CashierService,
+        SupabaseService,
+        {
+          provide: AuthService,
+          useValue: {
+            currentUser: () => ({ id: 'usr-1', email: 'caissiere@transmex.cm', role: 'caissiere' }),
+            token: () => 'mock-jwt-token',
+          },
+        },
+      ],
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(CashierManagement);
+    component = fixture.componentInstance;
+    service = TestBed.inject(CashierService);
+    fixture.detectChanges();
+  });
+
+  it('devrait créer le composant', () => {
+    expect(component).toBeTruthy();
+  });
+
+  it('devrait être initialisé avec une caisse vide par défaut', () => {
+    expect(component.pagedTransactions().length).toBe(0);
+    expect(component.currentBalance()).toBe(0);
+    expect(component.paginationLabel()).toBe('00-00 / 00');
+  });
+
+  it('devrait ouvrir et fermer la ligne de saisie horizontale inline', () => {
+    expect(component.isAddingRow()).toBe(false);
+
+    component.startAddInline();
+    expect(component.isAddingRow()).toBe(true);
+
+    component.cancelAddInline();
+    expect(component.isAddingRow()).toBe(false);
+  });
+
+  it('devrait formater correctement les montants monétaires en FCFA', () => {
+    expect(component.formatCurrency(500000)).toContain('500 000 FCFA');
+    expect(component.formatCurrency(-45000)).toContain('-45 000 FCFA');
+    expect(component.formatSolde(455000)).toContain('455 000');
+  });
+
+  it('devrait soumettre une transaction valide de type Administration', async () => {
+    component.startAddInline();
+    component.transactionForm.patchValue({
+      libelle: 'Fournitures de bureau',
+      category: 'sortie',
+      montant: 25000,
+      typeTransaction: 'Administration',
+    });
+
+    await component.submitInlineTransaction();
+
+    expect(component.isAddingRow()).toBe(false);
+    expect(service.allTransactions().length).toBe(1);
+    expect(component.currentBalance()).toBe(-25000);
+  });
+
+  it('devrait exiger le matricule et la quantité lorsque le type est Opérations', async () => {
+    component.startAddInline();
+    component.transactionForm.patchValue({
+      libelle: 'Carburant citerne',
+      category: 'sortie',
+      montant: 150000,
+      typeTransaction: 'Opérations',
+      matriculeVehicule: '',
+      quantity: null,
+    });
+
+    expect(component.transactionForm.invalid).toBe(true);
+
+    component.transactionForm.patchValue({
+      matriculeVehicule: 'LT-842-AB',
+      quantity: 50,
+    });
+
+    expect(component.transactionForm.valid).toBe(true);
+
+    await component.submitInlineTransaction();
+    expect(component.isAddingRow()).toBe(false);
+  });
+
+  it('devrait ouvrir le mode édition en ligne lors du double-clic sur une transaction', () => {
+    const tx = {
+      id: 'tx-100',
+      date: '06/09/2026',
+      libelle: 'Réparation pneu',
+      typeTransaction: 'Administration' as const,
+      typeDescription: '',
+      category: 'sortie' as const,
+      matriculeVehicule: '',
+      employee: 'Mamadou',
+      quantity: undefined,
+      montant: -15000,
+      soldeApres: -15000,
+      selected: false,
+    };
+
+    expect(component.editingTxId()).toBeNull();
+
+    component.startInlineEdit(tx);
+
+    expect(component.editingTxId()).toBe('tx-100');
+    expect(component.editTransactionForm.get('libelle')?.value).toBe('Réparation pneu');
+    expect(component.editTransactionForm.get('montant')?.value).toBe(15000);
+    expect(component.editTransactionForm.get('category')?.value).toBe('sortie');
+    expect(component.editTransactionForm.get('employee')?.value).toBe('Mamadou');
+
+    component.cancelInlineEdit();
+    expect(component.editingTxId()).toBeNull();
+  });
+
+  it('devrait soumettre la modification d’une transaction existante', async () => {
+    // 1. Ajouter une transaction
+    component.startAddInline();
+    component.transactionForm.patchValue({
+      libelle: 'Fournitures de bureau',
+      category: 'sortie',
+      montant: 20000,
+      typeTransaction: 'Administration',
+    });
+    await component.submitInlineTransaction();
+
+    const createdTx = service.allTransactions()[0];
+    expect(createdTx).toBeTruthy();
+
+    // 2. Double-cliquer pour modifier
+    component.startInlineEdit(createdTx);
+    expect(component.editingTxId()).toBe(createdTx.id);
+
+    // 3. Modifier le libellé et le montant
+    component.editTransactionForm.patchValue({
+      libelle: 'Fournitures de bureau modifiées',
+      montant: 30000,
+    });
+
+    await component.submitInlineEdit();
+
+    // 4. Vérifier la mise à jour
+    expect(component.editingTxId()).toBeNull();
+    const updatedTx = service.allTransactions()[0];
+    expect(updatedTx.libelle).toBe('Fournitures de bureau modifiées');
+    expect(updatedTx.montant).toBe(-30000);
+    expect(component.currentBalance()).toBe(-30000);
+  });
+});
