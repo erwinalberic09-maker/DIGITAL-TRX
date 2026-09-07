@@ -1,6 +1,6 @@
-import { Injectable, PLATFORM_ID, inject, signal, computed, makeStateKey, TransferState } from '@angular/core';
+import { Injectable, PLATFORM_ID, inject, signal, computed, makeStateKey, TransferState, REQUEST, RESPONSE_INIT } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
-import { createBrowserClient, createServerClient } from '@supabase/ssr';
+import { createBrowserClient, createServerClient, parseCookieHeader, serializeCookieHeader } from '@supabase/ssr';
 import { SupabaseClient } from '@supabase/supabase-js';
 
 export interface SupabaseConfig {
@@ -17,6 +17,10 @@ export class SupabaseService {
   private readonly platformId = inject(PLATFORM_ID);
   private readonly isBrowser = isPlatformBrowser(this.platformId);
   private readonly transferState = inject(TransferState);
+
+  // Uniquement peuplés pendant un rendu SSR ; null/undefined en CSR/navigateur
+  private readonly serverRequest = inject(REQUEST, { optional: true }) as Request | null;
+  private readonly responseInit = inject(RESPONSE_INIT, { optional: true }) as { headers?: HeadersInit } | null;
 
   private client: SupabaseClient | null = null;
   private readonly _isConfigured = signal<boolean>(false);
@@ -132,46 +136,56 @@ export class SupabaseService {
     this._isConfigured.set(isValid);
     this._supabaseUrl.set(url);
 
-    if (isValid) {
-      try {
-        if (this.isBrowser) {
-          // Client Navigateur : createBrowserClient gère document.cookie + localStorage avec rafraîchissement automatique
-          this.client = createBrowserClient(url, key, {
-            auth: {
-              persistSession: true,
-              autoRefreshToken: true,
-              detectSessionInUrl: true,
-              flowType: 'pkce',
-            },
-            cookieOptions: {
-              name: 'sb-auth-token',
-              maxAge: 365 * 24 * 60 * 60,
-              domain: '',
-              sameSite: 'lax',
-              path: '/',
-            },
-          });
-        } else {
-          // Client Serveur (SSR)
-          this.client = createServerClient(url, key, {
-            auth: {
-              persistSession: true,
-              autoRefreshToken: true,
-            },
-            cookies: {
-              getAll: () => [],
-              setAll: () => {
-                // Pas d'écriture de cookies côté serveur en SSR
-              },
-            },
-          });
-        }
-      } catch {
-        this.client = null;
-        this._isConfigured.set(false);
-      }
-    } else {
+    if (!isValid) {
       this.client = null;
+      return;
+    }
+
+    try {
+      if (this.isBrowser) {
+        // Client Navigateur : createBrowserClient gère document.cookie + localStorage avec rafraîchissement automatique
+        this.client = createBrowserClient(url, key, {
+          auth: {
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: true,
+            flowType: 'pkce',
+          },
+          cookieOptions: {
+            name: 'sb-auth-token',
+            maxAge: 365 * 24 * 60 * 60,
+            domain: '',
+            sameSite: 'lax',
+            path: '/',
+          },
+        });
+      } else {
+        // Client Serveur (SSR) : lit les vrais cookies de la requête entrante
+        // via le token REQUEST (Fetch API Request) fourni par @angular/ssr,
+        // et transmet les cookies rafraîchis dans la réponse via RESPONSE_INIT.
+        const cookieHeader = this.serverRequest?.headers.get('cookie') ?? '';
+
+        this.client = createServerClient(url, key, {
+          auth: {
+            persistSession: true,
+            autoRefreshToken: true,
+          },
+          cookies: {
+            getAll: () => parseCookieHeader(cookieHeader),
+            setAll: (cookiesToSet) => {
+              if (!this.responseInit) return;
+              const headers = new Headers(this.responseInit.headers ?? undefined);
+              for (const { name, value, options } of cookiesToSet) {
+                headers.append('Set-Cookie', serializeCookieHeader(name, value, options));
+              }
+              this.responseInit.headers = headers;
+            },
+          },
+        });
+      }
+    } catch {
+      this.client = null;
+      this._isConfigured.set(false);
     }
   }
 }

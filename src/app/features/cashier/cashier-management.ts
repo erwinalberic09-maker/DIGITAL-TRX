@@ -14,7 +14,6 @@ import {
   Validators,
 } from '@angular/forms';
 import { CommonModule } from '@angular/common';
-import { RouterLink } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { CashierService } from '../../core/services/cashier.service';
 import { AuthService } from '../../core/services/auth.service';
@@ -25,7 +24,7 @@ import {
 
 @Component({
   selector: 'app-cashier-management',
-  imports: [CommonModule, ReactiveFormsModule, MatIconModule, RouterLink],
+  imports: [CommonModule, ReactiveFormsModule, MatIconModule],
   templateUrl: './cashier-management.html',
   styleUrl: './cashier-management.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
