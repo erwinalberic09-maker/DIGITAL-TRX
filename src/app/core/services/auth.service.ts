@@ -206,12 +206,12 @@ export class AuthService {
       const userMetaRole = authUser?.user_metadata?.['role'] as UserRole | undefined;
       const normalizedEmail = (email || profile?.email || '').toLowerCase().trim();
 
-      // Résolution résiliente :
+      // Résolution sécurisée du rôle :
       // 1. Si email permanent admin => systématiquement 'admin'
-      // 2. Si app_metadata, profile ou user_metadata spécifie 'admin' => 'admin'
-      // 3. Sinon respecter app_metadata, profile ou user_metadata
+      // 2. Si app_metadata (scellé serveur) ou profile (protégé RLS) spécifie 'admin' => 'admin'
+      // 3. user_metadata n'est jamais utilisé pour élever les privilèges admin (modifiable côté client)
       let targetRole: UserRole = 'employe';
-      if (PERMANENT_ADMIN_EMAILS.includes(normalizedEmail) || appRole === 'admin' || profileRole === 'admin' || userMetaRole === 'admin') {
+      if (PERMANENT_ADMIN_EMAILS.includes(normalizedEmail) || appRole === 'admin' || profileRole === 'admin') {
         targetRole = 'admin';
       } else {
         targetRole = normalizeUserRole(appRole || profileRole || userMetaRole || 'employe');

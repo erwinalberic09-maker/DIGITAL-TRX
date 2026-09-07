@@ -18,8 +18,8 @@ const browserDistFolder = join(import.meta.dirname, '../browser');
 const app = express();
 const angularApp = new AngularNodeAppEngine();
 
-// Parsing JSON pour les requêtes d'API
-app.use(express.json());
+// Parsing JSON pour les requêtes d'API avec limite explicite
+app.use(express.json({ limit: '256kb' }));
 
 /**
  * Endpoint sécurisé fournissant l'URL et la clé anonyme publiques Supabase au client web.
@@ -672,6 +672,13 @@ const deleteCollaboratorHandler = async (req: express.Request, res: express.Resp
     return;
   }
 
+  // Protection anti-auto-suppression
+  const currentAdminUser = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string } | undefined;
+  if (currentAdminUser?.id && currentAdminUser.id === userId) {
+    res.status(400).json({ error: 'Action refusée : vous ne pouvez pas supprimer votre propre compte administrateur.' });
+    return;
+  }
+
   const adminClient = getSupabaseAdmin();
   if (!adminClient) {
     res.status(503).json({ error: 'Service d’administration indisponible : SUPABASE_SERVICE_ROLE_KEY non configurée' });
@@ -750,9 +757,6 @@ const getOperationsHandler = async (req: express.Request, res: express.Response)
  * Nettoie et valide les champs, vérifie l'autorisation de l'utilisateur, puis persiste dans PostgreSQL.
  */
 const saveOperationHandler = async (req: express.Request, res: express.Response): Promise<void> => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
-
   const adminClient = getSupabaseAdmin();
   if (!adminClient) {
     res.status(503).json({ error: 'Service d’administration indisponible : SUPABASE_SERVICE_ROLE_KEY manquante' });
@@ -760,13 +764,8 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
   }
 
   try {
-    let callerId: string | null = null;
-    if (token) {
-      const { data: userData } = await adminClient.auth.getUser(token);
-      if (userData?.user) {
-        callerId = userData.user.id;
-      }
-    }
+    const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string } | undefined;
+    const callerId: string | null = authenticatedUser?.id || null;
 
     const payload = req.body || {};
     const libelle = typeof payload.libelle === 'string' ? payload.libelle.trim() : '';
@@ -951,6 +950,11 @@ const deleteOperationsHandler = async (req: express.Request, res: express.Respon
       return;
     }
 
+    if (targetIds.length > 100) {
+      res.status(400).json({ error: 'Limite dépassée : impossible de supprimer plus de 100 opérations par requête' });
+      return;
+    }
+
     const { error, count } = await adminClient
       .from('cashier_transactions')
       .delete({ count: 'exact' })
@@ -973,23 +977,23 @@ const deleteOperationsHandler = async (req: express.Request, res: express.Respon
   }
 };
 
-// Déclaration des routes avec alias cahier / cashier
-app.get('/api/cahier/operations', getOperationsHandler);
-app.get('/api/cashier/transactions', getOperationsHandler);
-app.get('/api/system/operations', getOperationsHandler);
+// Déclaration des routes de caisse sécurisées par requireAuth
+app.get('/api/cahier/operations', requireAuth, getOperationsHandler);
+app.get('/api/cashier/transactions', requireAuth, getOperationsHandler);
+app.get('/api/system/operations', requireAuth, getOperationsHandler);
 
-app.post('/api/cahier/operations', saveOperationHandler);
-app.post('/api/cashier/transactions', saveOperationHandler);
+app.post('/api/cahier/operations', requireAuth, saveOperationHandler);
+app.post('/api/cashier/transactions', requireAuth, saveOperationHandler);
 
-app.put('/api/cahier/operations/:id', updateOperationHandler);
-app.put('/api/cashier/transactions/:id', updateOperationHandler);
-app.patch('/api/cahier/operations/:id', updateOperationHandler);
-app.patch('/api/cashier/transactions/:id', updateOperationHandler);
+app.put('/api/cahier/operations/:id', requireAuth, updateOperationHandler);
+app.put('/api/cashier/transactions/:id', requireAuth, updateOperationHandler);
+app.patch('/api/cahier/operations/:id', requireAuth, updateOperationHandler);
+app.patch('/api/cashier/transactions/:id', requireAuth, updateOperationHandler);
 
-app.delete('/api/cahier/operations/:id', deleteOperationsHandler);
-app.delete('/api/cashier/transactions/:id', deleteOperationsHandler);
-app.delete('/api/cahier/operations', deleteOperationsHandler);
-app.delete('/api/cashier/transactions', deleteOperationsHandler);
+app.delete('/api/cahier/operations/:id', requireAuth, deleteOperationsHandler);
+app.delete('/api/cashier/transactions/:id', requireAuth, deleteOperationsHandler);
+app.delete('/api/cahier/operations', requireAuth, deleteOperationsHandler);
+app.delete('/api/cashier/transactions', requireAuth, deleteOperationsHandler);
 
 /**
  * Example Express Rest API endpoints can be defined here.
