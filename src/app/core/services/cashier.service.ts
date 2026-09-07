@@ -36,6 +36,7 @@ export class CashierService {
   private readonly _transactions = signal<CashierTransaction[]>([]);
   private readonly _isLoading = signal<boolean>(false);
   private readonly _error = signal<string | null>(null);
+  private realtimeChannel: ReturnType<NonNullable<SupabaseService['supabase']>['channel']> | null = null;
 
   constructor() {
     // Réactivité automatique : recharger les transactions dès qu'un utilisateur est authentifié
