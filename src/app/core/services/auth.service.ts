@@ -6,6 +6,7 @@ import { SupabaseService } from './supabase.service';
 import { normalizeUserRole } from '../utils/role.utils';
 
 const CACHED_PROFILE_KEY = 'transmex_user_profile';
+const CACHED_TOKEN_KEY = 'transmex_auth_token';
 
 // Liste blanche des administrateurs système inaltérables
 const PERMANENT_ADMIN_EMAILS = [
@@ -32,12 +33,14 @@ export class AuthService {
   private readonly _token = signal<string | null>(null);
   private readonly _isLoading = signal<boolean>(false);
   private readonly _authError = signal<string | null>(null);
+  private readonly _isAuthReady = signal<boolean>(false);
 
   // Exposition en lecture seule des Signaux réactifs
   public readonly currentUser = this._currentUser.asReadonly();
   public readonly token = this._token.asReadonly();
   public readonly isLoading = this._isLoading.asReadonly();
   public readonly authError = this._authError.asReadonly();
+  public readonly isAuthReady = this._isAuthReady.asReadonly();
 
   // Signaux dérivés réactifs
   public readonly isAuthenticated = computed(() => this._currentUser() !== null);
@@ -83,11 +86,16 @@ export class AuthService {
   }
 
   /**
-   * Restaure le profil depuis localStorage pour un affichage instantané
+   * Restaure le profil et le token depuis localStorage pour un affichage instantané
    */
   private restoreCachedProfile(): void {
     if (this.isBrowser && typeof window !== 'undefined' && window.localStorage) {
       try {
+        const cachedToken = localStorage.getItem(CACHED_TOKEN_KEY);
+        if (cachedToken) {
+          this._token.set(cachedToken);
+        }
+
         const cached = localStorage.getItem(CACHED_PROFILE_KEY);
         if (cached) {
           const profile = JSON.parse(cached) as UserProfile;
@@ -107,10 +115,13 @@ export class AuthService {
     }
   }
 
-  private saveCachedProfile(profile: UserProfile): void {
+  private saveCachedProfile(profile: UserProfile, token?: string): void {
     if (this.isBrowser && typeof window !== 'undefined' && window.localStorage) {
       try {
         localStorage.setItem(CACHED_PROFILE_KEY, JSON.stringify(profile));
+        if (token) {
+          localStorage.setItem(CACHED_TOKEN_KEY, token);
+        }
       } catch {
         // Ignorer
       }
@@ -121,6 +132,7 @@ export class AuthService {
     if (this.isBrowser && typeof window !== 'undefined' && window.localStorage) {
       try {
         localStorage.removeItem(CACHED_PROFILE_KEY);
+        localStorage.removeItem(CACHED_TOKEN_KEY);
       } catch {
         // Ignorer
       }
@@ -177,6 +189,7 @@ export class AuthService {
     } catch (err) {
       console.warn('Erreur lors de la restauration de session Supabase:', err);
     } finally {
+      this._isAuthReady.set(true);
       this.sessionRestoredResolver?.();
     }
   }
@@ -393,7 +406,7 @@ export class AuthService {
   }
 
   public setLocalSession(user: UserProfile, token: string): void {
-    this.saveCachedProfile(user);
+    this.saveCachedProfile(user, token);
     this._currentUser.set(user);
     this._token.set(token);
     this._authError.set(null);

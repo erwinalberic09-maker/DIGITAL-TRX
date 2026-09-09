@@ -1,4 +1,4 @@
-import { Injectable, computed, inject, signal, effect, PLATFORM_ID } from '@angular/core';
+import { Injectable, computed, inject, signal, effect, PLATFORM_ID, OnDestroy } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import {
   CashierFilterState,
@@ -23,10 +23,14 @@ export interface CashierDbRow {
   created_at?: string;
 }
 
+// Colonnes sélectionnées selon le principe du moindre privilège (PostgREST Best Practices)
+const CASHIER_SELECTED_COLUMNS =
+  'id, date, libelle, type_transaction, type_description, category, matricule_vehicule, first_name, employee, quantity, montant, created_by';
+
 @Injectable({
   providedIn: 'root',
 })
-export class CashierService {
+export class CashierService implements OnDestroy {
   private readonly supabaseService = inject(SupabaseService);
   private readonly authService = inject(AuthService);
   private readonly platformId = inject(PLATFORM_ID);
@@ -39,13 +43,37 @@ export class CashierService {
   private realtimeChannel: ReturnType<NonNullable<SupabaseService['supabase']>['channel']> | null = null;
 
   constructor() {
-    // Réactivité automatique : recharger les transactions dès qu'un utilisateur est authentifié
+    // Réactivité automatique : recharger les transactions et initialiser Realtime dès qu'un utilisateur est authentifié
     effect(() => {
       const user = this.authService.currentUser();
       if (user && this.isBrowser) {
         this.loadTransactions();
+        this.setupRealtimeSubscription();
+      } else if (!user && this.isBrowser) {
+        this.cleanupRealtimeSubscription();
       }
     });
+
+    // Au montage initial dans le navigateur, attend la session et déclenche le chargement
+    if (this.isBrowser) {
+      this.initBrowserData();
+    }
+  }
+
+  private async initBrowserData(): Promise<void> {
+    try {
+      await this.authService.waitForSession();
+      if (this.authService.isAuthenticated()) {
+        await this.loadTransactions();
+        await this.setupRealtimeSubscription();
+      }
+    } catch (e) {
+      console.warn('Initialisation des données de caisse après refresh:', e);
+    }
+  }
+
+  ngOnDestroy(): void {
+    this.cleanupRealtimeSubscription();
   }
 
   // Filtres et pagination
@@ -137,7 +165,19 @@ export class CashierService {
     this._error.set(null);
 
     let rawRows: CashierDbRow[] | null = null;
-    const token = this.authService.token();
+    let token = this.authService.token();
+
+    // Si le token n'est pas encore dans le signal, tenter de le lire depuis la session Supabase
+    if (!token && this.supabaseService.supabase) {
+      try {
+        const { data } = await this.supabaseService.supabase.auth.getSession();
+        if (data.session?.access_token) {
+          token = data.session.access_token;
+        }
+      } catch {
+        // Ignorer
+      }
+    }
 
     // Canal 1 : API Express Serveur-Relais
     try {
@@ -171,7 +211,7 @@ export class CashierService {
         if (client) {
           const { data, error } = await client
             .from('cashier_transactions')
-            .select('*')
+            .select(CASHIER_SELECTED_COLUMNS)
             .order('date', { ascending: false });
 
           if (!error && data && Array.isArray(data)) {
@@ -503,6 +543,28 @@ export class CashierService {
   }
 
   /**
+   * Mappe une seule ligne de base de données vers le modèle applicatif
+   */
+  public mapSingleDbRow(row: CashierDbRow): CashierTransaction {
+    const numMontant = Number(row.montant) || 0;
+    return {
+      id: row.id,
+      date: this.formatDate(row.date),
+      libelle: row.libelle || '',
+      typeTransaction: row.type_transaction || '',
+      typeDescription: row.type_description || '',
+      category: (row.category || (numMontant >= 0 ? 'entree' : 'sortie')) as 'entree' | 'sortie',
+      matriculeVehicule: row.matricule_vehicule || '',
+      firstName: row.first_name || '',
+      employee: row.employee || '',
+      quantity: row.quantity !== null && row.quantity !== undefined ? Number(row.quantity) : undefined,
+      montant: numMontant,
+      soldeApres: 0,
+      selected: false,
+    };
+  }
+
+  /**
    * Mappe les enregistrements de la base de données vers le modèle applicatif
    */
   public mapDatabaseOperations(rows: CashierDbRow[]): CashierTransaction[] {
@@ -596,6 +658,95 @@ export class CashierService {
         displayedIds.has(item.id) ? { ...item, selected: select } : item
       )
     );
+  }
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * SYNCHRONISATION EN TEMPS RÉEL (SUPABASE REALTIME WEBSOCKET)
+   * ───────────────────────────────────────────────────────────────────────────
+   * Écoute les événements INSERT, UPDATE, DELETE sur la table cashier_transactions
+   * et met à jour instantanément le Signal _transactions sans rechargement.
+   */
+  private async setupRealtimeSubscription(): Promise<void> {
+    if (!this.isBrowser) return;
+
+    try {
+      await this.supabaseService.ensureInitialized();
+      const client = this.supabaseService.supabase;
+      if (!client) return;
+
+      // Éviter les souscriptions en doublon
+      if (this.realtimeChannel) {
+        return;
+      }
+
+      this.realtimeChannel = client
+        .channel('public:cashier_transactions')
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'cashier_transactions' },
+          (payload) => {
+            const newRow = payload.new as CashierDbRow;
+            if (!newRow || !newRow.id) return;
+            const mapped = this.mapSingleDbRow(newRow);
+
+            this._transactions.update((currentList) => {
+              if (currentList.some((t) => t.id === mapped.id)) {
+                return currentList;
+              }
+              return [mapped, ...currentList];
+            });
+            this.recalculateRunningBalances();
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'cashier_transactions' },
+          (payload) => {
+            const updatedRow = payload.new as CashierDbRow;
+            if (!updatedRow || !updatedRow.id) return;
+            const mapped = this.mapSingleDbRow(updatedRow);
+
+            this._transactions.update((currentList) =>
+              currentList.map((t) => (t.id === mapped.id ? { ...mapped, selected: t.selected } : t))
+            );
+            this.recalculateRunningBalances();
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'DELETE', schema: 'public', table: 'cashier_transactions' },
+          (payload) => {
+            const deletedId = (payload.old as { id?: string })?.id;
+            if (!deletedId) return;
+
+            this._transactions.update((currentList) =>
+              currentList.filter((t) => t.id !== deletedId)
+            );
+            this.recalculateRunningBalances();
+          }
+        )
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            // Canal Realtime connecté avec succès
+          } else if (status === 'CHANNEL_ERROR') {
+            console.warn('Erreur sur le canal Realtime Supabase cashier_transactions');
+          }
+        });
+    } catch (err) {
+      console.warn('Impossible d’initialiser le canal Realtime Supabase:', err);
+    }
+  }
+
+  private cleanupRealtimeSubscription(): void {
+    if (this.realtimeChannel && this.supabaseService.supabase) {
+      try {
+        this.supabaseService.supabase.removeChannel(this.realtimeChannel);
+      } catch (err) {
+        console.warn('Erreur lors du nettoyage du canal Realtime Supabase:', err);
+      }
+      this.realtimeChannel = null;
+    }
   }
 
   private formatDate(dateStr: string): string {

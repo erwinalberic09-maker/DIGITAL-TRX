@@ -732,7 +732,7 @@ const getOperationsHandler = async (req: express.Request, res: express.Response)
   try {
     const { data, error } = await adminClient
       .from('cashier_transactions')
-      .select('*')
+      .select('id, date, libelle, type_transaction, type_description, category, matricule_vehicule, first_name, employee, quantity, montant, created_by')
       .order('date', { ascending: false });
 
     if (error) {
