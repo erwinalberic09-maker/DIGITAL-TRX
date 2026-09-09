@@ -294,9 +294,13 @@
 
           <!-- Fil d'Ariane / Titre contextuel -->
           <div class="breadcrumbs hidden sm:flex flex-col ml-1 leading-tight" id="cp-breadcrumbs">
-            <span class="title text-xs font-bold text-[#00A09D]">
+            <a
+              routerLink="/dashboard"
+              class="title text-xs font-bold text-[#00A09D] hover:underline hover:text-[#00c4c0] transition-colors cursor-pointer inline-flex items-center gap-1 focus:outline-hidden focus:ring-1 focus:ring-[#00A09D] rounded-xs"
+              id="cp-breadcrumb-dashboard-link"
+              title="Retour au Tableau de bord">
               Tableau de bord
-            </span>
+            </a>
             <span class="subtitle text-[11px] text-slate-400 flex items-center gap-1">
               <span>Opérations Caisse</span>
               <mat-icon class="!text-[12px] !w-3 !h-3 text-slate-500">settings</mat-icon>

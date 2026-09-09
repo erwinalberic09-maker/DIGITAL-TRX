@@ -5,18 +5,6 @@
   font-family: inherit;
   color: var(--app-text);
 
-  #back-to-dashboard-btn {
-    background-color: var(--app-surface);
-    color: var(--app-text);
-    border-color: var(--app-border);
-    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-
-    &:hover {
-      background-color: var(--app-surface-hover);
-      color: var(--odoo-text-teal);
-    }
-  }
-
   // Tableau
   table {
     border-color: var(--app-border);
