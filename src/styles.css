@@ -5,15 +5,16 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  /* Palette Thème Clair par défaut */
+  /* Palette Thème Clair (High Contrast & Lisibilité optimale) */
   --app-bg: #f8fafc;
   --app-surface: #ffffff;
   --app-surface-hover: #f1f5f9;
-  --app-border: #e2e8f0;
-  --app-border-subtle: #f1f5f9;
+  --app-surface-active: #e2e8f0;
+  --app-border: #cbd5e1;
+  --app-border-subtle: #e2e8f0;
   --app-text: #0f172a;
-  --app-text-muted: #64748b;
-  --app-text-subtle: #94a3b8;
+  --app-text-muted: #475569;
+  --app-text-subtle: #64748b;
 
   --odoo-primary-purple: #714b67;
   --odoo-primary-purple-hover: #5d3d54;
@@ -22,24 +23,24 @@
   --odoo-status-green: #16a34a;
   --odoo-avatar-gold: #d97706;
 
-  /* Rétrocompatibilité variables Odoo en mode clair */
   --odoo-bg-dark: #ffffff;
   --odoo-bg-panel: #f8fafc;
   --odoo-bg-search: #f1f5f9;
   --odoo-text-light: #0f172a;
-  --odoo-border-color: #e2e8f0;
+  --odoo-border-color: #cbd5e1;
 }
 
-html.dark, :root[data-theme="dark"] {
-  /* Palette Odoo Dark Mode ERP */
+html.dark, :root[data-theme="dark"], .dark {
+  /* Palette Thème Sombre Odoo ERP */
   --app-bg: #212529;
   --app-surface: #2b2f33;
   --app-surface-hover: #343a40;
+  --app-surface-active: #3e444a;
   --app-border: #343a40;
   --app-border-subtle: #2b2f33;
-  --app-text: #f1f5f9;
-  --app-text-muted: #94a3b8;
-  --app-text-subtle: #64748b;
+  --app-text: #f8fafc;
+  --app-text-muted: #cbd5e1;
+  --app-text-subtle: #94a3b8;
 
   --odoo-primary-purple: #714b67;
   --odoo-primary-purple-hover: #865a7c;
@@ -51,7 +52,7 @@ html.dark, :root[data-theme="dark"] {
   --odoo-bg-dark: #212529;
   --odoo-bg-panel: #2b2f33;
   --odoo-bg-search: #1a1d20;
-  --odoo-text-light: #f1f5f9;
+  --odoo-text-light: #f8fafc;
   --odoo-border-color: #343a40;
 }
 
@@ -62,6 +63,64 @@ body {
   background-color: var(--app-bg);
   color: var(--app-text);
   transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* ========================================================================= */
+/* RÈGLES D'ADAPTATION GLOBALE MODE CLAIR / SOMBRE POUR COMPOSANTS & CARTES  */
+/* ========================================================================= */
+
+/* Adaptation des cartes en mode sombre */
+html.dark .bg-white,
+:root[data-theme="dark"] .bg-white {
+  background-color: var(--app-surface) !important;
+  color: var(--app-text) !important;
+  border-color: var(--app-border) !important;
+}
+
+/* Adaptation des fonds secondaires en mode sombre */
+html.dark .bg-slate-100\/80,
+html.dark .bg-slate-100,
+html.dark .bg-slate-50,
+:root[data-theme="dark"] .bg-slate-100\/80,
+:root[data-theme="dark"] .bg-slate-100,
+:root[data-theme="dark"] .bg-slate-50 {
+  background-color: var(--app-surface-hover) !important;
+  border-color: var(--app-border) !important;
+}
+
+/* Adaptation des textes principaux et titres en mode sombre */
+html.dark .text-slate-900,
+html.dark .text-slate-800,
+html.dark .text-slate-700,
+:root[data-theme="dark"] .text-slate-900,
+:root[data-theme="dark"] .text-slate-800,
+:root[data-theme="dark"] .text-slate-700 {
+  color: var(--app-text) !important;
+}
+
+/* Adaptation des textes secondaires en mode sombre */
+html.dark .text-slate-600,
+html.dark .text-slate-500,
+:root[data-theme="dark"] .text-slate-600,
+:root[data-theme="dark"] .text-slate-500 {
+  color: var(--app-text-muted) !important;
+}
+
+html.dark .text-slate-400,
+:root[data-theme="dark"] .text-slate-400 {
+  color: var(--app-text-subtle) !important;
+}
+
+/* Adaptation des bordures en mode sombre */
+html.dark .border-slate-200,
+html.dark .border-slate-200\/80,
+html.dark .border-slate-200\/60,
+html.dark .border-slate-100,
+:root[data-theme="dark"] .border-slate-200,
+:root[data-theme="dark"] .border-slate-200\/80,
+:root[data-theme="dark"] .border-slate-200\/60,
+:root[data-theme="dark"] .border-slate-100 {
+  border-color: var(--app-border) !important;
 }
 
 /* Alignement et rendu des icônes Material Icons */
@@ -82,5 +141,3 @@ mat-icon {
   -webkit-font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
 }
-
-

@@ -20,9 +20,11 @@
 .topbar {
   display: flex;
   flex-direction: column;
-  background-color: #212529;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  background-color: var(--app-surface, #ffffff);
+  border-bottom: 1px solid var(--app-border, #e2e8f0);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  color: var(--app-text, #0f172a);
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 
   .topbar-left,
   .topbar-right {
@@ -31,7 +33,7 @@
   }
 
   .nav-link {
-    color: #cbd5e1;
+    color: var(--app-text-muted, #64748b);
     text-decoration: none;
     font-size: 13.5px;
     font-weight: 500;
@@ -40,16 +42,16 @@
     padding: 4px 8px;
 
     .nav-icon {
-      color: #94a3b8;
+      color: var(--app-text-subtle, #94a3b8);
       transition: color 0.15s ease;
     }
 
     &:hover {
-      color: #ffffff;
-      background-color: rgba(255, 255, 255, 0.1);
+      color: var(--app-text, #0f172a);
+      background-color: var(--app-surface-hover, rgba(0, 0, 0, 0.05));
 
       .nav-icon {
-        color: #ffffff;
+        color: var(--app-text, #0f172a);
       }
     }
 
@@ -70,12 +72,12 @@
     cursor: pointer;
     background: transparent;
     border: none;
-    color: #cbd5e1;
+    color: var(--app-text-muted, #64748b);
     transition: background-color 0.15s ease, color 0.15s ease;
 
     &:hover {
-      background-color: rgba(255, 255, 255, 0.1);
-      color: #ffffff;
+      background-color: var(--app-surface-hover, rgba(0, 0, 0, 0.05));
+      color: var(--app-text, #0f172a);
     }
   }
 
@@ -85,25 +87,29 @@
       color: #1e293b;
       border-radius: 4px;
       font-weight: 700;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 
       .status-dot {
         background-color: var(--odoo-status-green, #28a745);
-        border: 2px solid #212529;
+        border: 2px solid var(--app-surface, #ffffff);
       }
     }
   }
 
   /* Panneau dropdown utilisateur adapté clair / sombre */
   .user-dropdown-panel {
-    background-color: var(--app-surface, #2b2f33);
-    border: 1px solid var(--app-border, #343a40);
+    background-color: var(--app-surface, #ffffff);
+    border: 1px solid var(--app-border, #e2e8f0);
     animation: dropdownFadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
     transform-origin: top right;
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
 
     .dropdown-item {
       transition: background-color 0.15s ease, color 0.15s ease;
+
+      &:hover {
+        background-color: var(--app-surface-hover, rgba(0, 0, 0, 0.05));
+      }
 
       &:focus-visible {
         outline: 2px solid var(--odoo-text-teal, #00a09d);
@@ -134,10 +140,11 @@
 .control-panel {
   display: flex;
   flex-direction: column;
-  background-color: var(--app-surface, #2b2f33);
-  border-bottom: 1px solid var(--app-border, #343a40);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
-  transition: background-color 0.2s ease, border-color 0.2s ease;
+  background-color: var(--app-surface, #ffffff);
+  border-bottom: 1px solid var(--app-border, #e2e8f0);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
+  color: var(--app-text, #0f172a);
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 
   .cp-left,
   .cp-right {
@@ -167,15 +174,15 @@
 
   /* Bouton secondaire */
   .btn-secondary {
-    background-color: var(--app-surface-hover, rgba(255, 255, 255, 0.09));
-    color: var(--app-text, #f1f5f9);
-    border: 1px solid var(--app-border, rgba(255, 255, 255, 0.15));
+    background-color: var(--app-surface-hover, #f1f5f9);
+    color: var(--app-text, #0f172a);
+    border: 1px solid var(--app-border, #cbd5e1);
     border-radius: 4px;
     font-weight: 500;
     transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 
     &:hover {
-      background-color: var(--app-border, rgba(255, 255, 255, 0.16));
+      background-color: var(--app-border, #e2e8f0);
     }
 
     &:focus-visible {
@@ -192,19 +199,20 @@
     }
 
     .subtitle {
-      color: var(--app-text-muted, #94a3b8);
+      color: var(--app-text-muted, #64748b);
     }
   }
 
   /* Barre de recherche facettée style Odoo */
   .search-bar {
-    background-color: var(--odoo-bg-search, #1a1d20);
-    border: 1px solid var(--app-border, #343a40);
+    background-color: var(--odoo-bg-search, #f1f5f9);
+    border: 1px solid var(--app-border, #cbd5e1);
     border-radius: 4px;
     width: 100%;
     transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.2s ease;
 
     &:focus-within {
+      background-color: var(--app-surface, #ffffff);
       border-color: var(--odoo-text-teal, #00a09d);
       box-shadow: 0 0 0 1px var(--odoo-text-teal, #00a09d);
     }
@@ -212,20 +220,20 @@
     .search-tag {
       background-color: var(--odoo-primary-purple, #714b67);
       border-radius: 3px;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
       color: #ffffff;
       font-weight: 600;
 
       .tag-value {
-        color: #f1f5f9;
+        color: #f8fafc;
       }
     }
 
     input {
-      color: var(--app-text, #ffffff);
+      color: var(--app-text, #0f172a);
 
       &::placeholder {
-        color: var(--app-text-muted, #94a3b8);
+        color: var(--app-text-subtle, #94a3b8);
       }
     }
   }
@@ -237,18 +245,18 @@
     justify-content: center;
     background: transparent;
     border: 1px solid transparent;
-    color: var(--app-text-muted, #cbd5e1);
+    color: var(--app-text-muted, #64748b);
     transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 
     &:hover {
-      background-color: var(--app-surface-hover, rgba(255, 255, 255, 0.1));
-      color: var(--app-text, #ffffff);
+      background-color: var(--app-surface-hover, rgba(0, 0, 0, 0.05));
+      color: var(--app-text, #0f172a);
     }
 
     &.active {
       color: var(--odoo-text-teal, #00a09d) !important;
       border: 1px solid var(--odoo-text-teal, #00a09d);
-      background-color: rgba(0, 160, 157, 0.15);
+      background-color: rgba(0, 160, 157, 0.12);
     }
 
     &:focus-visible {
@@ -257,7 +265,3 @@
     }
   }
 }
-
-
-
-

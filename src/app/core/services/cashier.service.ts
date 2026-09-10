@@ -365,9 +365,15 @@ export class CashierService implements OnDestroy {
    */
   public async addTransaction(
     newTx: Omit<CashierTransaction, 'id' | 'soldeApres' | 'selected'>
-  ): Promise<boolean> {
-    const result = await this.saveOperationViaApi(newTx);
-    return result.success;
+  ): Promise<{ success: boolean; operation?: CashierTransaction }> {
+    return this.saveOperationViaApi(newTx);
+  }
+
+  /**
+   * Alias rétrocompatible pour la suppression des transactions sélectionnées
+   */
+  public async deleteSelectedTransactions(): Promise<boolean> {
+    return this.deleteSelected();
   }
 
   /**
@@ -651,11 +657,13 @@ export class CashierService implements OnDestroy {
     );
   }
 
-  public toggleSelectAll(select: boolean): void {
-    const displayedIds = new Set(this.pagedTransactions().map((t) => t.id));
+  public toggleSelectAll(select?: boolean): void {
+    const displayed = this.pagedTransactions();
+    const shouldSelect = select !== undefined ? select : displayed.some((t) => !t.selected);
+    const displayedIds = new Set(displayed.map((t) => t.id));
     this._transactions.update((items) =>
       items.map((item) =>
-        displayedIds.has(item.id) ? { ...item, selected: select } : item
+        displayedIds.has(item.id) ? { ...item, selected: shouldSelect } : item
       )
     );
   }

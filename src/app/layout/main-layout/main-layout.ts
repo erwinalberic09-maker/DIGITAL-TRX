@@ -86,7 +86,7 @@ export class MainLayout {
       label: 'Caisse',
       route: '/caisse',
       icon: 'point_of_sale',
-      allowedRoles: ['admin', 'manager', 'caissiere'],
+      allowedRoles: ['admin', 'caissiere'],
     },
     {
       id: 'personnel',

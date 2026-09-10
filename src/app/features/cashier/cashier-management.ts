@@ -1,12 +1,18 @@
 import {
+  AfterViewInit,
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
+  OnDestroy,
   OnInit,
+  PLATFORM_ID,
+  ViewChild,
   computed,
   effect,
   inject,
   signal,
 } from '@angular/core';
+import { isPlatformBrowser } from '@angular/common';
 import {
   FormControl,
   FormGroup,
@@ -15,12 +21,40 @@ import {
 } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { MatIconModule } from '@angular/material/icon';
+import {
+  Chart,
+  LineController,
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Filler,
+  ChartConfiguration,
+} from 'chart.js';
 import { CashierService } from '../../core/services/cashier.service';
 import { AuthService } from '../../core/services/auth.service';
 import {
   CashierTransaction,
   TransactionTypeCategory,
 } from '../../core/models/cashier-transaction.model';
+
+// Enregistrement des composants nécessaires de Chart.js
+Chart.register(
+  LineController,
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Filler
+);
+
+export interface CaisseTimelineData {
+  labels: string[];
+  balances: number[];
+  descriptions: string[];
+}
 
 @Component({
   selector: 'app-cashier-management',
@@ -29,9 +63,15 @@ import {
   styleUrl: './cashier-management.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class CashierManagement implements OnInit {
+export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
+  @ViewChild('caisseChartCanvas')
+  private readonly caisseChartCanvas?: ElementRef<HTMLCanvasElement>;
+
   private readonly cashierService = inject(CashierService);
   private readonly authService = inject(AuthService);
+  private readonly platformId = inject(PLATFORM_ID);
+
+  private chartInstance: Chart | null = null;
 
   // Permissions : Seuls admin et caissiere peuvent créer/modifier/supprimer
   public readonly canEdit = computed(() => {
@@ -41,6 +81,7 @@ export class CashierManagement implements OnInit {
 
   // Données réactives issues du service
   public readonly pagedTransactions = this.cashierService.pagedTransactions;
+  public readonly allTransactions = this.cashierService.allTransactions;
   public readonly currentBalance = this.cashierService.currentBalance;
   public readonly totalCount = this.cashierService.totalCount;
   public readonly filterState = this.cashierService.filterState;
@@ -55,6 +96,45 @@ export class CashierManagement implements OnInit {
   public readonly isFilterDropdownOpen = signal<boolean>(false);
   public readonly searchControl = new FormControl<string>('', {
     nonNullable: true,
+  });
+
+  // Préparation réactive des données chronologiques pour Chart.js
+  public readonly chartData = computed<CaisseTimelineData>(() => {
+    const list = [...this.allTransactions()].sort((a, b) => {
+      const dateA = new Date(a.date).getTime() || 0;
+      const dateB = new Date(b.date).getTime() || 0;
+      return dateA - dateB;
+    });
+
+    if (list.length === 0) {
+      return {
+        labels: ['Départ', 'Aujourd’hui'],
+        balances: [0, 0],
+        descriptions: ['Solde initial', 'Solde actuel'],
+      };
+    }
+
+    let runningBalance = 0;
+    const labels: string[] = [];
+    const balances: number[] = [];
+    const descriptions: string[] = [];
+
+    for (const tx of list) {
+      runningBalance += tx.montant;
+      const parsedDate = new Date(tx.date);
+      const formattedDate = !isNaN(parsedDate.getTime())
+        ? parsedDate.toLocaleDateString('fr-FR', {
+            day: '2-digit',
+            month: 'short',
+          })
+        : tx.date || 'Opération';
+
+      labels.push(formattedDate);
+      balances.push(runningBalance);
+      descriptions.push(tx.libelle || tx.typeDescription || 'Mouvement de caisse');
+    }
+
+    return { labels, balances, descriptions };
   });
 
   // Nombre d'éléments sélectionnés
@@ -141,7 +221,7 @@ export class CashierManagement implements OnInit {
   });
 
   constructor() {
-    // Initialisation automatique du formulaire quand l'ajout est déclenché (ex: via bouton Nouveau du Layout)
+    // Initialisation automatique du formulaire quand l'ajout est déclenché
     effect(() => {
       if (this.cashierService.isAddingRow()) {
         const today = new Date();
@@ -159,6 +239,14 @@ export class CashierManagement implements OnInit {
         });
         this.isOperationsType.set(false);
         this.updateConditionalValidators(false);
+      }
+    });
+
+    // Effet réactif mettant à jour Chart.js dès que les données du CashierService changent
+    effect(() => {
+      const data = this.chartData();
+      if (this.chartInstance) {
+        this.updateChartData(data);
       }
     });
 
@@ -226,6 +314,130 @@ export class CashierManagement implements OnInit {
     );
   }
 
+  public ngAfterViewInit(): void {
+    if (isPlatformBrowser(this.platformId) && this.caisseChartCanvas?.nativeElement) {
+      this.initChart();
+    }
+  }
+
+  public ngOnDestroy(): void {
+    if (this.chartInstance) {
+      this.chartInstance.destroy();
+      this.chartInstance = null;
+    }
+  }
+
+  // Initialisation du graphique natif Chart.js
+  private initChart(): void {
+    const canvas = this.caisseChartCanvas?.nativeElement;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const data = this.chartData();
+
+    // Dégradé soigné sous la courbe (bleu Transimex)
+    const gradient = ctx.createLinearGradient(0, 0, 0, 240);
+    gradient.addColorStop(0, 'rgba(30, 58, 138, 0.22)');
+    gradient.addColorStop(1, 'rgba(30, 58, 138, 0.0)');
+
+    const config: ChartConfiguration<'line'> = {
+      type: 'line',
+      data: {
+        labels: data.labels,
+        datasets: [
+          {
+            label: 'Solde de caisse',
+            data: data.balances,
+            borderColor: '#1e3a8a',
+            borderWidth: 2.5,
+            backgroundColor: gradient,
+            fill: true,
+            tension: 0.35,
+            pointBackgroundColor: '#1e3a8a',
+            pointBorderColor: '#ffffff',
+            pointBorderWidth: 1.5,
+            pointRadius: 3,
+            pointHoverRadius: 5.5,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: {
+          padding: {
+            top: 10,
+            bottom: 6,
+            left: 6,
+            right: 12,
+          },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#0f172a',
+            titleColor: '#f8fafc',
+            bodyColor: '#cbd5e1',
+            padding: 10,
+            cornerRadius: 8,
+            callbacks: {
+              label: (context) => {
+                const val = Number(context.raw) || 0;
+                const index = context.dataIndex;
+                const desc = data.descriptions[index] ? ` (${data.descriptions[index]})` : '';
+                return `Solde : ${this.formatCurrency(val)}${desc}`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            ticks: {
+              color: '#64748b',
+              font: { size: 10, family: 'sans-serif' },
+              maxRotation: 0,
+              autoSkip: true,
+              maxTicksLimit: 7,
+            },
+          },
+          y: {
+            border: { dash: [4, 4] },
+            grid: {
+              color: 'rgba(226, 232, 240, 0.6)',
+            },
+            ticks: {
+              color: '#64748b',
+              font: { size: 10, family: 'sans-serif' },
+              callback: (value) => {
+                const num = Number(value);
+                if (Math.abs(num) >= 1_000_000) {
+                  return `${(num / 1_000_000).toFixed(1)}M`;
+                }
+                if (Math.abs(num) >= 1_000) {
+                  return `${(num / 1_000).toFixed(0)}k`;
+                }
+                return `${num}`;
+              },
+            },
+          },
+        },
+      },
+    };
+
+    this.chartInstance = new Chart(ctx, config);
+  }
+
+  private updateChartData(data: CaisseTimelineData): void {
+    if (!this.chartInstance) return;
+
+    this.chartInstance.data.labels = data.labels;
+    this.chartInstance.data.datasets[0].data = data.balances;
+    this.chartInstance.update();
+  }
+
   public refresh(): void {
     this.cashierService.loadTransactions();
   }
@@ -249,32 +461,23 @@ export class CashierManagement implements OnInit {
   }
 
   public onToggleSelectAll(): void {
-    const nextState = !this.isAllSelected();
-    this.cashierService.toggleSelectAll(nextState);
+    this.cashierService.toggleSelectAll(!this.isAllSelected());
   }
 
   public async deleteSelectedTransactions(): Promise<void> {
-    if (this.selectedCount() === 0) return;
+    const count = this.selectedCount();
+    if (count === 0) return;
+
+    const confirmed = confirm(
+      `Êtes-vous sûr de vouloir supprimer ${count} transaction(s) sélectionnée(s) ?`
+    );
+    if (!confirmed) return;
+
     this.isDeleting.set(true);
     await this.cashierService.deleteSelected();
     this.isDeleting.set(false);
   }
 
-  public prevPage(): void {
-    if (this.canPrevPage()) {
-      this.cashierService.setPageIndex(this.filterState().pageIndex - 1);
-    }
-  }
-
-  public nextPage(): void {
-    if (this.canNextPage()) {
-      this.cashierService.setPageIndex(this.filterState().pageIndex + 1);
-    }
-  }
-
-  /**
-   * Ouvre la ligne d'édition horizontale dans le tableau
-   */
   public startAddInline(): void {
     const today = new Date();
     const isoDate = today.toISOString().split('T')[0];
@@ -295,16 +498,8 @@ export class CashierManagement implements OnInit {
   }
 
   public cancelAddInline(): void {
-    this.cashierService.cancelAddTransaction();
-  }
-
-  public toggleFilterDropdown(): void {
-    this.isFilterDropdownOpen.update((v) => !v);
-  }
-
-  public applyCategoryFilter(cat: 'all' | 'entree' | 'sortie'): void {
-    this.cashierService.setCategoryFilter(cat);
-    this.isFilterDropdownOpen.set(false);
+    this.cashierService.isAddingRow.set(false);
+    this.transactionForm.reset();
   }
 
   public async submitInlineTransaction(): Promise<void> {
@@ -319,7 +514,6 @@ export class CashierManagement implements OnInit {
     const finalMontant =
       formValues.category === 'sortie' ? -Math.abs(rawMontant) : Math.abs(rawMontant);
 
-    // Formate la date sélectionnée (ex: '2026-09-05' -> '05/09/2026')
     let formattedDate = this.todayFormatted();
     if (formValues.date) {
       const parts = formValues.date.split('-');
@@ -330,7 +524,7 @@ export class CashierManagement implements OnInit {
       }
     }
 
-    const success = await this.cashierService.addTransaction({
+    const result = await this.cashierService.addTransaction({
       date: formattedDate,
       libelle: formValues.libelle,
       typeTransaction: formValues.typeTransaction,
@@ -343,37 +537,31 @@ export class CashierManagement implements OnInit {
     });
 
     this.isSubmitting.set(false);
-    if (success) {
+    if (result.success) {
       this.cancelAddInline();
     }
   }
 
-  /**
-   * Déclenche le mode édition en ligne par Double-Clic sur une ligne
-   */
   public startInlineEdit(tx: CashierTransaction): void {
     if (!this.canEdit()) return;
 
-    // Convertir date "JJ/MM/AAAA" en "AAAA-MM-JJ" pour l'input type="date"
     let isoDate = this.todayIsoDate();
     if (tx.date) {
       const parts = tx.date.split('/');
       if (parts.length === 3) {
         isoDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
-      } else if (tx.date.includes('-')) {
-        isoDate = tx.date;
       }
     }
 
     const isOps = tx.typeTransaction === 'Opérations';
     this.isEditOperationsType.set(isOps);
 
-    this.editTransactionForm.reset({
+    this.editTransactionForm.patchValue({
       date: isoDate,
       libelle: tx.libelle,
-      typeTransaction: (tx.typeTransaction as 'Opérations' | 'Administration') || 'Administration',
+      typeTransaction: isOps ? 'Opérations' : 'Administration',
       typeDescription: tx.typeDescription || '',
-      category: tx.category || (tx.montant >= 0 ? 'entree' : 'sortie'),
+      category: tx.category,
       matriculeVehicule: tx.matriculeVehicule || '',
       employee: tx.employee || '',
       quantity: tx.quantity !== undefined ? tx.quantity : null,
@@ -384,17 +572,11 @@ export class CashierManagement implements OnInit {
     this.editingTxId.set(tx.id);
   }
 
-  /**
-   * Annule l'édition en ligne
-   */
   public cancelInlineEdit(): void {
     this.editingTxId.set(null);
     this.editTransactionForm.reset();
   }
 
-  /**
-   * Sauvegarde la modification en ligne (bouton ou touche Entrée)
-   */
   public async submitInlineEdit(): Promise<void> {
     const activeId = this.editingTxId();
     if (!activeId) return;
@@ -438,9 +620,6 @@ export class CashierManagement implements OnInit {
     }
   }
 
-  /**
-   * Écoute des touches Entrée et Échap pendant l'édition
-   */
   public onEditKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter') {
       event.preventDefault();
@@ -456,5 +635,4 @@ export class CashierManagement implements OnInit {
   }
 }
 
-// Alias pour compatibilité
 export { CashierManagement as CashierManagementComponent };
