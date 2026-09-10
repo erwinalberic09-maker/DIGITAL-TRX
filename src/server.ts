@@ -6,7 +6,7 @@ import {
 } from '@angular/ssr/node';
 import express from 'express';
 import {join} from 'node:path';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import { normalizeUserRole } from './app/core/utils/role.utils';
 
@@ -69,16 +69,50 @@ function getSupabaseAdmin() {
   });
 }
 
+// Configuration des administrateurs système permanents (inviolables)
+const PERMANENT_ADMIN_EMAILS = [
+  'erwinalberic99@gmail.com',
+  'admin@transmex.cm',
+  'admin@transimex.cm',
+  'admin@transmex.com',
+];
+
 /**
- * Middleware Express d'authentification : valide le jeton Bearer
- * via Supabase Auth admin client et attache l'utilisateur à req.user.
- * FAIL-CLOSED : En cas d'indisponibilité du client d'administration, refuse la requête avec une erreur 500 explicite.
+ * Fonction centrale et sécurisée de résolution de rôle serveur (RBAC).
+ * SÉCURITÉ ABSOLUE : `user_metadata` est STRICTEMENT EXCLU de toute décision d'autorisation.
+ * 1. Email admin permanent (erwinalberic99@gmail.com, etc.) -> 'admin'
+ * 2. app_metadata.role (scellé serveur par Supabase Admin) -> si différent de 'employe'
+ * 3. public.profiles.role (table SQL sécurisée)
+ * 4. Défaut : 'employe'
  */
+export async function resolveServerRole(
+  supabaseAdmin: SupabaseClient,
+  user: { id: string; email?: string | null; app_metadata?: Record<string, unknown> }
+): Promise<'admin' | 'caissiere' | 'manager' | 'employe'> {
+  const email = (user.email || '').toLowerCase().trim();
+  if (PERMANENT_ADMIN_EMAILS.includes(email)) {
+    return 'admin';
+  }
+
+  const appRole = normalizeUserRole(user.app_metadata?.['role'] as string);
+  if (appRole !== 'employe') {
+    return appRole;
+  }
+
+  const { data: profile } = await supabaseAdmin
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  return profile?.role ? normalizeUserRole(profile.role) : 'employe';
+}
+
 /**
  * Middleware Express d'authentification : valide le jeton Bearer
  * via Supabase Auth admin client et attache l'utilisateur à req.user avec son rôle sécurisé.
  * SÉCURITÉ STRICTE : Ne fait JAMAIS confiance à `user_metadata` (éditable côté client par l'utilisateur).
- * Le rôle est extrait exclusivement de `app_metadata` (scellé serveur), de `public.profiles` ou des emails admins permanents.
+ * Le rôle est extrait exclusivement via resolveServerRole.
  * FAIL-CLOSED : En cas d'indisponibilité du client d'administration, refuse la requête avec une erreur 500 explicite.
  */
 export async function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
@@ -104,28 +138,7 @@ export async function requireAuth(req: express.Request, res: express.Response, n
     }
 
     const user = data.user;
-    const userEmail = (user.email || '').toLowerCase().trim();
-    const appRole = normalizeUserRole(user.app_metadata?.['role'] as string);
-
-    let resolvedRole = appRole;
-
-    // Si le rôle n'est pas scellé dans app_metadata, vérifier la table sécurisée profiles
-    if (resolvedRole === 'employe' && !PERMANENT_ADMIN_EMAILS.includes(userEmail)) {
-      const { data: profile } = await supabaseAdmin
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .maybeSingle();
-
-      if (profile?.role) {
-        resolvedRole = normalizeUserRole(profile.role);
-      }
-    }
-
-    // Priorité absolue aux comptes administrateurs permanents du système
-    if (PERMANENT_ADMIN_EMAILS.includes(userEmail)) {
-      resolvedRole = 'admin';
-    }
+    const resolvedRole = await resolveServerRole(supabaseAdmin, user);
 
     (req as unknown as Record<string, unknown>)['user'] = {
       id: user.id,
@@ -141,14 +154,6 @@ export async function requireAuth(req: express.Request, res: express.Response, n
     res.status(401).json({ error: message });
   }
 }
-
-// Configuration des administrateurs système permanents (inviolables)
-const PERMANENT_ADMIN_EMAILS = [
-  'erwinalberic99@gmail.com',
-  'admin@transmex.cm',
-  'admin@transimex.cm',
-  'admin@transmex.com',
-];
 
 /**
  * Middleware de contrôle d'accès basé sur les rôles (RBAC).
@@ -167,12 +172,7 @@ export function requireRole(allowedRoles: Array<'admin' | 'caissiere' | 'manager
 
 /**
  * 4. Le "Garde-Fou" Ultime : La Validation Côté Serveur (RBAC Niveau 4)
- * Valide le JWT et vérifie le statut admin via des sources inviolables :
- * 1. app_metadata.role === 'admin' (scellé serveur par Supabase Admin)
- * 2. public.profiles.role === 'admin' (table SQL serveur)
- * 3. email administrateur principal permanent (ex: erwinalberic99@gmail.com)
- *
- * NOTE DE SÉCURITÉ : `user_metadata.role` est EXCLU car modifiable côté client par l'utilisateur.
+ * Valide le JWT et vérifie le statut admin via resolveServerRole.
  * Auto-réparation immédiate : si l'utilisateur est légitime mais que son app_metadata
  * n'a pas encore été synchronisé, le serveur scelle son app_metadata et synchronise public.profiles.
  */
@@ -200,28 +200,13 @@ export async function requireAdmin(req: express.Request, res: express.Response, 
       return;
     }
 
-    const appRole = normalizeUserRole(user.app_metadata?.['role'] as string);
-    const userEmail = (user.email || '').toLowerCase().trim();
-
-    let isUserAdmin = appRole === 'admin' || PERMANENT_ADMIN_EMAILS.includes(userEmail);
-
-    if (!isUserAdmin) {
-      const { data: profile } = await supabaseAdmin
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .maybeSingle();
-
-      if (profile && normalizeUserRole(profile.role) === 'admin') {
-        isUserAdmin = true;
-      }
-    }
-
-    if (!isUserAdmin) {
+    const resolvedRole = await resolveServerRole(supabaseAdmin, user);
+    if (resolvedRole !== 'admin') {
       res.status(403).json({ error: 'Accès refusé. Rôle administrateur requis.' });
       return;
     }
 
+    const appRole = normalizeUserRole(user.app_metadata?.['role'] as string);
     // Auto-réparation si app_metadata n'est pas encore synchronisé (uniquement pour un admin authentifié et légitime)
     if (appRole !== 'admin') {
       try {
@@ -393,18 +378,11 @@ app.get('/api/admin/users', requireAdmin, getCollaboratorsHandler);
 
 /**
  * Endpoint de synchronisation et de restauration automatique du rôle.
- * Permet à un utilisateur authentifié de rafraîchir et consolider son rôle légitime
- * dans app_metadata et public.profiles sans risque de rétrogradation.
+ * Permet à un utilisateur authentifié de sceller et synchroniser son rôle légitime
+ * dans app_metadata et public.profiles sans risque d'auto-promotion non autorisée.
+ * SÉCURITÉ : Passe par requireAuth et utilise resolveServerRole (exclut totalement user_metadata).
  */
-app.post('/api/auth/sync-role', async (req: express.Request, res: express.Response): Promise<void> => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : (authHeader || '').replace('Bearer ', '');
-
-  if (!token) {
-    res.status(401).json({ error: 'Jeton de sécurité requis' });
-    return;
-  }
-
+app.post('/api/auth/sync-role', requireAuth, async (req: express.Request, res: express.Response): Promise<void> => {
   const supabaseAdmin = getSupabaseAdmin();
   if (!supabaseAdmin) {
     res.status(500).json({ error: 'Configuration serveur Supabase indisponible' });
@@ -412,34 +390,16 @@ app.post('/api/auth/sync-role', async (req: express.Request, res: express.Respon
   }
 
   try {
-    const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(token);
-    const user = authData?.user;
+    const user = (req as unknown as Record<string, unknown>)['user'] as {
+      id: string;
+      email?: string;
+      role: 'admin' | 'caissiere' | 'manager' | 'employe';
+      app_metadata?: Record<string, unknown>;
+    };
 
-    if (authError || !user) {
-      res.status(401).json({ error: 'Session invalide' });
-      return;
-    }
+    const targetRole = user.role;
 
-    const email = (user.email || '').toLowerCase().trim();
-    const appRole = normalizeUserRole(user.app_metadata?.['role'] as string);
-    const userRole = normalizeUserRole(user.user_metadata?.['role'] as string);
-
-    // Vérification du profil en base
-    const { data: profile } = await supabaseAdmin
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .maybeSingle();
-
-    const profileRole = profile ? normalizeUserRole(profile.role) : undefined;
-
-    // Détermination du rôle légitime prioritaire
-    let targetRole = appRole || profileRole || userRole || 'employe';
-    if (PERMANENT_ADMIN_EMAILS.includes(email) || appRole === 'admin' || profileRole === 'admin' || userRole === 'admin') {
-      targetRole = 'admin';
-    }
-
-    // Scellement dans app_metadata
+    // Scellement dans app_metadata si nécessaire
     await supabaseAdmin.auth.admin.updateUserById(user.id, {
       app_metadata: { ...user.app_metadata, role: targetRole },
     });
@@ -792,10 +752,6 @@ const getOperationsHandler = async (req: express.Request, res: express.Response)
   }
 };
 
-/**
- * Sauvegarde d'une opération de caisse (POST /api/cahier/operations & /api/cashier/transactions)
- * Nettoie et valide les champs, vérifie l'autorisation de l'utilisateur, puis persiste dans PostgreSQL.
- */
 /**
  * Sauvegarde d'une opération de caisse (POST /api/cahier/operations & /api/cashier/transactions)
  * Nettoie et valide les champs, vérifie l'autorisation de l'utilisateur, puis persiste dans PostgreSQL.
