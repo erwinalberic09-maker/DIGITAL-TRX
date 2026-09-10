@@ -171,13 +171,18 @@ export class AuthService {
       await this.supabaseService.ensureInitialized();
 
       if (this.checkSupabaseConfigured() && this.supabaseService.supabase) {
-        const { data } = await this.supabaseService.supabase.auth.getSession();
-        if (data.session?.user) {
+        // Validation stricte du JWT avec le serveur Supabase Auth (bonnes pratiques Supabase)
+        const { data: userData, error: userError } = await this.supabaseService.supabase.auth.getUser();
+        
+        if (userData?.user && !userError) {
+          const { data: sessionData } = await this.supabaseService.supabase.auth.getSession();
+          const accessToken = sessionData.session?.access_token || '';
+          
           const profile = await this.loadUserProfileFromSupabase(
-            data.session.user.id,
-            data.session.user.email || '',
-            data.session.access_token,
-            data.session.user
+            userData.user.id,
+            userData.user.email || '',
+            accessToken,
+            userData.user
           );
           if (profile && !profile.isActive) {
             this.clearLocalSession();
