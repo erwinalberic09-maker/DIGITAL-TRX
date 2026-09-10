@@ -2,10 +2,13 @@
 @import url('https://fonts.googleapis.com/icon?family=Material+Icons');
 @import "tailwindcss";
 
+/* Configuration officielle Tailwind CSS v4 pour le mode sombre via classe .dark */
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  /* Palette Thème Clair (High Contrast & Lisibilité optimale) */
+  /* ========================================================================= */
+  /* PALETTE THÈME CLAIR (Luminosité d'entreprise, contraste net WCAG AA)      */
+  /* ========================================================================= */
   --app-bg: #f8fafc;
   --app-surface: #ffffff;
   --app-surface-hover: #f1f5f9;
@@ -23,20 +26,24 @@
   --odoo-status-green: #16a34a;
   --odoo-avatar-gold: #d97706;
 
-  --odoo-bg-dark: #ffffff;
-  --odoo-bg-panel: #f8fafc;
-  --odoo-bg-search: #f1f5f9;
-  --odoo-text-light: #0f172a;
-  --odoo-border-color: #cbd5e1;
+  --odoo-topbar-bg: #ffffff;
+  --odoo-topbar-text: #0f172a;
+  --odoo-topbar-border: #e2e8f0;
+
+  --odoo-panel-bg: #f8fafc;
+  --odoo-panel-text: #0f172a;
+  --odoo-panel-border: #e2e8f0;
 }
 
 html.dark, :root[data-theme="dark"], .dark {
-  /* Palette Thème Sombre Odoo ERP */
-  --app-bg: #212529;
+  /* ========================================================================= */
+  /* PALETTE THÈME SOMBRE (Odoo Enterprise ERP Sombre)                         */
+  /* ========================================================================= */
+  --app-bg: #1e2227;
   --app-surface: #2b2f33;
   --app-surface-hover: #343a40;
   --app-surface-active: #3e444a;
-  --app-border: #343a40;
+  --app-border: #383f45;
   --app-border-subtle: #2b2f33;
   --app-text: #f8fafc;
   --app-text-muted: #cbd5e1;
@@ -49,11 +56,13 @@ html.dark, :root[data-theme="dark"], .dark {
   --odoo-status-green: #28a745;
   --odoo-avatar-gold: #d39e00;
 
-  --odoo-bg-dark: #212529;
-  --odoo-bg-panel: #2b2f33;
-  --odoo-bg-search: #1a1d20;
-  --odoo-text-light: #f8fafc;
-  --odoo-border-color: #343a40;
+  --odoo-topbar-bg: #212529;
+  --odoo-topbar-text: #f8fafc;
+  --odoo-topbar-border: rgba(255, 255, 255, 0.1);
+
+  --odoo-panel-bg: #2b2f33;
+  --odoo-panel-text: #f8fafc;
+  --odoo-panel-border: rgba(255, 255, 255, 0.1);
 }
 
 body {
@@ -66,10 +75,10 @@ body {
 }
 
 /* ========================================================================= */
-/* RÈGLES D'ADAPTATION GLOBALE MODE CLAIR / SOMBRE POUR COMPOSANTS & CARTES  */
+/* RÈGLES D'ADAPTATION UNIVERSELLES POUR TOUS LES COMPOSANTS DU PROJET       */
 /* ========================================================================= */
 
-/* Adaptation des cartes en mode sombre */
+/* 1. COMPOSANTS EN MODE SOMBRE (DASHBOARDS, CAISSE, RH, UTILISATEURS) */
 html.dark .bg-white,
 :root[data-theme="dark"] .bg-white {
   background-color: var(--app-surface) !important;
@@ -77,18 +86,16 @@ html.dark .bg-white,
   border-color: var(--app-border) !important;
 }
 
-/* Adaptation des fonds secondaires en mode sombre */
-html.dark .bg-slate-100\/80,
-html.dark .bg-slate-100,
 html.dark .bg-slate-50,
-:root[data-theme="dark"] .bg-slate-100\/80,
+html.dark .bg-slate-100,
+html.dark .bg-slate-100\/80,
+:root[data-theme="dark"] .bg-slate-50,
 :root[data-theme="dark"] .bg-slate-100,
-:root[data-theme="dark"] .bg-slate-50 {
+:root[data-theme="dark"] .bg-slate-100\/80 {
   background-color: var(--app-surface-hover) !important;
   border-color: var(--app-border) !important;
 }
 
-/* Adaptation des textes principaux et titres en mode sombre */
 html.dark .text-slate-900,
 html.dark .text-slate-800,
 html.dark .text-slate-700,
@@ -98,7 +105,6 @@ html.dark .text-slate-700,
   color: var(--app-text) !important;
 }
 
-/* Adaptation des textes secondaires en mode sombre */
 html.dark .text-slate-600,
 html.dark .text-slate-500,
 :root[data-theme="dark"] .text-slate-600,
@@ -111,19 +117,64 @@ html.dark .text-slate-400,
   color: var(--app-text-subtle) !important;
 }
 
-/* Adaptation des bordures en mode sombre */
 html.dark .border-slate-200,
 html.dark .border-slate-200\/80,
 html.dark .border-slate-200\/60,
 html.dark .border-slate-100,
+html.dark .border-slate-300,
 :root[data-theme="dark"] .border-slate-200,
 :root[data-theme="dark"] .border-slate-200\/80,
 :root[data-theme="dark"] .border-slate-200\/60,
-:root[data-theme="dark"] .border-slate-100 {
+:root[data-theme="dark"] .border-slate-100,
+:root[data-theme="dark"] .border-slate-300 {
   border-color: var(--app-border) !important;
 }
 
-/* Alignement et rendu des icônes Material Icons */
+/* 2. FORMULAIRES, CHAMPS INPUT, SELECT ET TEXTAREA */
+html.dark input:not([type="checkbox"]):not([type="radio"]),
+html.dark select,
+html.dark textarea {
+  background-color: #1a1d20 !important;
+  color: #f8fafc !important;
+  border-color: var(--app-border) !important;
+}
+
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+html:not(.dark) input:not([type="checkbox"]):not([type="radio"]),
+html:not(.dark) select,
+html:not(.dark) textarea {
+  background-color: #ffffff;
+  color: #0f172a;
+}
+
+/* 3. ADAPTATION STRUCTURELLE DE L'ERP (TOPBAR & CONTROL PANEL) EN MODE CLAIR */
+html:not(.dark) #enterprise-topbar {
+  background-color: var(--odoo-topbar-bg) !important;
+  border-color: var(--odoo-topbar-border) !important;
+}
+
+html:not(.dark) #enterprise-topbar a,
+html:not(.dark) #enterprise-topbar button,
+html:not(.dark) #enterprise-topbar span:not(.text-\[\#00a09d\]) {
+  color: var(--odoo-topbar-text);
+}
+
+html:not(.dark) #enterprise-control-panel {
+  background-color: var(--odoo-panel-bg) !important;
+  border-color: var(--odoo-panel-border) !important;
+}
+
+html:not(.dark) #enterprise-control-panel span,
+html:not(.dark) #enterprise-control-panel button:not(.bg-\[\#714b67\]),
+html:not(.dark) #enterprise-control-panel div {
+  color: var(--odoo-panel-text);
+}
+
+/* 4. ALIGNEMENT ET RENDU DES ICÔNES MATERIAL ICONS */
 .material-icons,
 mat-icon {
   font-family: 'Material Icons';

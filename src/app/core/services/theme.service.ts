@@ -1,4 +1,5 @@
-import { Injectable, signal, effect } from '@angular/core';
+import { Injectable, signal, effect, inject, PLATFORM_ID } from '@angular/core';
+import { DOCUMENT, isPlatformBrowser } from '@angular/common';
 
 export type AppTheme = 'dark' | 'light';
 
@@ -6,13 +7,16 @@ export type AppTheme = 'dark' | 'light';
   providedIn: 'root',
 })
 export class ThemeService {
+  private readonly document = inject(DOCUMENT);
+  private readonly platformId = inject(PLATFORM_ID);
+  private readonly isBrowser = isPlatformBrowser(this.platformId);
   private readonly storageKey = 'transimex_app_theme';
 
   // Thème actif avec 'dark' par défaut (thème Odoo ERP du projet)
   public readonly currentTheme = signal<AppTheme>(this.getInitialTheme());
 
   constructor() {
-    // Effet pour synchroniser la classe sur l'élément document racine
+    // Effet réactif Angular 19 : synchronise les classes et attributs sur <html> dès que le signal change
     effect(() => {
       const theme = this.currentTheme();
       this.applyTheme(theme);
@@ -20,20 +24,22 @@ export class ThemeService {
   }
 
   private getInitialTheme(): AppTheme {
-    try {
-      const savedTheme = localStorage.getItem(this.storageKey) as AppTheme | null;
-      if (savedTheme === 'dark' || savedTheme === 'light') {
-        return savedTheme;
+    if (this.isBrowser) {
+      try {
+        const savedTheme = localStorage.getItem(this.storageKey) as AppTheme | null;
+        if (savedTheme === 'dark' || savedTheme === 'light') {
+          return savedTheme;
+        }
+      } catch {
+        // Ignorer si localStorage est restreint
       }
-    } catch {
-      // Ignorer si localStorage est inaccessible
     }
     return 'dark';
   }
 
   private applyTheme(theme: AppTheme): void {
-    if (typeof document !== 'undefined') {
-      const root = document.documentElement;
+    const root = this.document?.documentElement;
+    if (root) {
       if (theme === 'dark') {
         root.classList.add('dark');
         root.classList.remove('light');
@@ -45,10 +51,12 @@ export class ThemeService {
       }
     }
 
-    try {
-      localStorage.setItem(this.storageKey, theme);
-    } catch {
-      // Ignorer
+    if (this.isBrowser) {
+      try {
+        localStorage.setItem(this.storageKey, theme);
+      } catch {
+        // Ignorer
+      }
     }
   }
 
@@ -64,3 +72,4 @@ export class ThemeService {
     return this.currentTheme() === 'dark';
   }
 }
+

@@ -19,7 +19,6 @@ import {
   ReactiveFormsModule,
   Validators,
 } from '@angular/forms';
-import { CommonModule } from '@angular/common';
 import { MatIconModule } from '@angular/material/icon';
 import {
   Chart,
@@ -58,7 +57,7 @@ export interface CaisseTimelineData {
 
 @Component({
   selector: 'app-cashier-management',
-  imports: [CommonModule, ReactiveFormsModule, MatIconModule],
+  imports: [ReactiveFormsModule, MatIconModule],
   templateUrl: './cashier-management.html',
   styleUrl: './cashier-management.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

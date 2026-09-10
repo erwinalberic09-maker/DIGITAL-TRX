@@ -28,10 +28,10 @@ export interface NavOption {
   },
 })
 export class MainLayout {
-  private readonly authService = inject(AuthService);
-  private readonly cashierService = inject(CashierService);
-  private readonly themeService = inject(ThemeService);
-  private readonly router = inject(Router);
+  public readonly authService = inject(AuthService);
+  public readonly cashierService = inject(CashierService);
+  public readonly themeService = inject(ThemeService);
+  public readonly router = inject(Router);
 
   public readonly currentUser = this.authService.currentUser;
   public readonly isMenuOpen = signal<boolean>(false);

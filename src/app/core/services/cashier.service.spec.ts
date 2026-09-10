@@ -2,7 +2,6 @@ import { TestBed } from '@angular/core/testing';
 import { CashierService } from './cashier.service';
 import { SupabaseService } from './supabase.service';
 import { AuthService } from './auth.service';
-import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 describe('CashierService - Architecture Hybride & Signals', () => {
   let service: CashierService;
@@ -18,7 +17,7 @@ describe('CashierService - Architecture Hybride & Signals', () => {
           provide: SupabaseService,
           useValue: {
             isConfigured: () => false,
-            ensureInitialized: vi.fn().mockResolvedValue(undefined),
+            ensureInitialized: () => Promise.resolve(),
             supabase: null,
           },
         },
@@ -36,7 +35,6 @@ describe('CashierService - Architecture Hybride & Signals', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    vi.restoreAllMocks();
   });
 
   it('devrait être initialisé avec un solde nul et une liste vide', () => {
@@ -62,13 +60,20 @@ describe('CashierService - Architecture Hybride & Signals', () => {
       created_by: 'usr-1',
     };
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({
-        success: true,
-        operation: mockCreatedDbRow,
-      }),
-    } as unknown as Response);
+    let fetchCalledWithUrl = '';
+    let fetchCalledWithInit: RequestInit | undefined;
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      fetchCalledWithUrl = String(input);
+      fetchCalledWithInit = init;
+      return new Response(
+        JSON.stringify({
+          success: true,
+          operation: mockCreatedDbRow,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as typeof globalThis.fetch;
 
     const result = await service.saveOperationViaApi({
       libelle: 'Plein carburant camion',
@@ -83,19 +88,13 @@ describe('CashierService - Architecture Hybride & Signals', () => {
     });
 
     // 1. Vérification de l'appel API avec le token d'autorisation
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      '/api/cahier/operations',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer mock-jwt-token',
-        }),
-      })
-    );
+    expect(fetchCalledWithUrl).toBe('/api/cahier/operations');
+    expect(fetchCalledWithInit?.method).toBe('POST');
+    const headers = fetchCalledWithInit?.headers as Record<string, string>;
+    expect(headers?.['Authorization']).toBe('Bearer mock-jwt-token');
 
     // 2. Vérification de la mise à jour immédiate du Signal
-    expect(result.success).toBe(true);
+    expect(result.success).toBeTrue();
     expect(service.allTransactions().length).toBe(1);
     expect(service.allTransactions()[0].id).toBe('tx-uuid-123');
     expect(service.allTransactions()[0].libelle).toBe('Plein carburant camion');
@@ -104,11 +103,12 @@ describe('CashierService - Architecture Hybride & Signals', () => {
 
   it('devrait basculer en repli sécurisé si l’API serveur-relais renvoie une erreur', async () => {
     // Simulation d'une erreur 500 sur l'API serveur
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 500,
-      json: vi.fn().mockResolvedValue({ error: 'Erreur serveur interne' }),
-    } as unknown as Response);
+    globalThis.fetch = (async () => {
+      return new Response(JSON.stringify({ error: 'Erreur serveur interne' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof globalThis.fetch;
 
     const result = await service.saveOperationViaApi({
       libelle: 'Dépannage urgence',
@@ -118,7 +118,7 @@ describe('CashierService - Architecture Hybride & Signals', () => {
     });
 
     // Même en cas d'indisponibilité de l'API, l'état local du Signal est préservé
-    expect(result.success).toBe(true);
+    expect(result.success).toBeTrue();
     expect(service.allTransactions().length).toBe(1);
     expect(service.allTransactions()[0].libelle).toBe('Dépannage urgence');
     expect(service.currentBalance()).toBe(-20000);
@@ -140,12 +140,12 @@ describe('CashierService - Architecture Hybride & Signals', () => {
       },
     ];
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({
-        operations: mockRows,
-      }),
-    } as unknown as Response);
+    globalThis.fetch = (async () => {
+      return new Response(JSON.stringify({ operations: mockRows }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof globalThis.fetch;
 
     await service.loadTransactions();
 
@@ -155,10 +155,12 @@ describe('CashierService - Architecture Hybride & Signals', () => {
   });
 
   it('devrait supprimer les éléments sélectionnés et recalculer les soldes', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({ success: true, deletedCount: 1 }),
-    } as unknown as Response);
+    globalThis.fetch = (async () => {
+      return new Response(JSON.stringify({ success: true, deletedCount: 1 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof globalThis.fetch;
 
     // Ajout d'une opération initiale
     await service.saveOperationViaApi({
@@ -171,7 +173,7 @@ describe('CashierService - Architecture Hybride & Signals', () => {
     const id = service.allTransactions()[0].id;
     service.toggleSelectTransaction(id);
 
-    expect(service.allTransactions()[0].selected).toBe(true);
+    expect(service.allTransactions()[0].selected).toBeTrue();
 
     await service.deleteSelected();
     expect(service.allTransactions().length).toBe(0);
@@ -179,20 +181,22 @@ describe('CashierService - Architecture Hybride & Signals', () => {
   });
 
   it('devrait filtrer les données réactivement avec les Signals de recherche', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({
-        success: true,
-        operation: {
-          id: 'row-1',
-          date: new Date().toISOString(),
-          libelle: 'Frais de péage autoroute',
-          type_transaction: 'Péage',
-          category: 'sortie',
-          montant: -5000,
-        },
-      }),
-    } as unknown as Response);
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          operation: {
+            id: 'row-1',
+            date: new Date().toISOString(),
+            libelle: 'Frais de péage autoroute',
+            type_transaction: 'Péage',
+            category: 'sortie',
+            montant: -5000,
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as typeof globalThis.fetch;
 
     await service.saveOperationViaApi({
       libelle: 'Frais de péage autoroute',
