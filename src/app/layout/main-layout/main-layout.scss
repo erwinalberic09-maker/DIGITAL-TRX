@@ -152,9 +152,9 @@
     align-items: center;
   }
 
-  /* Bouton d'action principal violet Odoo (#714B67) */
+  /* Bouton d'action principal (#190056) */
   .btn-primary {
-    background-color: var(--odoo-primary-purple, #714b67);
+    background-color: var(--odoo-primary-purple, #190056);
     color: #ffffff;
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 4px;
@@ -163,7 +163,7 @@
     transition: background-color 0.15s ease, transform 0.05s ease;
 
     &:hover {
-      background-color: var(--odoo-primary-purple-hover, #865a7c);
+      background-color: var(--odoo-primary-purple-hover, #130042);
     }
 
     &:focus-visible {

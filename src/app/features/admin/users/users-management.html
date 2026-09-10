@@ -1,13 +1,13 @@
 <div class="space-y-6" id="users-management-container">
 
   <!-- En-tête de page -->
-  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs" id="page-header">
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white dark:bg-[#2b2f33] p-6 rounded-2xl border border-slate-200 dark:border-white/10 shadow-xs" id="page-header">
     <div>
-      <div class="inline-block px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-semibold mb-2 border border-indigo-100">
+      <div class="inline-block px-3 py-1 rounded-full bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 text-xs font-semibold mb-2 border border-indigo-100 dark:border-indigo-800/60">
         Administration Système
       </div>
-      <h1 class="text-xl sm:text-2xl font-bold text-slate-900">Gestion des Utilisateurs & Rôles</h1>
-      <p class="text-xs text-slate-500 mt-1">Créez des comptes réels, assignez des privilèges et gérez les accès.</p>
+      <h1 class="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-50">Gestion des Utilisateurs & Rôles</h1>
+      <p class="text-xs text-slate-600 dark:text-slate-300 mt-1">Créez des comptes réels, assignez des privilèges et gérez les accès.</p>
     </div>
 
     <div class="flex items-center gap-3">
@@ -23,19 +23,19 @@
 
   <!-- Message de retour d'action -->
   @if (successMessage()) {
-    <div class="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-medium" id="success-feedback-banner">
+    <div class="p-4 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl text-emerald-800 dark:text-emerald-300 text-xs font-medium" id="success-feedback-banner">
       <span class="font-bold">Confirmation :</span> {{ successMessage() }}
     </div>
   }
 
   @if (error()) {
-    <div class="p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs font-medium" id="error-feedback-banner">
+    <div class="p-4 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 rounded-xl text-rose-800 dark:text-rose-300 text-xs font-medium" id="error-feedback-banner">
       <span class="font-bold">Erreur :</span> {{ error() }}
     </div>
   }
 
   <!-- Filtres et Recherche -->
-  <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4" id="filters-bar">
+  <div class="bg-white dark:bg-[#2b2f33] p-4 rounded-2xl border border-slate-200 dark:border-white/10 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4" id="filters-bar">
     <!-- Champ de recherche -->
     <div class="relative w-full sm:w-80">
       <input
@@ -43,19 +43,19 @@
         [value]="searchQuery()"
         (input)="searchQuery.set($any($event.target).value)"
         placeholder="Rechercher par nom, email, département..."
-        class="w-full px-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all"
+        class="w-full px-4 py-2 text-xs bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white dark:focus:bg-[#1e2227] transition-all"
         id="user-search-input"
       />
     </div>
 
     <!-- Filtre par rôle -->
     <div class="flex items-center gap-2 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
-      <span class="text-xs text-slate-500 font-medium shrink-0">Filtrer par rôle :</span>
+      <span class="text-xs text-slate-700 dark:text-slate-300 font-medium shrink-0">Filtrer par rôle :</span>
       <button
         type="button"
         (click)="selectedRoleFilter.set('all')"
         class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-        [class]="selectedRoleFilter() === 'all' ? 'bg-indigo-600 text-white font-semibold' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+        [class]="selectedRoleFilter() === 'all' ? 'bg-indigo-600 text-white font-semibold' : 'bg-slate-100 dark:bg-white/10 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-white/15'"
         id="filter-role-all">
         Tous ({{ users().length }})
       </button>
@@ -65,7 +65,7 @@
           type="button"
           (click)="selectedRoleFilter.set(role.id)"
           class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0 capitalize"
-          [class]="selectedRoleFilter() === role.id ? 'bg-indigo-600 text-white font-semibold' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+          [class]="selectedRoleFilter() === role.id ? 'bg-indigo-600 text-white font-semibold' : 'bg-slate-100 dark:bg-white/10 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-white/15'"
           [id]="'filter-role-' + role.id">
           {{ role.label }}
         </button>
@@ -74,11 +74,11 @@
   </div>
 
   <!-- Tableau des Utilisateurs -->
-  <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden" id="users-table-card">
+  <div class="bg-white dark:bg-[#2b2f33] rounded-2xl border border-slate-200 dark:border-white/10 shadow-xs overflow-hidden" id="users-table-card">
     <div class="overflow-x-auto">
       <table class="w-full text-left border-collapse text-xs">
         <thead>
-          <tr class="border-b border-slate-200 bg-slate-50/75 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+          <tr class="border-b border-slate-200 dark:border-white/10 bg-slate-50/75 dark:bg-black/20 text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
             <th class="py-3.5 px-6">Collaborateur</th>
             <th class="py-3.5 px-6">Rôle & Privilèges</th>
             <th class="py-3.5 px-6">Département</th>
@@ -87,18 +87,18 @@
             <th class="py-3.5 px-6 text-right">Actions</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-slate-100">
+        <tbody class="divide-y divide-slate-100 dark:divide-white/5">
           @for (user of filteredUsers(); track user.id) {
-            <tr class="hover:bg-slate-50/50 transition-colors" [id]="'user-row-' + user.id">
+            <tr class="hover:bg-slate-50/50 dark:hover:bg-white/5 transition-colors" [id]="'user-row-' + user.id">
               <!-- Colonne Collaborateur -->
               <td class="py-4 px-6">
                 <div class="flex items-center gap-3">
-                  <div class="w-9 h-9 rounded-full bg-slate-200 text-slate-700 font-bold flex items-center justify-center text-xs shrink-0">
+                  <div class="w-9 h-9 rounded-full bg-slate-200 dark:bg-white/10 text-slate-800 dark:text-slate-100 font-bold flex items-center justify-center text-xs shrink-0">
                     {{ user.firstName[0] }}{{ user.lastName[0] }}
                   </div>
                   <div>
-                    <p class="font-bold text-slate-900">{{ user.firstName }} {{ user.lastName }}</p>
-                    <p class="text-slate-500 text-[11px]">{{ user.email }}</p>
+                    <p class="font-bold text-slate-900 dark:text-slate-100">{{ user.firstName }} {{ user.lastName }}</p>
+                    <p class="text-slate-600 dark:text-slate-400 text-[11px]">{{ user.email }}</p>
                   </div>
                 </div>
               </td>
@@ -112,7 +112,7 @@
               </td>
 
               <!-- Colonne Département -->
-              <td class="py-4 px-6 text-slate-600">
+              <td class="py-4 px-6 text-slate-700 dark:text-slate-300 font-medium">
                 {{ user.department || 'Non renseigné' }}
               </td>
 
@@ -122,7 +122,7 @@
                   type="button"
                   (click)="toggleStatus(user.id)"
                   class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all border"
-                  [class]="user.isActive ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'"
+                  [class]="user.isActive ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60 hover:bg-emerald-100' : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800/60 hover:bg-rose-100'"
                   title="Cliquer pour changer le statut"
                   [id]="'toggle-status-' + user.id">
                   <span class="w-1.5 h-1.5 rounded-full" [class]="user.isActive ? 'bg-emerald-500' : 'bg-rose-500'"></span>
@@ -131,7 +131,7 @@
               </td>
 
               <!-- Colonne Date -->
-              <td class="py-4 px-6 text-slate-500 text-[11px]">
+              <td class="py-4 px-6 text-slate-600 dark:text-slate-400 text-[11px]">
                 {{ user.createdAt | slice:0:10 }}
               </td>
 
@@ -141,14 +141,14 @@
                   <button
                     type="button"
                     (click)="openEditModal(user)"
-                    class="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-100 text-xs font-semibold transition-colors"
+                    class="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/10 text-xs font-semibold transition-colors"
                     [id]="'edit-user-' + user.id">
                     Modifier
                   </button>
                   <button
                     type="button"
                     (click)="deleteUser(user)"
-                    class="px-3 py-1.5 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-semibold transition-colors"
+                    class="px-3 py-1.5 rounded-lg border border-rose-200 dark:border-rose-900/60 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-xs font-semibold transition-colors"
                     [id]="'delete-user-' + user.id">
                     Supprimer
                   </button>
@@ -157,8 +157,8 @@
             </tr>
           } @empty {
             <tr>
-              <td colspan="6" class="py-12 text-center text-slate-400">
-                <p class="text-sm font-semibold text-slate-600">Aucun utilisateur trouvé</p>
+              <td colspan="6" class="py-12 text-center text-slate-500 dark:text-slate-400">
+                <p class="text-sm font-semibold text-slate-700 dark:text-slate-200">Aucun utilisateur trouvé</p>
                 <p class="text-xs mt-1">Créez un nouvel utilisateur ou modifiez les critères de recherche.</p>
               </td>
             </tr>
@@ -171,19 +171,19 @@
   <!-- Modal Création / Édition Utilisateur -->
   @if (isModalOpen()) {
     <div class="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs" id="user-modal-overlay">
-      <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 relative animate-in fade-in duration-200" id="user-modal">
+      <div class="bg-white dark:bg-[#2b2f33] rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 dark:border-white/10 relative animate-in fade-in duration-200" id="user-modal">
         
-        <div class="flex items-center justify-between border-b border-slate-100 pb-4 mb-5">
+        <div class="flex items-center justify-between border-b border-slate-100 dark:border-white/10 pb-4 mb-5">
           <div>
-            <h2 class="text-base font-bold text-slate-900">
+            <h2 class="text-base font-bold text-slate-900 dark:text-slate-50">
               {{ editingUserId() ? 'Modifier l\'utilisateur' : 'Créer un nouvel utilisateur' }}
             </h2>
-            <p class="text-xs text-slate-500">Formulaire d'administration Transmex</p>
+            <p class="text-xs text-slate-600 dark:text-slate-300">Formulaire d'administration Transmex</p>
           </div>
           <button
             type="button"
             (click)="closeModal()"
-            class="text-xs font-semibold text-slate-400 hover:text-slate-700 px-2 py-1 rounded-lg border border-slate-200"
+            class="text-xs font-semibold text-slate-500 dark:text-slate-300 hover:text-slate-800 dark:hover:text-white px-2 py-1 rounded-lg border border-slate-200 dark:border-white/10"
             id="close-modal-btn">
             Fermer
           </button>
@@ -193,47 +193,48 @@
           
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label for="modal-firstname-input" class="block text-xs font-semibold text-slate-700 mb-1">Prénom *</label>
+              <label for="modal-firstname-input" class="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Prénom *</label>
               <input
                 id="modal-firstname-input"
                 type="text"
                 formControlName="firstName"
                 placeholder="Ex: Jean"
-                class="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                class="w-full px-3 py-2 text-xs bg-white dark:bg-black/20 border border-slate-300 dark:border-white/10 text-slate-900 dark:text-slate-100 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
               />
             </div>
             <div>
-              <label for="modal-lastname-input" class="block text-xs font-semibold text-slate-700 mb-1">Nom *</label>
+              <label for="modal-lastname-input" class="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Nom *</label>
               <input
                 id="modal-lastname-input"
                 type="text"
                 formControlName="lastName"
                 placeholder="Ex: Dupont"
-                class="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                class="w-full px-3 py-2 text-xs bg-white dark:bg-black/20 border border-slate-300 dark:border-white/10 text-slate-900 dark:text-slate-100 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
               />
             </div>
           </div>
 
           <div>
-            <label for="modal-email-input" class="block text-xs font-semibold text-slate-700 mb-1">Adresse Email *</label>
+            <label for="modal-email-input" class="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Adresse Email *</label>
             <input
               id="modal-email-input"
               type="email"
               formControlName="email"
               [readonly]="editingUserId() !== null"
               placeholder="jean.dupont@transmex.com"
-              class="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              class="w-full px-3 py-2 text-xs bg-white dark:bg-black/20 border border-slate-300 dark:border-white/10 text-slate-900 dark:text-slate-100 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
               [class.bg-slate-100]="editingUserId() !== null"
+              [class.dark:bg-white/5]="editingUserId() !== null"
             />
           </div>
 
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label for="modal-role-select" class="block text-xs font-semibold text-slate-700 mb-1">Rôle Transmex *</label>
+              <label for="modal-role-select" class="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Rôle Transmex *</label>
               <select
                 id="modal-role-select"
                 formControlName="role"
-                class="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none capitalize"
+                class="w-full px-3 py-2 text-xs bg-white dark:bg-[#1e2227] border border-slate-300 dark:border-white/10 text-slate-900 dark:text-slate-100 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none capitalize"
                 [class.border-rose-400]="userForm.get('role')?.invalid && userForm.get('role')?.touched">
                 <option value="" disabled selected>-- Sélectionner un rôle obligatoire --</option>
                 @for (role of roleList; track role.id) {
@@ -241,50 +242,50 @@
                 }
               </select>
               @if (userForm.get('role')?.invalid && userForm.get('role')?.touched) {
-                <p class="text-rose-600 text-[10px] mt-1">Veuillez obligatoirement sélectionner un rôle.</p>
+                <p class="text-rose-600 dark:text-rose-400 text-[10px] mt-1">Veuillez obligatoirement sélectionner un rôle.</p>
               }
             </div>
             <div>
-              <label for="modal-dept-input" class="block text-xs font-semibold text-slate-700 mb-1">Département</label>
+              <label for="modal-dept-input" class="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Département</label>
               <input
                 id="modal-dept-input"
                 type="text"
                 formControlName="department"
                 placeholder="Ex: Exploitation"
-                class="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                class="w-full px-3 py-2 text-xs bg-white dark:bg-black/20 border border-slate-300 dark:border-white/10 text-slate-900 dark:text-slate-100 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
               />
             </div>
           </div>
 
           <div>
-            <label for="modal-phone-input" class="block text-xs font-semibold text-slate-700 mb-1">Téléphone Professionnel</label>
+            <label for="modal-phone-input" class="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">Téléphone Professionnel</label>
             <input
               id="modal-phone-input"
               type="tel"
               formControlName="phone"
               placeholder="+33 6 12 34 56 78"
-              class="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              class="w-full px-3 py-2 text-xs bg-white dark:bg-black/20 border border-slate-300 dark:border-white/10 text-slate-900 dark:text-slate-100 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
             />
           </div>
 
           @if (!editingUserId()) {
-            <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-              <label for="modal-temp-pwd-input" class="block text-xs font-semibold text-slate-700">Mot de passe temporaire</label>
+            <div class="p-3 bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/10 rounded-xl space-y-2">
+              <label for="modal-temp-pwd-input" class="block text-xs font-semibold text-slate-700 dark:text-slate-200">Mot de passe temporaire</label>
               <input
                 id="modal-temp-pwd-input"
                 type="text"
                 formControlName="tempPassword"
-                class="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none"
+                class="w-full px-3 py-2 text-xs bg-white dark:bg-[#1e2227] border border-slate-300 dark:border-white/10 text-slate-900 dark:text-slate-100 rounded-lg focus:outline-none"
               />
-              <p class="text-[11px] text-slate-500">Le collaborateur sera invité à le changer à sa première connexion.</p>
+              <p class="text-[11px] text-slate-600 dark:text-slate-400">Le collaborateur sera invité à le changer à sa première connexion.</p>
             </div>
           }
 
-          <div class="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
+          <div class="pt-4 border-t border-slate-100 dark:border-white/10 flex items-center justify-end gap-3">
             <button
               type="button"
               (click)="closeModal()"
-              class="px-4 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-xl"
+              class="px-4 py-2 border border-slate-300 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-white/5 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl"
               id="cancel-modal-btn">
               Annuler
             </button>

@@ -7,7 +7,7 @@
 
 :root {
   /* ========================================================================= */
-  /* PALETTE THÈME CLAIR (Luminosité d'entreprise, contraste net WCAG AA)      */
+  /* PALETTE THÈME CLAIR (Luminosité d'entreprise, contraste net WCAG AA/AAA)   */
   /* ========================================================================= */
   --app-bg: #f8fafc;
   --app-surface: #ffffff;
@@ -15,29 +15,29 @@
   --app-surface-active: #e2e8f0;
   --app-border: #cbd5e1;
   --app-border-subtle: #e2e8f0;
-  --app-text: #0f172a;
-  --app-text-muted: #475569;
-  --app-text-subtle: #64748b;
+  --app-text: #090d16;
+  --app-text-muted: #334155;
+  --app-text-subtle: #475569;
 
   --odoo-primary-purple: #714b67;
   --odoo-primary-purple-hover: #5d3d54;
   --odoo-text-teal: #008f8c;
   --odoo-text-teal-hover: #007976;
-  --odoo-status-green: #16a34a;
-  --odoo-avatar-gold: #d97706;
+  --odoo-status-green: #15803d;
+  --odoo-avatar-gold: #b45309;
 
   --odoo-topbar-bg: #ffffff;
-  --odoo-topbar-text: #0f172a;
+  --odoo-topbar-text: #090d16;
   --odoo-topbar-border: #e2e8f0;
 
   --odoo-panel-bg: #f8fafc;
-  --odoo-panel-text: #0f172a;
+  --odoo-panel-text: #090d16;
   --odoo-panel-border: #e2e8f0;
 }
 
 html.dark, :root[data-theme="dark"], .dark {
   /* ========================================================================= */
-  /* PALETTE THÈME SOMBRE (Odoo Enterprise ERP Sombre)                         */
+  /* PALETTE THÈME SOMBRE (Odoo Enterprise ERP Sombre - Haute lisibilité)      */
   /* ========================================================================= */
   --app-bg: #1e2227;
   --app-surface: #2b2f33;
@@ -51,18 +51,18 @@ html.dark, :root[data-theme="dark"], .dark {
 
   --odoo-primary-purple: #714b67;
   --odoo-primary-purple-hover: #865a7c;
-  --odoo-text-teal: #00a09d;
-  --odoo-text-teal-hover: #00c4c0;
-  --odoo-status-green: #28a745;
-  --odoo-avatar-gold: #d39e00;
+  --odoo-text-teal: #00c4c0;
+  --odoo-text-teal-hover: #38bdf8;
+  --odoo-status-green: #22c55e;
+  --odoo-avatar-gold: #fbbf24;
 
   --odoo-topbar-bg: #212529;
   --odoo-topbar-text: #f8fafc;
-  --odoo-topbar-border: rgba(255, 255, 255, 0.1);
+  --odoo-topbar-border: rgba(255, 255, 255, 0.12);
 
   --odoo-panel-bg: #2b2f33;
   --odoo-panel-text: #f8fafc;
-  --odoo-panel-border: rgba(255, 255, 255, 0.1);
+  --odoo-panel-border: rgba(255, 255, 255, 0.12);
 }
 
 body {
@@ -96,9 +96,12 @@ html.dark .bg-slate-100\/80,
   border-color: var(--app-border) !important;
 }
 
+/* Contrastes textuels stricts en mode sombre */
+html.dark .text-slate-950,
 html.dark .text-slate-900,
 html.dark .text-slate-800,
 html.dark .text-slate-700,
+:root[data-theme="dark"] .text-slate-950,
 :root[data-theme="dark"] .text-slate-900,
 :root[data-theme="dark"] .text-slate-800,
 :root[data-theme="dark"] .text-slate-700 {
@@ -115,6 +118,59 @@ html.dark .text-slate-500,
 html.dark .text-slate-400,
 :root[data-theme="dark"] .text-slate-400 {
   color: var(--app-text-subtle) !important;
+}
+
+/* Couleurs statiques sombres inversées automatiquement en mode sombre */
+html.dark .text-\[\#1e3a8a\],
+html.dark .text-blue-900,
+html.dark .text-blue-800 {
+  color: #93c5fd !important; /* Blue 300 ultra-lisible sur fond sombre */
+}
+
+html.dark .text-emerald-900,
+html.dark .text-emerald-800,
+html.dark .text-emerald-700 {
+  color: #6ee7b7 !important; /* Emerald 300 lumineux */
+}
+
+html.dark .text-rose-900,
+html.dark .text-rose-800 {
+  color: #fca5a5 !important; /* Rose 300 lumineux */
+}
+
+html.dark .text-amber-900,
+html.dark .text-amber-800 {
+  color: #fde047 !important; /* Amber 300 */
+}
+
+/* Badges colorés réadaptés en mode sombre */
+html.dark .bg-blue-50,
+html.dark .bg-blue-50\/80 {
+  background-color: rgba(30, 58, 138, 0.25) !important;
+  border-color: rgba(59, 130, 246, 0.35) !important;
+}
+
+html.dark .bg-emerald-50,
+html.dark .bg-emerald-50\/80 {
+  background-color: rgba(6, 78, 59, 0.25) !important;
+  border-color: rgba(16, 185, 129, 0.35) !important;
+}
+
+html.dark .bg-rose-50,
+html.dark .bg-rose-50\/80 {
+  background-color: rgba(136, 19, 55, 0.25) !important;
+  border-color: rgba(244, 63, 94, 0.35) !important;
+}
+
+html.dark .bg-amber-50,
+html.dark .bg-amber-50\/80 {
+  background-color: rgba(120, 53, 15, 0.25) !important;
+  border-color: rgba(245, 158, 11, 0.35) !important;
+}
+
+/* Rehaussement des textes gris en mode clair pour passer le test WCAG AA */
+html:not(.dark) .text-slate-400 {
+  color: #64748b; /* Rehaussé de slate-400 (#94a3b8) vers slate-500 (#64748b) pour lisibilité AA */
 }
 
 html.dark .border-slate-200,

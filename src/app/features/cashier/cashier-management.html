@@ -18,14 +18,14 @@
         }
       </div>
 
-      <!-- Solde Actuel (Libellé noir + Chiffre vert équilibré) -->
+      <!-- Solde Actuel (Libellé + Chiffre vert équilibré contrasté) -->
       <div class="flex items-center gap-3 self-end sm:self-auto">
-        <span class="text-slate-800 font-semibold text-sm sm:text-base">
+        <span class="text-slate-800 dark:text-slate-200 font-semibold text-sm sm:text-base">
           Solde Actuel
         </span>
         <span
           id="cashier-current-balance"
-          class="text-emerald-700 font-bold text-base sm:text-lg tracking-tight"
+          class="text-emerald-700 dark:text-emerald-400 font-bold text-base sm:text-lg tracking-tight"
         >
           {{ formatSolde(currentBalance()) }}
         </span>
@@ -36,45 +36,45 @@
     <div class="w-full overflow-x-auto">
       <table class="w-full text-left text-xs sm:text-sm border-collapse bg-transparent min-w-[900px]">
         <thead>
-          <tr class="border-b-2 border-slate-300 text-slate-600 font-semibold select-none bg-transparent">
+          <tr class="border-b-2 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-semibold select-none bg-transparent">
             <th scope="col" class="py-3.5 px-3 w-10 text-center">
               @if (canEdit()) {
                 <button
                   type="button"
                   (click)="onToggleSelectAll()"
-                  class="font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
+                  class="font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer"
                   title="Tout sélectionner / désélectionner"
                 >
                   Check
                 </button>
               } @else {
-                <span class="text-slate-400 font-medium">#</span>
+                <span class="text-slate-400 dark:text-slate-500 font-medium">#</span>
               }
             </th>
-            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-500 whitespace-nowrap w-28">Date</th>
-            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-500">Libelle</th>
-            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-500 whitespace-nowrap w-44">
+            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap w-28">Date</th>
+            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-700 dark:text-slate-300">Libelle</th>
+            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap w-44">
               <div class="inline-flex items-center gap-1 cursor-pointer group">
                 <span>Type de Transaction</span>
-                <mat-icon class="text-xs w-4 h-4 flex items-center justify-center text-slate-400 group-hover:text-slate-600">filter_list</mat-icon>
+                <mat-icon class="text-xs w-4 h-4 flex items-center justify-center text-slate-400 dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-200">filter_list</mat-icon>
               </div>
             </th>
-            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-500 whitespace-nowrap w-40">Distribution Analytique</th>
-            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-500 whitespace-nowrap w-36">
+            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap w-40">Distribution Analytique</th>
+            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap w-36">
               <div class="inline-flex items-center gap-1 cursor-pointer group">
                 <span>Employe</span>
-                <mat-icon class="text-xs w-4 h-4 flex items-center justify-center text-slate-400 group-hover:text-slate-600">filter_list</mat-icon>
+                <mat-icon class="text-xs w-4 h-4 flex items-center justify-center text-slate-400 dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-200">filter_list</mat-icon>
               </div>
             </th>
-            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-500 text-center whitespace-nowrap w-16">QTE</th>
-            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-500 text-right whitespace-nowrap w-36">Montant</th>
-            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-500 text-right whitespace-nowrap w-36">Soldes</th>
+            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-700 dark:text-slate-300 text-center whitespace-nowrap w-16">QTE</th>
+            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-700 dark:text-slate-300 text-right whitespace-nowrap w-36">Montant</th>
+            <th scope="col" class="py-3.5 px-3 font-semibold text-slate-700 dark:text-slate-300 text-right whitespace-nowrap w-36">Soldes</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-slate-200/80 bg-transparent">
+        <tbody class="divide-y divide-slate-200 dark:divide-slate-700/60 bg-transparent">
           <!-- LIGNE D'ÉDITION STYLE ODOO (INLINE EDITABLE VIA BOUTON NOUVEAU) -->
           @if (isAddingRow()) {
-            <tr class="bg-amber-50/40 hover:bg-amber-50/50 transition-colors border-b border-amber-200/80 font-normal text-slate-800" id="inline-add-row" [formGroup]="transactionForm">
+            <tr class="bg-amber-50/40 dark:bg-amber-400/10 hover:bg-amber-50/50 dark:hover:bg-amber-400/15 transition-colors border-b border-amber-200/80 dark:border-amber-400/30 font-normal text-slate-800 dark:text-slate-100" id="inline-add-row" [formGroup]="transactionForm">
               <!-- Indicateur Odoo -->
               <td class="py-3 px-3 text-center align-middle">
                 <span class="inline-block w-2 h-2 rounded-full bg-amber-500" title="Nouvelle ligne"></span>
@@ -86,7 +86,7 @@
                   id="inline-input-date"
                   type="date"
                   formControlName="date"
-                  class="bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs text-slate-700 font-mono font-medium cursor-pointer focus:ring-0 focus:outline-none"
+                  class="bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs text-slate-800 dark:text-slate-100 font-mono font-medium cursor-pointer focus:ring-0 focus:outline-none"
                   title="Choisir la date de transaction"
                 />
               </td>
@@ -98,7 +98,7 @@
                   type="text"
                   formControlName="libelle"
                   placeholder="Ajouter une description..."
-                  class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs sm:text-sm font-medium text-slate-900 placeholder:text-slate-400 placeholder:italic focus:ring-0 focus:outline-none focus:border-none"
+                  class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs sm:text-sm font-medium text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 placeholder:italic focus:ring-0 focus:outline-none focus:border-none"
                   [class.text-rose-600]="transactionForm.get('libelle')?.touched && transactionForm.get('libelle')?.invalid"
                 />
               </td>
@@ -108,7 +108,7 @@
                 <select
                   id="inline-select-type-tx"
                   formControlName="typeTransaction"
-                  class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs sm:text-sm font-medium text-slate-800 cursor-pointer focus:ring-0 focus:outline-none"
+                  class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs sm:text-sm font-medium text-slate-800 dark:text-slate-200 cursor-pointer focus:ring-0 focus:outline-none"
                 >
                   <option value="Administration">Administration</option>
                   <option value="Opérations">Opérations</option>
@@ -123,10 +123,10 @@
                     type="text"
                     formControlName="matriculeVehicule"
                     placeholder="Matricule..."
-                    class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs font-mono font-bold uppercase text-blue-900 placeholder:text-blue-300 focus:ring-0 focus:outline-none"
+                    class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs font-mono font-bold uppercase text-blue-900 dark:text-blue-300 placeholder:text-blue-300 dark:placeholder:text-blue-500 focus:ring-0 focus:outline-none"
                   />
                 } @else {
-                  <span class="text-xs text-slate-300 select-none italic">—</span>
+                  <span class="text-xs text-slate-400 dark:text-slate-500 select-none italic">—</span>
                 }
               </td>
 
@@ -137,7 +137,7 @@
                   type="text"
                   formControlName="employee"
                   placeholder="—"
-                  class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs text-slate-700 placeholder:text-slate-300 focus:ring-0 focus:outline-none"
+                  class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:ring-0 focus:outline-none"
                 />
               </td>
 
@@ -148,7 +148,7 @@
                   type="number"
                   formControlName="quantity"
                   placeholder="—"
-                  class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs text-center font-medium text-slate-800 placeholder:text-slate-300 focus:ring-0 focus:outline-none"
+                  class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs text-center font-medium text-slate-800 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:ring-0 focus:outline-none"
                 />
               </td>
 
@@ -172,9 +172,9 @@
                     type="number"
                     formControlName="montant"
                     placeholder="0"
-                    class="w-24 bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs sm:text-sm text-right font-bold text-slate-900 placeholder:text-slate-300 focus:ring-0 focus:outline-none"
+                    class="w-24 bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs sm:text-sm text-right font-bold text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:ring-0 focus:outline-none"
                   />
-                  <span class="text-xs text-slate-400">FCFA</span>
+                  <span class="text-xs text-slate-500 dark:text-slate-400 font-medium">FCFA</span>
                 </div>
               </td>
 
@@ -221,7 +221,7 @@
               @if (editingTxId() === tx.id) {
                 <!-- LIGNE EN COURS DE MODIFICATION (DOUBLE-CLIC ODOO INLINE) -->
                 <tr
-                  class="bg-blue-50/50 hover:bg-blue-50/60 transition-colors border-y-2 border-blue-300 font-normal text-slate-800"
+                  class="bg-blue-50/50 dark:bg-blue-950/30 hover:bg-blue-50/60 dark:hover:bg-blue-950/40 transition-colors border-y-2 border-blue-300 dark:border-blue-700 font-normal text-slate-800 dark:text-slate-100"
                   id="inline-edit-row-{{ tx.id }}"
                   [formGroup]="editTransactionForm"
                   (keydown)="onEditKeydown($event)"
@@ -237,7 +237,7 @@
                       id="inline-edit-date"
                       type="date"
                       formControlName="date"
-                      class="bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs text-slate-700 font-mono font-medium cursor-pointer focus:ring-0 focus:outline-none"
+                      class="bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs text-slate-800 dark:text-slate-100 font-mono font-medium cursor-pointer focus:ring-0 focus:outline-none"
                       title="Modifier la date"
                     />
                   </td>
@@ -249,7 +249,7 @@
                       type="text"
                       formControlName="libelle"
                       placeholder="Libellé de la transaction..."
-                      class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs sm:text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:ring-0 focus:outline-none"
+                      class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs sm:text-sm font-medium text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:ring-0 focus:outline-none"
                       [class.text-rose-600]="editTransactionForm.get('libelle')?.touched && editTransactionForm.get('libelle')?.invalid"
                     />
                   </td>
@@ -259,7 +259,7 @@
                     <select
                       id="inline-edit-type-tx"
                       formControlName="typeTransaction"
-                      class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs sm:text-sm font-medium text-slate-800 cursor-pointer focus:ring-0 focus:outline-none"
+                      class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs sm:text-sm font-medium text-slate-800 dark:text-slate-200 cursor-pointer focus:ring-0 focus:outline-none"
                     >
                       <option value="Administration">Administration</option>
                       <option value="Opérations">Opérations</option>
@@ -274,10 +274,10 @@
                         type="text"
                         formControlName="matriculeVehicule"
                         placeholder="Matricule..."
-                        class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs font-mono font-bold uppercase text-blue-900 placeholder:text-blue-300 focus:ring-0 focus:outline-none"
+                        class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs font-mono font-bold uppercase text-blue-900 dark:text-blue-300 placeholder:text-blue-300 dark:placeholder:text-blue-500 focus:ring-0 focus:outline-none"
                       />
                     } @else {
-                      <span class="text-xs text-slate-300 select-none italic">—</span>
+                      <span class="text-xs text-slate-400 dark:text-slate-500 select-none italic">—</span>
                     }
                   </td>
 
@@ -288,7 +288,7 @@
                       type="text"
                       formControlName="employee"
                       placeholder="—"
-                      class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs text-slate-700 placeholder:text-slate-300 focus:ring-0 focus:outline-none"
+                      class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:ring-0 focus:outline-none"
                     />
                   </td>
 
@@ -299,7 +299,7 @@
                       type="number"
                       formControlName="quantity"
                       placeholder="—"
-                      class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs text-center font-medium text-slate-800 placeholder:text-slate-300 focus:ring-0 focus:outline-none"
+                      class="w-full bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs text-center font-medium text-slate-800 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:ring-0 focus:outline-none"
                     />
                   </td>
 
@@ -321,9 +321,9 @@
                         type="number"
                         formControlName="montant"
                         placeholder="0"
-                        class="w-24 bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs sm:text-sm text-right font-bold text-slate-900 placeholder:text-slate-300 focus:ring-0 focus:outline-none"
+                        class="w-24 bg-transparent appearance-none border-none outline-none shadow-none ring-0 p-0 text-xs sm:text-sm text-right font-bold text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:ring-0 focus:outline-none"
                       />
-                      <span class="text-xs text-slate-400">FCFA</span>
+                      <span class="text-xs text-slate-500 dark:text-slate-400 font-medium">FCFA</span>
                     </div>
                   </td>
 
@@ -372,40 +372,40 @@
                         class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
                       />
                     } @else {
-                      <span class="text-slate-300">•</span>
+                      <span class="text-slate-400 dark:text-slate-500">•</span>
                     }
                   </td>
-                  <td class="py-4 px-3 whitespace-nowrap text-slate-700 font-medium">{{ tx.date }}</td>
-                  <td class="py-4 px-3 text-slate-800 font-medium">{{ tx.libelle }}</td>
+                  <td class="py-4 px-3 whitespace-nowrap text-slate-800 dark:text-slate-200 font-medium">{{ tx.date }}</td>
+                  <td class="py-4 px-3 text-slate-900 dark:text-slate-100 font-medium">{{ tx.libelle }}</td>
                   <td class="py-4 px-3">
                     <div class="flex flex-col">
-                      <span class="text-slate-800 font-medium">{{ tx.typeTransaction }}</span>
+                      <span class="text-slate-900 dark:text-slate-100 font-medium">{{ tx.typeTransaction }}</span>
                       @if (tx.typeDescription) {
-                        <span class="text-xs text-slate-400 mt-0.5">{{ tx.typeDescription }}</span>
+                        <span class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ tx.typeDescription }}</span>
                       }
                     </div>
                   </td>
                   <td class="py-4 px-3 whitespace-nowrap">
                     @if (tx.matriculeVehicule) {
-                      <span class="font-mono text-xs font-bold text-blue-800 bg-blue-50/80 px-2 py-1 rounded border border-blue-200">
+                      <span class="font-mono text-xs font-bold text-blue-800 dark:text-blue-300 bg-blue-50/80 dark:bg-blue-950/40 px-2 py-1 rounded border border-blue-200 dark:border-blue-800/60">
                         {{ tx.matriculeVehicule }}
                       </span>
                     } @else {
-                      <span class="text-slate-400 text-xs">—</span>
+                      <span class="text-slate-400 dark:text-slate-500 text-xs">—</span>
                     }
                   </td>
-                  <td class="py-4 px-3 whitespace-nowrap text-slate-500">{{ tx.employee || '—' }}</td>
-                  <td class="py-4 px-3 text-center text-slate-500 whitespace-nowrap">
+                  <td class="py-4 px-3 whitespace-nowrap text-slate-600 dark:text-slate-300">{{ tx.employee || '—' }}</td>
+                  <td class="py-4 px-3 text-center text-slate-600 dark:text-slate-300 whitespace-nowrap">
                     {{ tx.quantity !== undefined ? tx.quantity : '' }}
                   </td>
                   <td class="py-4 px-3 text-right whitespace-nowrap font-medium">
                     @if (tx.montant < 0) {
-                      <span class="text-rose-500">{{ formatCurrency(tx.montant) }}</span>
+                      <span class="text-rose-600 dark:text-rose-400 font-semibold">{{ formatCurrency(tx.montant) }}</span>
                     } @else {
-                      <span class="text-slate-800">{{ formatCurrency(tx.montant) }}</span>
+                      <span class="text-slate-900 dark:text-slate-100 font-semibold">{{ formatCurrency(tx.montant) }}</span>
                     }
                   </td>
-                  <td class="py-4 px-3 text-right whitespace-nowrap font-medium text-slate-800">
+                  <td class="py-4 px-3 text-right whitespace-nowrap font-bold text-slate-900 dark:text-slate-100">
                     {{ tx.soldeApres !== undefined ? formatCurrency(tx.soldeApres) : '—' }}
                   </td>
                 </tr>
