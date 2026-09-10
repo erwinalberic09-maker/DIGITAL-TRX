@@ -74,9 +74,16 @@ function getSupabaseAdmin() {
  * via Supabase Auth admin client et attache l'utilisateur à req.user.
  * FAIL-CLOSED : En cas d'indisponibilité du client d'administration, refuse la requête avec une erreur 500 explicite.
  */
+/**
+ * Middleware Express d'authentification : valide le jeton Bearer
+ * via Supabase Auth admin client et attache l'utilisateur à req.user avec son rôle sécurisé.
+ * SÉCURITÉ STRICTE : Ne fait JAMAIS confiance à `user_metadata` (éditable côté client par l'utilisateur).
+ * Le rôle est extrait exclusivement de `app_metadata` (scellé serveur), de `public.profiles` ou des emails admins permanents.
+ * FAIL-CLOSED : En cas d'indisponibilité du client d'administration, refuse la requête avec une erreur 500 explicite.
+ */
 export async function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : (authHeader || '').replace('Bearer ', '');
 
   if (!token) {
     res.status(401).json({ error: 'Jeton d’authentification manquant dans l’en-tête Authorization' });
@@ -96,16 +103,36 @@ export async function requireAuth(req: express.Request, res: express.Response, n
       return;
     }
 
-    const appRole = data.user.app_metadata?.['role'];
-    const userRole = data.user.user_metadata?.['role'];
-    const rawRole = (appRole as string) || (userRole as string) || 'employe';
+    const user = data.user;
+    const userEmail = (user.email || '').toLowerCase().trim();
+    const appRole = normalizeUserRole(user.app_metadata?.['role'] as string);
+
+    let resolvedRole = appRole;
+
+    // Si le rôle n'est pas scellé dans app_metadata, vérifier la table sécurisée profiles
+    if (resolvedRole === 'employe' && !PERMANENT_ADMIN_EMAILS.includes(userEmail)) {
+      const { data: profile } = await supabaseAdmin
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (profile?.role) {
+        resolvedRole = normalizeUserRole(profile.role);
+      }
+    }
+
+    // Priorité absolue aux comptes administrateurs permanents du système
+    if (PERMANENT_ADMIN_EMAILS.includes(userEmail)) {
+      resolvedRole = 'admin';
+    }
 
     (req as unknown as Record<string, unknown>)['user'] = {
-      id: data.user.id,
-      email: data.user.email,
-      role: normalizeUserRole(rawRole),
-      app_metadata: data.user.app_metadata,
-      user_metadata: data.user.user_metadata,
+      id: user.id,
+      email: user.email,
+      role: resolvedRole,
+      app_metadata: user.app_metadata,
+      user_metadata: user.user_metadata,
     };
 
     next();
@@ -124,16 +151,30 @@ const PERMANENT_ADMIN_EMAILS = [
 ];
 
 /**
+ * Middleware de contrôle d'accès basé sur les rôles (RBAC).
+ * Exige que le rôle résolu de l'utilisateur fasse partie des rôles autorisés.
+ */
+export function requireRole(allowedRoles: Array<'admin' | 'caissiere' | 'manager' | 'employe'>) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction): void => {
+    const user = (req as unknown as Record<string, unknown>)['user'] as { role?: string; email?: string } | undefined;
+    if (!user || !user.role || !allowedRoles.includes(user.role as 'admin' | 'caissiere' | 'manager' | 'employe')) {
+      res.status(403).json({ error: 'Accès refusé. Privilèges insuffisants pour exécuter cette opération.' });
+      return;
+    }
+    next();
+  };
+}
+
+/**
  * 4. Le "Garde-Fou" Ultime : La Validation Côté Serveur (RBAC Niveau 4)
- * Valide le JWT, vérifie le statut admin de manière résiliente :
- * 1. app_metadata.role === 'admin'
- * 2. profiles.role === 'admin'
- * 3. user_metadata.role === 'admin'
- * 4. email administrateur principal permanent (ex: erwinalberic99@gmail.com)
+ * Valide le JWT et vérifie le statut admin via des sources inviolables :
+ * 1. app_metadata.role === 'admin' (scellé serveur par Supabase Admin)
+ * 2. public.profiles.role === 'admin' (table SQL serveur)
+ * 3. email administrateur principal permanent (ex: erwinalberic99@gmail.com)
  *
+ * NOTE DE SÉCURITÉ : `user_metadata.role` est EXCLU car modifiable côté client par l'utilisateur.
  * Auto-réparation immédiate : si l'utilisateur est légitime mais que son app_metadata
- * n'a pas encore été synchronisé, le serveur scelle automatiquement son app_metadata
- * et met à jour public.profiles pour pérenniser son statut.
+ * n'a pas encore été synchronisé, le serveur scelle son app_metadata et synchronise public.profiles.
  */
 export async function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
@@ -160,10 +201,9 @@ export async function requireAdmin(req: express.Request, res: express.Response, 
     }
 
     const appRole = normalizeUserRole(user.app_metadata?.['role'] as string);
-    const userRole = normalizeUserRole(user.user_metadata?.['role'] as string);
     const userEmail = (user.email || '').toLowerCase().trim();
 
-    let isUserAdmin = appRole === 'admin' || userRole === 'admin' || PERMANENT_ADMIN_EMAILS.includes(userEmail);
+    let isUserAdmin = appRole === 'admin' || PERMANENT_ADMIN_EMAILS.includes(userEmail);
 
     if (!isUserAdmin) {
       const { data: profile } = await supabaseAdmin
@@ -182,7 +222,7 @@ export async function requireAdmin(req: express.Request, res: express.Response, 
       return;
     }
 
-    // Auto-réparation si app_metadata n'est pas encore synchronisé
+    // Auto-réparation si app_metadata n'est pas encore synchronisé (uniquement pour un admin authentifié et légitime)
     if (appRole !== 'admin') {
       try {
         await supabaseAdmin.auth.admin.updateUserById(user.id, {
@@ -756,6 +796,10 @@ const getOperationsHandler = async (req: express.Request, res: express.Response)
  * Sauvegarde d'une opération de caisse (POST /api/cahier/operations & /api/cashier/transactions)
  * Nettoie et valide les champs, vérifie l'autorisation de l'utilisateur, puis persiste dans PostgreSQL.
  */
+/**
+ * Sauvegarde d'une opération de caisse (POST /api/cahier/operations & /api/cashier/transactions)
+ * Nettoie et valide les champs, vérifie l'autorisation de l'utilisateur, puis persiste dans PostgreSQL.
+ */
 const saveOperationHandler = async (req: express.Request, res: express.Response): Promise<void> => {
   const adminClient = getSupabaseAdmin();
   if (!adminClient) {
@@ -764,7 +808,7 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
   }
 
   try {
-    const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string } | undefined;
+    const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string; role?: string } | undefined;
     const callerId: string | null = authenticatedUser?.id || null;
 
     const payload = req.body || {};
@@ -802,6 +846,8 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       date: payload.date ? new Date(payload.date).toISOString() : new Date().toISOString(),
     };
 
+    console.log(`[AUDIT CASHIER] Création opération par [${authenticatedUser?.email || callerId || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'}) : Montant=${montant}, Libellé="${libelle}"`);
+
     const { data, error } = await adminClient
       .from('cashier_transactions')
       .insert([rowToInsert])
@@ -828,6 +874,7 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
 
 /**
  * Mise à jour d'une opération de caisse (PUT /api/cahier/operations/:id & /api/cashier/transactions/:id)
+ * Réservé exclusivement aux rôles 'admin' et 'caissiere'.
  */
 const updateOperationHandler = async (req: express.Request, res: express.Response): Promise<void> => {
   const adminClient = getSupabaseAdmin();
@@ -837,6 +884,7 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
   }
 
   try {
+    const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string; role?: string } | undefined;
     const rawId = req.params['id'];
     const targetId = Array.isArray(rawId) ? rawId[0] : rawId;
 
@@ -904,6 +952,8 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       return;
     }
 
+    console.log(`[AUDIT CASHIER] Modification opération [${targetId}] par [${authenticatedUser?.email || authenticatedUser?.id || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'}) :`, Object.keys(updateData));
+
     const { data, error } = await adminClient
       .from('cashier_transactions')
       .update(updateData)
@@ -931,6 +981,7 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
 
 /**
  * Suppression d'opérations de caisse (DELETE /api/cahier/operations & /api/cashier/transactions)
+ * SÉCURITÉ CRITIQUE : Réservé strictement aux administrateurs ('admin') en accord avec les policies RLS.
  */
 const deleteOperationsHandler = async (req: express.Request, res: express.Response): Promise<void> => {
   const adminClient = getSupabaseAdmin();
@@ -940,6 +991,7 @@ const deleteOperationsHandler = async (req: express.Request, res: express.Respon
   }
 
   try {
+    const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string; role?: string } | undefined;
     const paramId = req.params['id'];
     const singleId = Array.isArray(paramId) ? paramId[0] : paramId;
     const bodyIds = Array.isArray(req.body?.ids) ? req.body.ids : [];
@@ -954,6 +1006,8 @@ const deleteOperationsHandler = async (req: express.Request, res: express.Respon
       res.status(400).json({ error: 'Limite dépassée : impossible de supprimer plus de 100 opérations par requête' });
       return;
     }
+
+    console.warn(`[AUDIT CASHIER] Suppression de ${targetIds.length} opération(s) [${targetIds.join(', ')}] initiée par [${authenticatedUser?.email || authenticatedUser?.id || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'})`);
 
     const { error, count } = await adminClient
       .from('cashier_transactions')
@@ -977,23 +1031,25 @@ const deleteOperationsHandler = async (req: express.Request, res: express.Respon
   }
 };
 
-// Déclaration des routes de caisse sécurisées par requireAuth
+// Déclaration des routes de caisse sécurisées par RBAC strict
 app.get('/api/cahier/operations', requireAuth, getOperationsHandler);
 app.get('/api/cashier/transactions', requireAuth, getOperationsHandler);
 app.get('/api/system/operations', requireAuth, getOperationsHandler);
 
-app.post('/api/cahier/operations', requireAuth, saveOperationHandler);
-app.post('/api/cashier/transactions', requireAuth, saveOperationHandler);
+// Écriture : réservée aux Administrateurs et Caissières
+app.post('/api/cahier/operations', requireAuth, requireRole(['admin', 'caissiere']), saveOperationHandler);
+app.post('/api/cashier/transactions', requireAuth, requireRole(['admin', 'caissiere']), saveOperationHandler);
 
-app.put('/api/cahier/operations/:id', requireAuth, updateOperationHandler);
-app.put('/api/cashier/transactions/:id', requireAuth, updateOperationHandler);
-app.patch('/api/cahier/operations/:id', requireAuth, updateOperationHandler);
-app.patch('/api/cashier/transactions/:id', requireAuth, updateOperationHandler);
+app.put('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere']), updateOperationHandler);
+app.put('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere']), updateOperationHandler);
+app.patch('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere']), updateOperationHandler);
+app.patch('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere']), updateOperationHandler);
 
-app.delete('/api/cahier/operations/:id', requireAuth, deleteOperationsHandler);
-app.delete('/api/cashier/transactions/:id', requireAuth, deleteOperationsHandler);
-app.delete('/api/cahier/operations', requireAuth, deleteOperationsHandler);
-app.delete('/api/cashier/transactions', requireAuth, deleteOperationsHandler);
+// Suppression : réservée strictement aux Administrateurs
+app.delete('/api/cahier/operations/:id', requireAuth, requireRole(['admin']), deleteOperationsHandler);
+app.delete('/api/cashier/transactions/:id', requireAuth, requireRole(['admin']), deleteOperationsHandler);
+app.delete('/api/cahier/operations', requireAuth, requireRole(['admin']), deleteOperationsHandler);
+app.delete('/api/cashier/transactions', requireAuth, requireRole(['admin']), deleteOperationsHandler);
 
 /**
  * Example Express Rest API endpoints can be defined here.

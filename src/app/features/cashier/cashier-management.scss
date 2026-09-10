@@ -87,10 +87,15 @@
     }
   }
 
-  // Animation d'ouverture modale
-  dialog,
-  [role="dialog"] > div {
-    animation: cashierModalFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  // Style appliqué sur la 3ème colonne (Libellé) de la première ligne
+  tbody tr:first-child td:nth-child(3) {
+    border-style: double;
+    height: 39.5px;
+    width: 88.5312px;
+    padding-right: 169px;
+    padding-bottom: -9px;
+    padding-top: -5px;
+    padding-left: 18px;
   }
 }
 
