@@ -503,6 +503,14 @@ export class CashierService implements OnDestroy {
           ...item,
           ...updatedFields,
           date: updatedFields.date || item.date,
+          libelle: updatedFields.libelle !== undefined ? updatedFields.libelle : item.libelle,
+          service: updatedFields.service !== undefined ? updatedFields.service : item.service,
+          typeDescription: updatedFields.typeDescription !== undefined ? updatedFields.typeDescription : item.typeDescription,
+          category: updatedFields.category !== undefined ? updatedFields.category : item.category,
+          status: updatedFields.status !== undefined ? updatedFields.status : item.status,
+          noDossier: updatedFields.noDossier !== undefined ? updatedFields.noDossier : item.noDossier,
+          employee: updatedFields.employee !== undefined ? updatedFields.employee : item.employee,
+          quantity: updatedFields.quantity !== undefined ? updatedFields.quantity : item.quantity,
           montant: updatedFields.montant !== undefined ? updatedFields.montant : item.montant,
         };
       })

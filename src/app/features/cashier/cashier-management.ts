@@ -582,9 +582,13 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
     let isoDate = this.todayIsoDate();
     if (tx.date) {
-      const parts = tx.date.split('/');
-      if (parts.length === 3) {
-        isoDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+      if (tx.date.includes('/')) {
+        const parts = tx.date.split('/');
+        if (parts.length === 3) {
+          isoDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        }
+      } else if (tx.date.includes('-')) {
+        isoDate = tx.date;
       }
     }
 
@@ -593,15 +597,15 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
     this.editTransactionForm.patchValue({
       date: isoDate,
-      libelle: tx.libelle,
-      service: isOps ? 'Opérations' : 'Administration',
+      libelle: tx.libelle || '',
+      service: (tx.service as 'Opérations' | 'Administration') || '',
       typeDescription: tx.typeDescription || '',
-      category: tx.category,
+      category: tx.category || 'sortie',
       status: tx.status || 'draft',
       noDossier: tx.noDossier || '',
       employee: tx.employee || '',
-      quantity: tx.quantity !== undefined ? tx.quantity : null,
-      montant: Math.abs(tx.montant),
+      quantity: tx.quantity !== undefined && tx.quantity !== null ? tx.quantity : null,
+      montant: tx.montant !== undefined && tx.montant !== null ? Math.abs(tx.montant) : null,
     });
 
     this.updateEditConditionalValidators(isOps);
@@ -628,7 +632,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         // Sauvegarder si valide ou fermer
         const libelleVal = this.transactionForm.get('libelle')?.value?.trim();
         const montantVal = this.transactionForm.get('montant')?.value;
-        if (libelleVal && montantVal && this.transactionForm.valid) {
+        if (libelleVal && montantVal) {
           this.submitInlineTransaction();
         } else {
           this.cancelAddInline();
@@ -642,8 +646,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       const editRowEl = this.elementRef.nativeElement.querySelector(`#inline-edit-row-${activeEditId}`);
       if (editRowEl && !editRowEl.contains(target)) {
         const libelleVal = this.editTransactionForm.get('libelle')?.value?.trim();
-        const montantVal = this.editTransactionForm.get('montant')?.value;
-        if (libelleVal && montantVal && this.editTransactionForm.valid) {
+        if (libelleVal) {
           this.submitInlineEdit();
         } else {
           this.cancelInlineEdit();
@@ -708,23 +711,28 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     const activeId = this.editingTxId();
     if (!activeId) return;
 
-    if (this.editTransactionForm.invalid) {
-      this.editTransactionForm.markAllAsTouched();
+    const formValues = this.editTransactionForm.getRawValue();
+    const libelle = formValues.libelle?.trim();
+    if (!libelle) {
+      this.editTransactionForm.get('libelle')?.markAsTouched();
       return;
     }
 
     this.isEditingSubmitting.set(true);
     try {
-      const formValues = this.editTransactionForm.getRawValue();
       const rawMontant = Number(formValues.montant) || 0;
       const finalMontant =
         formValues.category === 'sortie' ? -Math.abs(rawMontant) : Math.abs(rawMontant);
 
       let formattedDate = this.todayFormatted();
       if (formValues.date) {
-        const parts = formValues.date.split('-');
-        if (parts.length === 3) {
-          formattedDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
+        if (formValues.date.includes('-')) {
+          const parts = formValues.date.split('-');
+          if (parts.length === 3) {
+            formattedDate = `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
+          } else {
+            formattedDate = formValues.date;
+          }
         } else {
           formattedDate = formValues.date;
         }
@@ -732,8 +740,8 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
       const result = await this.cashierService.updateTransaction(activeId, {
         date: formattedDate,
-        libelle: formValues.libelle,
-        service: (formValues.service as 'Opérations' | 'Administration') || 'Administration',
+        libelle: libelle,
+        service: (formValues.service as 'Opérations' | 'Administration') || '',
         typeDescription: formValues.typeDescription || undefined,
         category: (formValues.category as TransactionTypeCategory) || 'sortie',
         status: (formValues.status as TransactionStatus) || 'draft',
