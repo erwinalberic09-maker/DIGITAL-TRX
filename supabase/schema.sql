@@ -307,6 +307,7 @@ CREATE INDEX IF NOT EXISTS idx_cashier_transactions_status ON public.cashier_tra
 CREATE INDEX IF NOT EXISTS idx_cashier_transactions_service ON public.cashier_transactions (service);
 CREATE INDEX IF NOT EXISTS idx_cashier_transactions_employee_id ON public.cashier_transactions (employee_id);
 CREATE INDEX IF NOT EXISTS idx_cashier_transactions_dossier_id ON public.cashier_transactions (dossier_id);
+CREATE INDEX IF NOT EXISTS idx_cashier_transactions_created_by ON public.cashier_transactions (created_by);
 
 DROP TRIGGER IF EXISTS trg_cashier_transactions_updated_at ON public.cashier_transactions;
 CREATE TRIGGER trg_cashier_transactions_updated_at
@@ -343,15 +344,26 @@ CREATE POLICY "cashier_transactions_insert_by_role"
         )
     );
 
+-- RÈGLE MÉTIER : chacun ne modifie que ce qu'il a lui-même enregistré (created_by = auth.uid()).
+-- Un manager ne peut pas modifier une saisie de caissier, et un caissier ne peut pas modifier
+-- celle d'un collègue, même s'ils travaillent tous sur le même tableau. Seul un admin déroge.
 DROP POLICY IF EXISTS "cashier_transactions_update_by_role" ON public.cashier_transactions;
-CREATE POLICY "cashier_transactions_update_by_role"
+DROP POLICY IF EXISTS "cashier_transactions_update_own_or_admin" ON public.cashier_transactions;
+CREATE POLICY "cashier_transactions_update_own_or_admin"
     ON public.cashier_transactions FOR UPDATE
     TO authenticated
     USING (
-        EXISTS (
+        created_by = auth.uid()
+        OR EXISTS (
             SELECT 1 FROM public.profiles
-            WHERE profiles.id = auth.uid()
-              AND profiles.role IN ('admin', 'caissier', 'caissiere', 'manager')
+            WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
+        )
+    )
+    WITH CHECK (
+        created_by = auth.uid()
+        OR EXISTS (
+            SELECT 1 FROM public.profiles
+            WHERE profiles.id = auth.uid() AND profiles.role = 'admin'
         )
     );
 

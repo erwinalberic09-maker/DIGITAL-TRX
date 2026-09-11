@@ -778,6 +778,8 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       first_name: firstName,
       partenaire,
       employee,
+      employee_id: callerId,
+      created_by: callerId,
       quantity,
       montant,
       date: payload.date ? (typeof payload.date === 'string' ? payload.date : new Date(payload.date).toISOString()) : new Date().toISOString(),
@@ -828,6 +830,31 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
     if (!targetId) {
       res.status(400).json({ error: 'Identifiant d’opération manquant' });
       return;
+    }
+
+    // RÈGLE MÉTIER : chacun ne modifie que ce qu'il a lui-même enregistré.
+    // Un manager ne peut pas modifier une opération saisie par un caissier, et un
+    // caissier ne peut pas modifier celle d'un collègue. Seul un admin déroge à la règle.
+    // (Miroir applicatif de la policy RLS "cashier_transactions_update_own_or_admin".)
+    if (authenticatedUser?.role !== 'admin') {
+      const { data: existingRow, error: fetchError } = await adminClient
+        .from('cashier_transactions')
+        .select('created_by')
+        .eq('id', targetId)
+        .maybeSingle();
+
+      if (fetchError) {
+        res.status(500).json({ error: `Erreur lors de la vérification des droits: ${fetchError.message}` });
+        return;
+      }
+      if (!existingRow) {
+        res.status(404).json({ error: 'Opération introuvable' });
+        return;
+      }
+      if (existingRow.created_by !== authenticatedUser?.id) {
+        res.status(403).json({ error: 'Action refusée : vous ne pouvez modifier que les opérations que vous avez vous-même enregistrées.' });
+        return;
+      }
     }
 
     const payload = req.body || {};
@@ -1010,10 +1037,10 @@ app.get('/api/system/operations', requireAuth, getOperationsHandler);
 app.post('/api/cahier/operations', requireAuth, requireRole(['admin', 'caissiere']), saveOperationHandler);
 app.post('/api/cashier/transactions', requireAuth, requireRole(['admin', 'caissiere']), saveOperationHandler);
 
-app.put('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere']), updateOperationHandler);
-app.put('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere']), updateOperationHandler);
-app.patch('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere']), updateOperationHandler);
-app.patch('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere']), updateOperationHandler);
+app.put('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationHandler);
+app.put('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationHandler);
+app.patch('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationHandler);
+app.patch('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationHandler);
 
 // Suppression : réservée strictement aux Administrateurs
 app.delete('/api/cahier/operations/:id', requireAuth, requireRole(['admin']), deleteOperationsHandler);
