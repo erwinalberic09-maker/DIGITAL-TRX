@@ -61,6 +61,9 @@ export interface CaisseTimelineData {
   templateUrl: './cashier-management.html',
   styleUrl: './cashier-management.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: {
+    '(document:click)': 'onDocumentClick($event)',
+  },
 })
 export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('caisseChartCanvas')
@@ -68,6 +71,8 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
   private readonly cashierService = inject(CashierService);
   private readonly authService = inject(AuthService);
+  private readonly elementRef = inject(ElementRef);
+  protected readonly Math = Math;
   private readonly platformId = inject(PLATFORM_ID);
 
   private chartInstance: Chart | null = null;
@@ -478,6 +483,11 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   }
 
   public startAddInline(): void {
+    // Règle Odoo : une seule ligne ouverte à la fois
+    if (this.editingTxId()) {
+      this.cancelInlineEdit();
+    }
+
     const today = new Date();
     const isoDate = today.toISOString().split('T')[0];
     this.transactionForm.reset({
@@ -544,6 +554,14 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   public startInlineEdit(tx: CashierTransaction): void {
     if (!this.canEdit()) return;
 
+    // Règle Odoo : fermer toute ligne d'ajout ou d'édition en cours
+    if (this.isAddingRow()) {
+      this.cancelAddInline();
+    }
+    if (this.editingTxId()) {
+      this.cancelInlineEdit();
+    }
+
     let isoDate = this.todayIsoDate();
     if (tx.date) {
       const parts = tx.date.split('/');
@@ -569,6 +587,59 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
     this.updateEditConditionalValidators(isOps);
     this.editingTxId.set(tx.id);
+  }
+
+  /**
+   * Fermeture automatique Odoo quand l'utilisateur clique hors de la ligne ouverte ou du tableau
+   */
+  public onDocumentClick(event: MouseEvent): void {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+
+    // Si on a cliqué sur le bouton "Nouveau" du bandeau, laisser startAddInline() gérer
+    if (target.closest('#cashier-new-btn')) {
+      return;
+    }
+
+    // 1. Si la ligne d'ajout est ouverte et qu'on clique en dehors
+    if (this.isAddingRow()) {
+      const addRowEl = this.elementRef.nativeElement.querySelector('#inline-add-row');
+      if (addRowEl && !addRowEl.contains(target)) {
+        // Sauvegarder si valide ou fermer
+        const libelleVal = this.transactionForm.get('libelle')?.value?.trim();
+        const montantVal = this.transactionForm.get('montant')?.value;
+        if (libelleVal && montantVal && this.transactionForm.valid) {
+          this.submitInlineTransaction();
+        } else {
+          this.cancelAddInline();
+        }
+      }
+    }
+
+    // 2. Si une ligne existante est en édition et qu'on clique en dehors
+    const activeEditId = this.editingTxId();
+    if (activeEditId) {
+      const editRowEl = this.elementRef.nativeElement.querySelector(`#inline-edit-row-${activeEditId}`);
+      if (editRowEl && !editRowEl.contains(target)) {
+        const libelleVal = this.editTransactionForm.get('libelle')?.value?.trim();
+        const montantVal = this.editTransactionForm.get('montant')?.value;
+        if (libelleVal && montantVal && this.editTransactionForm.valid) {
+          this.submitInlineEdit();
+        } else {
+          this.cancelInlineEdit();
+        }
+      }
+    }
+  }
+
+  public onAddKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      this.submitInlineTransaction();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      this.cancelAddInline();
+    }
   }
 
   public cancelInlineEdit(): void {
@@ -627,6 +698,48 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       event.preventDefault();
       this.cancelInlineEdit();
     }
+  }
+
+  /**
+   * Génère la référence de pièce comptable séquentielle au format Odoo ERP (ex: CSH1/2026/00001)
+   */
+  public getOdooSequence(tx: CashierTransaction, index: number): string {
+    const year = tx.date?.includes('/') ? tx.date.split('/')[2] || '2026' : (tx.date?.includes('-') ? tx.date.split('-')[0] : '2026');
+    const cleanId = tx.id.replace(/\D/g, '');
+    const seqNum = cleanId ? String(parseInt(cleanId.slice(-4), 10) || (index + 1)) : String(index + 1);
+    return `CSH1/${year}/${seqNum.padStart(5, '0')}`;
+  }
+
+  /**
+   * Formate la date au style compact Odoo (ex: 2 sept.)
+   */
+  public formatOdooDate(dateStr: string): string {
+    if (!dateStr) return '';
+    try {
+      let d: Date;
+      if (dateStr.includes('/')) {
+        const [day, month, year] = dateStr.split('/');
+        d = new Date(Number(year), Number(month) - 1, Number(day));
+      } else {
+        d = new Date(dateStr);
+      }
+      if (isNaN(d.getTime())) return dateStr;
+      const formatted = d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+      return formatted.endsWith('.') ? formatted : `${formatted}.`;
+    } catch {
+      return dateStr;
+    }
+  }
+
+  /**
+   * Calcule le solde prévisionnel lors de la saisie d'une nouvelle ligne
+   */
+  public getEstimatedBalance(): string {
+    const rawVal = this.transactionForm.get('montant')?.value;
+    const num = typeof rawVal === 'number' ? rawVal : parseFloat(String(rawVal || 0).replace(/[^\d.-]/g, '')) || 0;
+    const cat = this.transactionForm.get('category')?.value;
+    const diff = cat === 'sortie' ? -Math.abs(num) : Math.abs(num);
+    return this.formatCurrency(this.currentBalance() + diff);
   }
 
   public trackByTxId(_index: number, tx: CashierTransaction): string {

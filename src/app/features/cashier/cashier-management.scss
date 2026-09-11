@@ -1,81 +1,145 @@
 // Styles spécifiques au module Caisse Transimex
-// Conforme au design épuré, minimaliste et fidèle à la maquette Odoo
+// Conforme au design épuré, minimaliste et fidèle à la vue liste Odoo ERP (Flat Tree View)
 
 .cashier-page {
   font-family: inherit;
   color: var(--app-text);
+  margin: 0;
+  padding: 0;
+  width: 100%;
 
-  // Tableau
-  table {
-    border-color: var(--app-border);
+  // Tableau Odoo Tree View 100% plat sans box/card
+  .odoo-table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0;
+    border: none;
+    background: transparent;
 
-    thead tr {
-      border-color: var(--app-border) !important;
+    .odoo-head-row {
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
 
       th {
-        color: var(--app-text-muted) !important;
+        color: #f1f5f9;
         font-weight: 600;
-        letter-spacing: 0.01em;
+        font-size: 0.875rem;
+        letter-spacing: 0;
+        padding: 0.625rem 0.75rem;
+        white-space: nowrap;
+        background: transparent;
 
         button, span {
-          color: var(--app-text-muted);
-        }
-
-        mat-icon {
-          color: var(--app-text-subtle);
+          color: inherit;
         }
       }
     }
 
     tbody {
-      border-color: var(--app-border-subtle) !important;
-
-      tr {
-        border-color: var(--app-border-subtle) !important;
+      .odoo-data-row {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+        transition: background-color 0.12s ease;
+        background-color: transparent;
 
         &:hover {
-          background-color: var(--app-surface-hover) !important;
+          background-color: rgba(255, 255, 255, 0.035);
+        }
+
+        &.odoo-row-selected {
+          background-color: rgba(20, 184, 166, 0.08);
         }
 
         td {
           vertical-align: middle;
-          color: var(--app-text);
+          padding: 0.625rem 0.75rem;
+          font-size: 0.875rem;
+          color: #f1f5f9;
+          border: none;
+        }
+      }
 
-          span:not(.text-rose-500):not(.text-emerald-700):not(.text-blue-800) {
-            color: inherit;
-          }
+      // Ligne active en cours d'édition / création (Image 1 Odoo)
+      .odoo-row-editing {
+        background-color: transparent;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+
+        td {
+          vertical-align: middle;
+          padding: 0.5rem 0.75rem;
+          font-size: 0.875rem;
+          color: #f1f5f9;
+          border: none;
         }
       }
     }
   }
 
-  // Checkbox stylisée discrète
-  input[type="checkbox"] {
-    accent-color: var(--odoo-text-teal, #008f8c);
-    transition: transform 0.15s ease;
+  // Checkbox Odoo ultra-discrète
+  .odoo-checkbox {
+    accent-color: #14b8a6;
+    width: 0.95rem;
+    height: 0.95rem;
+    cursor: pointer;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 2px;
+  }
 
-    &:active {
-      transform: scale(0.92);
+  // Champs de saisie Odoo (100% plat, sans background, avec soulignement blanc fin Odoo)
+  .odoo-field-input,
+  input.odoo-field-input {
+    background: transparent !important;
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    color: #ffffff !important;
+    padding: 2px 2px !important;
+    outline: none !important;
+    font-size: 0.875rem !important;
+    font-family: inherit !important;
+    border-radius: 0 !important;
+
+    &::placeholder {
+      color: rgba(255, 255, 255, 0.4) !important;
     }
   }
 
-  // Ligne d'ajout rapide (inline editable)
-  #inline-add-row {
-    background-color: rgba(245, 158, 11, 0.08);
-    border-color: rgba(245, 158, 11, 0.25);
+  // Soulignement actif blanc fin comme sur Image 1 Odoo
+  .odoo-active-underline,
+  input.odoo-active-underline {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.85) !important;
+    border-radius: 0 !important;
 
-    input, select {
-      color: var(--app-text);
-
-      &::placeholder {
-        color: var(--app-text-muted);
-      }
-
-      option {
-        background-color: var(--app-surface, #2b2f33);
-        color: var(--app-text, #ffffff);
-      }
+    &:focus {
+      border-bottom: 1px solid #ffffff !important;
     }
+  }
+
+  // Badge statut Odoo Comptabilisé (Pilule vert émeraude vive fidèle à image 1 & 2)
+  .odoo-badge-posted {
+    background-color: #00a09d;
+    color: #000000;
+    font-weight: 600;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.75rem;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    letter-spacing: 0.01em;
+  }
+
+  .odoo-badge-draft {
+    background-color: rgba(148, 163, 184, 0.2);
+    color: #94a3b8;
+    font-weight: 500;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.65rem;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
   }
 
   // Micro-animations sur les boutons de pagination
@@ -83,19 +147,8 @@
   #cashier-next-page-btn {
     transition: all 0.2s ease-in-out;
     &:not(:disabled):hover {
-      transform: scale(1.1);
+      transform: scale(1.08);
     }
-  }
-
-  // Style appliqué sur la 3ème colonne (Libellé) de la première ligne
-  tbody tr:first-child td:nth-child(3) {
-    border-style: double;
-    height: 39.5px;
-    width: 88.5312px;
-    padding-right: 169px;
-    padding-bottom: -9px;
-    padding-top: -5px;
-    padding-left: 18px;
   }
 }
 
@@ -103,46 +156,9 @@
 :host-context(.dark),
 :host-context([data-theme="dark"]) {
   .cashier-page {
-    #inline-add-row {
-      background-color: rgba(245, 158, 11, 0.12);
-      border-color: rgba(245, 158, 11, 0.35);
+    table {
+      background-color: transparent;
     }
-
-    .bg-blue-50\/80 {
-      background-color: rgba(37, 99, 235, 0.18) !important;
-      color: #93c5fd !important;
-      border-color: rgba(59, 130, 246, 0.4) !important;
-    }
-
-    .text-slate-900,
-    .text-slate-800,
-    .text-slate-700 {
-      color: var(--app-text) !important;
-    }
-
-    .text-slate-600,
-    .text-slate-500 {
-      color: var(--app-text-muted) !important;
-    }
-
-    .text-slate-400 {
-      color: var(--app-text-subtle) !important;
-    }
-
-    .text-emerald-700 {
-      color: #34d399 !important;
-    }
-  }
-}
-
-@keyframes cashierModalFadeIn {
-  from {
-    opacity: 0;
-    transform: scale(0.96) translateY(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
   }
 }
 

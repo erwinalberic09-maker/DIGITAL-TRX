@@ -186,13 +186,23 @@ html.dark .border-slate-300,
   border-color: var(--app-border) !important;
 }
 
-/* 2. FORMULAIRES, CHAMPS INPUT, SELECT ET TEXTAREA */
-html.dark input:not([type="checkbox"]):not([type="radio"]),
-html.dark select,
-html.dark textarea {
+/* 2. FORMULAIRES, CHAMPS INPUT, SELECT ET TEXTAREA (HORS TABLEAUX ODOO) */
+html.dark input:not([type="checkbox"]):not([type="radio"]):not(.odoo-field-input):not(.odoo-inline-input),
+html.dark select:not(.odoo-field-input),
+html.dark textarea:not(.odoo-field-input) {
   background-color: #1a1d20 !important;
   color: #f8fafc !important;
   border-color: var(--app-border) !important;
+}
+
+html.dark input.odoo-field-input,
+html.dark input.odoo-inline-input,
+html.dark .odoo-table input {
+  background-color: transparent !important;
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
+  box-shadow: none !important;
 }
 
 html.dark input::placeholder,
@@ -200,9 +210,9 @@ html.dark textarea::placeholder {
   color: #94a3b8 !important;
 }
 
-html:not(.dark) input:not([type="checkbox"]):not([type="radio"]),
-html:not(.dark) select,
-html:not(.dark) textarea {
+html:not(.dark) input:not([type="checkbox"]):not([type="radio"]):not(.odoo-field-input):not(.odoo-inline-input),
+html:not(.dark) select:not(.odoo-field-input),
+html:not(.dark) textarea:not(.odoo-field-input) {
   background-color: #ffffff;
   color: #0f172a;
 }
