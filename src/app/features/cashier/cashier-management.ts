@@ -517,42 +517,47 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   }
 
   public async submitInlineTransaction(): Promise<void> {
+    if (this.isSubmitting()) return;
+
     if (this.transactionForm.invalid) {
       this.transactionForm.markAllAsTouched();
       return;
     }
 
     this.isSubmitting.set(true);
-    const formValues = this.transactionForm.getRawValue();
-    const rawMontant = Number(formValues.montant) || 0;
-    const finalMontant =
-      formValues.category === 'sortie' ? -Math.abs(rawMontant) : Math.abs(rawMontant);
+    try {
+      const formValues = this.transactionForm.getRawValue();
+      const rawMontant = Number(formValues.montant) || 0;
+      const finalMontant =
+        formValues.category === 'sortie' ? -Math.abs(rawMontant) : Math.abs(rawMontant);
 
-    let formattedDate = this.todayFormatted();
-    if (formValues.date) {
-      const parts = formValues.date.split('-');
-      if (parts.length === 3) {
-        formattedDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
-      } else {
-        formattedDate = formValues.date;
+      let formattedDate = this.todayFormatted();
+      if (formValues.date) {
+        const parts = formValues.date.split('-');
+        if (parts.length === 3) {
+          formattedDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
+        } else {
+          formattedDate = formValues.date;
+        }
       }
-    }
 
-    const result = await this.cashierService.addTransaction({
-      date: formattedDate,
-      libelle: formValues.libelle,
-      typeTransaction: formValues.typeTransaction,
-      typeDescription: formValues.typeDescription || undefined,
-      category: formValues.category,
-      matriculeVehicule: formValues.matriculeVehicule || undefined,
-      employee: formValues.employee || undefined,
-      quantity: formValues.quantity !== null && formValues.quantity !== undefined ? Number(formValues.quantity) : undefined,
-      montant: finalMontant,
-    });
+      const result = await this.cashierService.addTransaction({
+        date: formattedDate,
+        libelle: formValues.libelle,
+        typeTransaction: formValues.typeTransaction,
+        typeDescription: formValues.typeDescription || undefined,
+        category: formValues.category,
+        matriculeVehicule: formValues.matriculeVehicule || undefined,
+        employee: formValues.employee || undefined,
+        quantity: formValues.quantity !== null && formValues.quantity !== undefined ? Number(formValues.quantity) : undefined,
+        montant: finalMontant,
+      });
 
-    this.isSubmitting.set(false);
-    if (result.success) {
-      this.cancelAddInline();
+      if (result.success) {
+        this.cancelAddInline();
+      }
+    } finally {
+      this.isSubmitting.set(false);
     }
   }
 
@@ -598,6 +603,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
    * Fermeture automatique Odoo quand l'utilisateur clique hors de la ligne ouverte ou du tableau
    */
   public onDocumentClick(event: MouseEvent): void {
+    if (this.isSubmitting() || this.isEditingSubmitting()) return;
     const target = event.target as HTMLElement | null;
     if (!target) return;
 
@@ -640,10 +646,13 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   public onAddKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter') {
       event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
       this.isAddDatePickerOpen.set(false);
       this.submitInlineTransaction();
     } else if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       this.isAddDatePickerOpen.set(false);
       this.cancelAddInline();
     }
@@ -686,6 +695,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   }
 
   public async submitInlineEdit(): Promise<void> {
+    if (this.isEditingSubmitting()) return;
     const activeId = this.editingTxId();
     if (!activeId) return;
 
@@ -695,45 +705,51 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     }
 
     this.isEditingSubmitting.set(true);
-    const formValues = this.editTransactionForm.getRawValue();
-    const rawMontant = Number(formValues.montant) || 0;
-    const finalMontant =
-      formValues.category === 'sortie' ? -Math.abs(rawMontant) : Math.abs(rawMontant);
+    try {
+      const formValues = this.editTransactionForm.getRawValue();
+      const rawMontant = Number(formValues.montant) || 0;
+      const finalMontant =
+        formValues.category === 'sortie' ? -Math.abs(rawMontant) : Math.abs(rawMontant);
 
-    let formattedDate = this.todayFormatted();
-    if (formValues.date) {
-      const parts = formValues.date.split('-');
-      if (parts.length === 3) {
-        formattedDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
-      } else {
-        formattedDate = formValues.date;
+      let formattedDate = this.todayFormatted();
+      if (formValues.date) {
+        const parts = formValues.date.split('-');
+        if (parts.length === 3) {
+          formattedDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
+        } else {
+          formattedDate = formValues.date;
+        }
       }
-    }
 
-    const result = await this.cashierService.updateTransaction(activeId, {
-      date: formattedDate,
-      libelle: formValues.libelle,
-      typeTransaction: formValues.typeTransaction,
-      typeDescription: formValues.typeDescription || undefined,
-      category: formValues.category,
-      matriculeVehicule: formValues.matriculeVehicule || undefined,
-      employee: formValues.employee || undefined,
-      quantity: formValues.quantity !== null && formValues.quantity !== undefined ? Number(formValues.quantity) : undefined,
-      montant: finalMontant,
-    });
+      const result = await this.cashierService.updateTransaction(activeId, {
+        date: formattedDate,
+        libelle: formValues.libelle,
+        typeTransaction: formValues.typeTransaction,
+        typeDescription: formValues.typeDescription || undefined,
+        category: formValues.category,
+        matriculeVehicule: formValues.matriculeVehicule || undefined,
+        employee: formValues.employee || undefined,
+        quantity: formValues.quantity !== null && formValues.quantity !== undefined ? Number(formValues.quantity) : undefined,
+        montant: finalMontant,
+      });
 
-    this.isEditingSubmitting.set(false);
-    if (result.success) {
-      this.cancelInlineEdit();
+      if (result.success) {
+        this.cancelInlineEdit();
+      }
+    } finally {
+      this.isEditingSubmitting.set(false);
     }
   }
 
   public onEditKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter') {
       event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
       this.submitInlineEdit();
     } else if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       this.cancelInlineEdit();
     }
   }

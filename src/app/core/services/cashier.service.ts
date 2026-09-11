@@ -153,6 +153,8 @@ export class CashierService implements OnDestroy {
     return currentList.length > 0 && currentList.every((tx) => !!tx.selected);
   });
 
+  private isLoadingTransactions = false;
+
   /**
    * ───────────────────────────────────────────────────────────────────────────
    * 1. LECTURE HAUTE DISPONIBILITÉ : DOUBLE CANAL (API EXPRESS + REPLI DIRECT SUPABASE)
@@ -161,75 +163,80 @@ export class CashierService implements OnDestroy {
    * En cas d'indisponibilité ou d'erreur réseau, bascule immédiatement sur le SDK client Supabase.
    */
   public async loadTransactions(): Promise<void> {
+    if (this.isLoadingTransactions) return;
+    this.isLoadingTransactions = true;
     this._isLoading.set(true);
     this._error.set(null);
 
     let rawRows: CashierDbRow[] | null = null;
     let token = this.authService.token();
 
-    // Si le token n'est pas encore dans le signal, tenter de le lire depuis la session Supabase
-    if (!token && this.supabaseService.supabase) {
-      try {
-        const { data } = await this.supabaseService.supabase.auth.getSession();
-        if (data.session?.access_token) {
-          token = data.session.access_token;
-        }
-      } catch {
-        // Ignorer
-      }
-    }
-
-    // Canal 1 : API Express Serveur-Relais
     try {
-      const headers: Record<string, string> = { Accept: 'application/json' };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const response = await fetch('/api/cahier/operations', {
-        method: 'GET',
-        headers,
-      });
-
-      if (response.ok) {
-        const resJson = await response.json();
-        const ops = resJson.operations || resJson.transactions;
-        if (Array.isArray(ops)) {
-          rawRows = ops as CashierDbRow[];
+      // Si le token n'est pas encore dans le signal, tenter de le lire depuis la session Supabase
+      if (!token && this.supabaseService.supabase) {
+        try {
+          const { data } = await this.supabaseService.supabase.auth.getSession();
+          if (data.session?.access_token) {
+            token = data.session.access_token;
+          }
+        } catch {
+          // Ignorer
         }
       }
-    } catch (apiErr) {
-      console.warn('API Express /api/cahier/operations injoignable, bascule sur le repli direct Supabase:', apiErr);
-    }
 
-    // Canal 2 (REPLI DE SECOURS) : Interrogation directe de Supabase SDK
-    if (!rawRows) {
+      // Canal 1 : API Express Serveur-Relais
       try {
-        await this.supabaseService.ensureInitialized();
-        const client = this.supabaseService.supabase;
+        const headers: Record<string, string> = { Accept: 'application/json' };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
 
-        if (client) {
-          const { data, error } = await client
-            .from('cashier_transactions')
-            .select(CASHIER_SELECTED_COLUMNS)
-            .order('date', { ascending: false });
+        const response = await fetch('/api/cahier/operations', {
+          method: 'GET',
+          headers,
+        });
 
-          if (!error && data && Array.isArray(data)) {
-            rawRows = data as CashierDbRow[];
+        if (response.ok) {
+          const resJson = await response.json();
+          const ops = resJson.operations || resJson.transactions;
+          if (Array.isArray(ops)) {
+            rawRows = ops as CashierDbRow[];
           }
         }
-      } catch (supabaseErr) {
-        console.warn('Échec du repli direct Supabase:', supabaseErr);
+      } catch (apiErr) {
+        console.warn('API Express /api/cahier/operations injoignable, bascule sur le repli direct Supabase:', apiErr);
       }
-    }
 
-    // Traitement et injection dans le Signal Angular 19
-    if (rawRows && Array.isArray(rawRows)) {
-      const mappedTransactions = this.mapDatabaseOperations(rawRows);
-      this._transactions.set(mappedTransactions);
-    }
+      // Canal 2 (REPLI DE SECOURS) : Interrogation directe de Supabase SDK
+      if (!rawRows) {
+        try {
+          await this.supabaseService.ensureInitialized();
+          const client = this.supabaseService.supabase;
 
-    this._isLoading.set(false);
+          if (client) {
+            const { data, error } = await client
+              .from('cashier_transactions')
+              .select(CASHIER_SELECTED_COLUMNS)
+              .order('date', { ascending: false });
+
+            if (!error && data && Array.isArray(data)) {
+              rawRows = data as CashierDbRow[];
+            }
+          }
+        } catch (supabaseErr) {
+          console.warn('Échec du repli direct Supabase:', supabaseErr);
+        }
+      }
+
+      // Traitement et injection dans le Signal Angular 19
+      if (rawRows && Array.isArray(rawRows)) {
+        const mappedTransactions = this.mapDatabaseOperations(rawRows);
+        this._transactions.set(mappedTransactions);
+      }
+    } finally {
+      this._isLoading.set(false);
+      this.isLoadingTransactions = false;
+    }
   }
 
   /**

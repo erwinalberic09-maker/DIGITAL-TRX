@@ -64,12 +64,19 @@ export class SupabaseService {
       this.applyConfig(url, key);
       this._isInitialized.set(true);
     } else {
-      // Côté navigateur : récupération immédiate depuis le TransferState
+      // Côté navigateur : récupération immédiate depuis le TransferState ou sessionStorage
       const transferredConfig = this.transferState.get(SUPABASE_CONFIG_KEY, null);
-      if (transferredConfig && transferredConfig.url && transferredConfig.anonKey) {
-        url = transferredConfig.url;
-        key = transferredConfig.anonKey;
-        this.applyConfig(url, key);
+      let cachedConfig: SupabaseConfig | null = null;
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        try {
+          const raw = sessionStorage.getItem('supabase_config');
+          if (raw) cachedConfig = JSON.parse(raw);
+        } catch {}
+      }
+
+      const configToUse = transferredConfig || cachedConfig;
+      if (configToUse && configToUse.url && configToUse.anonKey) {
+        this.applyConfig(configToUse.url, configToUse.anonKey);
         this._isInitialized.set(true);
       } else {
         // Déclenche l'initialisation asynchrone sans bloquer le constructeur
@@ -99,14 +106,32 @@ export class SupabaseService {
       }
 
       try {
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+          try {
+            const raw = sessionStorage.getItem('supabase_config');
+            if (raw) {
+              const cfg: SupabaseConfig = JSON.parse(raw);
+              if (cfg.url && cfg.anonKey) {
+                this.applyConfig(cfg.url, cfg.anonKey);
+                this._isInitialized.set(true);
+                return this._isConfigured();
+              }
+            }
+          } catch {}
+        }
+
         const response = await fetch('/api/supabase-config', {
           headers: { Accept: 'application/json' },
-          cache: 'no-cache',
         });
         if (response.ok) {
           const config: SupabaseConfig = await response.json();
           if (config.url && config.anonKey) {
             this.applyConfig(config.url, config.anonKey);
+            if (typeof window !== 'undefined' && window.sessionStorage) {
+              try {
+                sessionStorage.setItem('supabase_config', JSON.stringify(config));
+              } catch {}
+            }
           }
         }
       } catch (err) {
