@@ -177,6 +177,8 @@ export class SupabaseService {
 
     try {
       if (this.isBrowser) {
+        const isHttps = typeof window !== 'undefined' && window.location?.protocol === 'https:';
+
         // Client Navigateur : createBrowserClient gère document.cookie + localStorage avec rafraîchissement automatique
         this.client = createBrowserClient(url, key, {
           auth: {
@@ -187,10 +189,11 @@ export class SupabaseService {
           },
           cookieOptions: {
             name: 'sb-auth-token',
-            maxAge: 365 * 24 * 60 * 60,
+            maxAge: 14 * 24 * 60 * 60, // 14 jours de validité de session
             domain: '',
             sameSite: 'lax',
             path: '/',
+            secure: isHttps,
           },
         });
       } else {

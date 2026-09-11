@@ -37,7 +37,7 @@ const getSupabaseConfigHandler = (_req: express.Request, res: express.Response) 
     process.env['PUBLIC_SUPABASE_ANON_KEY'] ||
     process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY'] ||
     process.env['VITE_SUPABASE_ANON_KEY'] ||
-    'sb_publishable_6nhsGRkv_zL7Hdjjyc3KgA_BC72nlM2';
+    '';
   res.json({
     url,
     anonKey,
@@ -69,13 +69,20 @@ function getSupabaseAdmin() {
   });
 }
 
-// Configuration des administrateurs système permanents (inviolables)
-const PERMANENT_ADMIN_EMAILS = [
+// Configuration des administrateurs système permanents (inviolables et extensibles via variable d'environnement ADMIN_EMAILS)
+const DEFAULT_ADMIN_EMAILS = [
   'erwinalberic99@gmail.com',
   'admin@transmex.cm',
   'admin@transimex.cm',
   'admin@transmex.com',
 ];
+
+const envAdminEmails = (process.env['ADMIN_EMAILS'] || '')
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+const PERMANENT_ADMIN_EMAILS = Array.from(new Set([...DEFAULT_ADMIN_EMAILS, ...envAdminEmails]));
 
 /**
  * Fonction centrale et sécurisée de résolution de rôle serveur (RBAC).
@@ -243,12 +250,9 @@ export async function requireAdmin(req: express.Request, res: express.Response, 
 
 /**
  * Récupération sécurisée de la liste des collaborateurs.
- * Réservé aux administrateurs.
+ * Réservé aux administrateurs (protégé par le middleware requireAdmin).
  */
-const getCollaboratorsHandler = async (req: express.Request, res: express.Response): Promise<void> => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
-
+const getCollaboratorsHandler = async (_req: express.Request, res: express.Response): Promise<void> => {
   const adminClient = getSupabaseAdmin();
 
   if (!adminClient) {
@@ -257,35 +261,6 @@ const getCollaboratorsHandler = async (req: express.Request, res: express.Respon
   }
 
   try {
-    if (token) {
-      const { data: callerData, error: callerError } = await adminClient.auth.getUser(token);
-      if (callerError || !callerData?.user) {
-        res.status(401).json({ error: 'Session administrateur invalide ou expirée' });
-        return;
-      }
-
-      const callerAppRole = callerData.user.app_metadata?.['role'];
-      const callerUserRole = callerData.user.user_metadata?.['role'];
-
-      let isCallerAdmin = callerAppRole === 'admin' || callerUserRole === 'admin';
-      if (!isCallerAdmin) {
-        const { data: callerProfile } = await adminClient
-          .from('profiles')
-          .select('role')
-          .eq('id', callerData.user.id)
-          .maybeSingle();
-
-        if (callerProfile?.role === 'admin') {
-          isCallerAdmin = true;
-        }
-      }
-
-      if (!isCallerAdmin) {
-        res.status(403).json({ error: 'Action réservée exclusivement aux administrateurs' });
-        return;
-      }
-    }
-
     // 1. Récupérer tous les utilisateurs depuis Supabase Auth
     let authUsers: {
       id: string;
@@ -430,13 +405,10 @@ app.post('/api/auth/sync-role', requireAuth, async (req: express.Request, res: e
 
 /**
  * Endpoint sécurisé de création de collaborateurs.
- * Réservé aux administrateurs : vérifie le jeton Bearer JWT de l'appelant
- * et applique la séparation étanche app_metadata (rôle inviolable) vs user_metadata.
+ * Réservé aux administrateurs (protégé par le middleware requireAdmin) :
+ * applique la séparation étanche app_metadata (rôle inviolable) vs user_metadata.
  */
 const createCollaboratorHandler = async (req: express.Request, res: express.Response): Promise<void> => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
-
   const {
     email,
     password,
@@ -469,39 +441,6 @@ const createCollaboratorHandler = async (req: express.Request, res: express.Resp
   }
 
   try {
-    // 1. Contrôle strict de l'identité et du rôle admin de l'appelant via son JWT
-    if (token) {
-      const { data: callerData, error: callerError } = await adminClient.auth.getUser(token);
-      if (callerError || !callerData?.user) {
-        res.status(401).json({ error: 'Session administrateur invalide ou expirée' });
-        return;
-      }
-
-      const callerAppRole = callerData.user.app_metadata?.['role'];
-      const callerUserRole = callerData.user.user_metadata?.['role'];
-
-      let isCallerAdmin = callerAppRole === 'admin' || callerUserRole === 'admin';
-      if (!isCallerAdmin) {
-        const { data: callerProfile } = await adminClient
-          .from('profiles')
-          .select('role')
-          .eq('id', callerData.user.id)
-          .maybeSingle();
-
-        if (callerProfile?.role === 'admin') {
-          isCallerAdmin = true;
-        }
-      }
-
-      if (!isCallerAdmin) {
-        res.status(403).json({ error: 'Action réservée exclusivement aux administrateurs' });
-        return;
-      }
-    } else {
-      res.status(401).json({ error: 'Jeton de sécurité (Bearer token) requis' });
-      return;
-    }
-
     const computedDisplayName = displayName || `${firstName || ''} ${lastName || ''}`.trim() || email;
     const computedRole = normalizeUserRole(role);
     const sitesList = Array.isArray(sites) ? sites : (department ? [department] : []);
@@ -721,6 +660,7 @@ app.delete('/api/admin/users/:id', requireAdmin, deleteCollaboratorHandler);
 
 /**
  * Récupération des opérations de caisse (GET /api/cahier/operations & /api/cashier/transactions)
+ * Supporte la pagination optionnelle via limit/offset (défaut limit: 100, max: 1000) pour préserver les ressources.
  */
 const getOperationsHandler = async (req: express.Request, res: express.Response): Promise<void> => {
   const adminClient = getSupabaseAdmin();
@@ -730,10 +670,28 @@ const getOperationsHandler = async (req: express.Request, res: express.Response)
   }
 
   try {
-    const { data, error } = await adminClient
+    const rawLimit = req.query['limit'];
+    const rawOffset = req.query['offset'];
+
+    let limit = rawLimit ? Number(rawLimit) : 100;
+    if (isNaN(limit) || limit <= 0) {
+      limit = 100;
+    }
+    // Plafond de sécurité pour empêcher la saturation mémoire
+    if (limit > 1000) {
+      limit = 1000;
+    }
+
+    let offset = rawOffset ? Number(rawOffset) : 0;
+    if (isNaN(offset) || offset < 0) {
+      offset = 0;
+    }
+
+    const { data, error, count } = await adminClient
       .from('cashier_transactions')
-      .select('id, date, libelle, service, type_description, category, status, no_dossier, first_name, partenaire, employee, quantity, montant, solde_apres, selected, created_at, updated_at')
-      .order('date', { ascending: false });
+      .select('id, date, libelle, service, type_description, category, status, no_dossier, dossier_id, first_name, partenaire, employee, quantity, montant, solde_apres, selected, created_at, updated_at', { count: 'exact' })
+      .order('date', { ascending: false })
+      .range(offset, offset + limit - 1);
 
     if (error) {
       console.error('Erreur SQL lors de la lecture des opérations:', error.message);
@@ -744,7 +702,9 @@ const getOperationsHandler = async (req: express.Request, res: express.Response)
     res.json({
       operations: data || [],
       transactions: data || [],
-      total: data?.length || 0,
+      total: count ?? (data?.length || 0),
+      limit,
+      offset,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erreur interne lors de la récupération des opérations';
@@ -754,7 +714,7 @@ const getOperationsHandler = async (req: express.Request, res: express.Response)
 
 /**
  * Sauvegarde d'une opération de caisse (POST /api/cahier/operations & /api/cashier/transactions)
- * Nettoie et valide les champs, vérifie l'autorisation de l'utilisateur, puis persiste dans PostgreSQL.
+ * Nettoie et valide les champs, vérifie l'autorisation de l'utilisateur, résout dossier_id et persiste dans PostgreSQL.
  */
 const saveOperationHandler = async (req: express.Request, res: express.Response): Promise<void> => {
   const adminClient = getSupabaseAdmin();
@@ -774,8 +734,8 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
     const category = payload.category === 'sortie' ? 'sortie' : 'entree';
     const noDossier = payload.noDossier || payload.no_dossier || payload.matriculeVehicule || payload.matricule_vehicule || null;
     const firstName = payload.firstName || payload.first_name || null;
-    const partenaire = payload.partenaire || payload.employee || null;
-    const employee = payload.employee || payload.partenaire || null;
+    const partenaire = payload.partenaire !== undefined ? payload.partenaire : null;
+    const employee = payload.employee !== undefined ? payload.employee : null;
     const quantity = payload.quantity !== undefined && payload.quantity !== null ? Number(payload.quantity) : (service === 'Opérations' ? 1 : null);
     const montant = Number(payload.montant);
 
@@ -789,6 +749,22 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       return;
     }
 
+    let resolvedDossierId: string | null = payload.dossierId || payload.dossier_id || null;
+    if (!resolvedDossierId && noDossier) {
+      try {
+        const { data: dossierRow } = await adminClient
+          .from('dossiers')
+          .select('id')
+          .eq('no_dossier', noDossier)
+          .maybeSingle();
+        if (dossierRow?.id) {
+          resolvedDossierId = dossierRow.id;
+        }
+      } catch {
+        // En cas d'erreur de recherche, on conserve dossier_id à null
+      }
+    }
+
     const status = payload.status === 'posted' ? 'posted' : (payload.status === 'cancelled' ? 'cancelled' : 'draft');
 
     const rowToInsert = {
@@ -798,6 +774,7 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       category,
       status,
       no_dossier: noDossier,
+      dossier_id: resolvedDossierId,
       first_name: firstName,
       partenaire,
       employee,
@@ -882,7 +859,26 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
     }
 
     if (payload.noDossier !== undefined || payload.no_dossier !== undefined || payload.matriculeVehicule !== undefined || payload.matricule_vehicule !== undefined) {
-      updateData['no_dossier'] = payload.noDossier ?? payload.no_dossier ?? payload.matriculeVehicule ?? payload.matricule_vehicule ?? null;
+      const resolvedNoDossier = payload.noDossier ?? payload.no_dossier ?? payload.matriculeVehicule ?? payload.matricule_vehicule ?? null;
+      updateData['no_dossier'] = resolvedNoDossier;
+      if (resolvedNoDossier && payload.dossier_id === undefined && payload.dossierId === undefined) {
+        try {
+          const { data: dossierRow } = await adminClient
+            .from('dossiers')
+            .select('id')
+            .eq('no_dossier', resolvedNoDossier)
+            .maybeSingle();
+          if (dossierRow?.id) {
+            updateData['dossier_id'] = dossierRow.id;
+          }
+        } catch {
+          // Ignore
+        }
+      }
+    }
+
+    if (payload.dossier_id !== undefined || payload.dossierId !== undefined) {
+      updateData['dossier_id'] = payload.dossier_id ?? payload.dossierId ?? null;
     }
 
     if (payload.firstName !== undefined || payload.first_name !== undefined) {
