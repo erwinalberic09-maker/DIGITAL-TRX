@@ -14,6 +14,7 @@ export interface CashierDbRow {
   type_transaction: string;
   type_description: string | null;
   category: 'entree' | 'sortie' | null;
+  status?: 'draft' | 'posted' | 'cancelled' | null;
   matricule_vehicule?: string | null;
   first_name: string | null;
   employee: string | null;
@@ -25,7 +26,7 @@ export interface CashierDbRow {
 
 // Colonnes sélectionnées selon le principe du moindre privilège (PostgREST Best Practices)
 const CASHIER_SELECTED_COLUMNS =
-  'id, date, libelle, type_transaction, type_description, category, matricule_vehicule, first_name, employee, quantity, montant, created_by';
+  'id, date, libelle, type_transaction, type_description, category, status, matricule_vehicule, first_name, employee, quantity, montant, created_by';
 
 @Injectable({
   providedIn: 'root',
@@ -105,7 +106,7 @@ export class CashierService implements OnDestroy {
 
       if (!query) return true;
 
-      const searchableText = `${tx.libelle} ${tx.typeTransaction} ${tx.typeDescription || ''} ${tx.firstName || ''} ${tx.employee || ''} ${tx.matriculeVehicule || ''}`.toLowerCase();
+      const searchableText = `${tx.libelle} ${tx.service || ''} ${tx.typeDescription || ''} ${tx.firstName || ''} ${tx.employee || ''} ${tx.partenaire || ''} ${tx.noDossier || ''}`.toLowerCase();
       return searchableText.includes(query);
     });
   });
@@ -271,12 +272,14 @@ export class CashierService implements OnDestroy {
         headers,
         body: JSON.stringify({
           libelle: op.libelle,
-          typeTransaction: op.typeTransaction,
+          service: op.service,
           typeDescription: op.typeDescription || null,
           category: op.category,
-          matriculeVehicule: op.matriculeVehicule || null,
+          status: op.status || 'draft',
+          noDossier: op.noDossier || null,
           firstName: op.firstName || null,
-          employee: op.employee || null,
+          employee: op.employee || op.partenaire || null,
+          partenaire: op.partenaire || op.employee || null,
           quantity: op.quantity || 1,
           montant: op.montant,
           date: op.date ? new Date(op.date).toISOString() : new Date().toISOString(),
@@ -304,12 +307,13 @@ export class CashierService implements OnDestroy {
             .insert([
               {
                 libelle: op.libelle,
-                type_transaction: op.typeTransaction,
+                type_transaction: op.service || null,
                 type_description: op.typeDescription || null,
                 category: op.category,
-                matricule_vehicule: op.matriculeVehicule || null,
+                status: op.status || 'draft',
+                matricule_vehicule: op.noDossier || null,
                 first_name: op.firstName || null,
-                employee: op.employee || null,
+                employee: op.employee || op.partenaire || null,
                 quantity: op.quantity || 1,
                 montant: op.montant,
                 created_by: currentUser?.id || null,
@@ -333,12 +337,14 @@ export class CashierService implements OnDestroy {
           id: savedRow.id,
           date: this.formatDate(savedRow.date || new Date().toISOString()),
           libelle: savedRow.libelle,
-          typeTransaction: savedRow.type_transaction,
+          service: savedRow.type_transaction || '',
           typeDescription: savedRow.type_description || '',
           category: savedRow.category as 'entree' | 'sortie',
-          matriculeVehicule: savedRow.matricule_vehicule || '',
+          status: (savedRow.status as 'draft' | 'posted' | 'cancelled') || op.status || 'draft',
+          noDossier: savedRow.matricule_vehicule || '',
           firstName: savedRow.first_name || '',
           employee: savedRow.employee || '',
+          partenaire: savedRow.employee || '',
           quantity: savedRow.quantity ? Number(savedRow.quantity) : undefined,
           montant: Number(savedRow.montant),
           soldeApres: estimatedNewSolde,
@@ -348,12 +354,14 @@ export class CashierService implements OnDestroy {
           id: `tx-${Date.now()}`,
           date: this.formatDate(op.date || new Date().toISOString()),
           libelle: op.libelle || 'Opération',
-          typeTransaction: op.typeTransaction || '',
+          service: op.service || '',
           typeDescription: op.typeDescription || '',
           category: (op.category || (montant >= 0 ? 'entree' : 'sortie')) as 'entree' | 'sortie',
-          matriculeVehicule: op.matriculeVehicule || '',
+          status: op.status || 'draft',
+          noDossier: op.noDossier || '',
           firstName: op.firstName || '',
-          employee: op.employee || '',
+          employee: op.employee || op.partenaire || '',
+          partenaire: op.partenaire || op.employee || '',
           quantity: op.quantity,
           montant,
           soldeApres: estimatedNewSolde,
@@ -414,12 +422,14 @@ export class CashierService implements OnDestroy {
 
       const bodyPayload: Record<string, unknown> = {};
       if (updatedFields.libelle !== undefined) bodyPayload['libelle'] = updatedFields.libelle;
-      if (updatedFields.typeTransaction !== undefined) bodyPayload['typeTransaction'] = updatedFields.typeTransaction;
+      if (updatedFields.service !== undefined) bodyPayload['service'] = updatedFields.service;
       if (updatedFields.typeDescription !== undefined) bodyPayload['typeDescription'] = updatedFields.typeDescription;
       if (updatedFields.category !== undefined) bodyPayload['category'] = updatedFields.category;
-      if (updatedFields.matriculeVehicule !== undefined) bodyPayload['matriculeVehicule'] = updatedFields.matriculeVehicule;
+      if (updatedFields.status !== undefined) bodyPayload['status'] = updatedFields.status;
+      if (updatedFields.noDossier !== undefined) bodyPayload['noDossier'] = updatedFields.noDossier;
       if (updatedFields.firstName !== undefined) bodyPayload['firstName'] = updatedFields.firstName;
       if (updatedFields.employee !== undefined) bodyPayload['employee'] = updatedFields.employee;
+      if (updatedFields.partenaire !== undefined) bodyPayload['partenaire'] = updatedFields.partenaire;
       if (updatedFields.quantity !== undefined) bodyPayload['quantity'] = updatedFields.quantity;
       if (updatedFields.montant !== undefined) bodyPayload['montant'] = updatedFields.montant;
       if (isoDate) bodyPayload['date'] = isoDate;
@@ -445,12 +455,15 @@ export class CashierService implements OnDestroy {
         if (client) {
           const directPayload: Record<string, unknown> = {};
           if (updatedFields.libelle !== undefined) directPayload['libelle'] = updatedFields.libelle;
-          if (updatedFields.typeTransaction !== undefined) directPayload['type_transaction'] = updatedFields.typeTransaction;
+          if (updatedFields.service !== undefined) directPayload['type_transaction'] = updatedFields.service;
           if (updatedFields.typeDescription !== undefined) directPayload['type_description'] = updatedFields.typeDescription || null;
           if (updatedFields.category !== undefined) directPayload['category'] = updatedFields.category;
-          if (updatedFields.matriculeVehicule !== undefined) directPayload['matricule_vehicule'] = updatedFields.matriculeVehicule || null;
+          if (updatedFields.status !== undefined) directPayload['status'] = updatedFields.status;
+          if (updatedFields.noDossier !== undefined) directPayload['matricule_vehicule'] = updatedFields.noDossier || null;
           if (updatedFields.firstName !== undefined) directPayload['first_name'] = updatedFields.firstName || null;
-          if (updatedFields.employee !== undefined) directPayload['employee'] = updatedFields.employee || null;
+          if (updatedFields.employee !== undefined || updatedFields.partenaire !== undefined) {
+            directPayload['employee'] = updatedFields.employee || updatedFields.partenaire || null;
+          }
           if (updatedFields.quantity !== undefined) directPayload['quantity'] = updatedFields.quantity;
           if (updatedFields.montant !== undefined) directPayload['montant'] = updatedFields.montant;
           if (isoDate) directPayload['date'] = isoDate;
@@ -564,12 +577,14 @@ export class CashierService implements OnDestroy {
       id: row.id,
       date: this.formatDate(row.date),
       libelle: row.libelle || '',
-      typeTransaction: row.type_transaction || '',
+      service: row.type_transaction || '',
       typeDescription: row.type_description || '',
       category: (row.category || (numMontant >= 0 ? 'entree' : 'sortie')) as 'entree' | 'sortie',
-      matriculeVehicule: row.matricule_vehicule || '',
+      status: (row.status as 'draft' | 'posted' | 'cancelled') || 'draft',
+      noDossier: row.matricule_vehicule || '',
       firstName: row.first_name || '',
       employee: row.employee || '',
+      partenaire: row.employee || '',
       quantity: row.quantity !== null && row.quantity !== undefined ? Number(row.quantity) : undefined,
       montant: numMontant,
       soldeApres: 0,
@@ -591,12 +606,14 @@ export class CashierService implements OnDestroy {
         id: row.id,
         date: this.formatDate(row.date),
         libelle: row.libelle || '',
-        typeTransaction: row.type_transaction || '',
+        service: row.type_transaction || '',
         typeDescription: row.type_description || '',
         category: (row.category || (numMontant >= 0 ? 'entree' : 'sortie')) as 'entree' | 'sortie',
-        matriculeVehicule: row.matricule_vehicule || '',
+        status: (row.status as 'draft' | 'posted' | 'cancelled') || 'draft',
+        noDossier: row.matricule_vehicule || '',
         firstName: row.first_name || '',
         employee: row.employee || '',
+        partenaire: row.employee || '',
         quantity: row.quantity !== null && row.quantity !== undefined ? Number(row.quantity) : undefined,
         montant: numMontant,
         soldeApres: runningBalance,
@@ -680,7 +697,8 @@ export class CashierService implements OnDestroy {
    * SYNCHRONISATION EN TEMPS RÉEL (SUPABASE REALTIME WEBSOCKET)
    * ───────────────────────────────────────────────────────────────────────────
    * Écoute les événements INSERT, UPDATE, DELETE sur la table cashier_transactions
-   * et met à jour instantanément le Signal _transactions sans rechargement.
+   * et met à jour instantanément le Signal _transactions sans rechargement,
+   * avec réconciliation d'état automatique lors de la souscription ou reconnexion.
    */
   private async setupRealtimeSubscription(): Promise<void> {
     if (!this.isBrowser) return;
@@ -743,9 +761,13 @@ export class CashierService implements OnDestroy {
         )
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') {
-            // Canal Realtime connecté avec succès
+            // Re-synchronisation silencieuse pour s'assurer qu'aucune transaction n'a été manquée
+            // avant ou pendant l'établissement de la connexion WebSocket
+            this.loadTransactions();
           } else if (status === 'CHANNEL_ERROR') {
-            console.warn('Erreur sur le canal Realtime Supabase cashier_transactions');
+            console.warn('Erreur sur le canal Realtime Supabase cashier_transactions, tentative de reconnexion auto...');
+          } else if (status === 'TIMED_OUT') {
+            console.warn('Timeout sur le canal Realtime Supabase cashier_transactions');
           }
         });
     } catch (err) {

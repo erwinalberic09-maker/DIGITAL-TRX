@@ -4,19 +4,24 @@
  */
 
 export type TransactionTypeCategory = 'entree' | 'sortie';
-export type CashierOperationType = 'Opérations' | 'Administration';
+export type TransactionStatus = 'draft' | 'posted' | 'cancelled';
+export type Service = 'Opérations' | 'Administration';
+export type CashierServiceType = Service;
+export type CashierOperationType = Service; // Rétrocompatibilité
 
 export interface CashierTransaction {
   id: string;
   date: string; // Format DD/MM/YYYY
   libelle: string; // Ex: "Carburant", "Frais généraux"
-  typeTransaction: CashierOperationType | string; // "Opérations" ou "Administration"
+  service?: Service | string; // "Opérations" ou "Administration"
   typeDescription?: string; // Sous-texte descriptif
   category: TransactionTypeCategory; // entree (+) ou sortie (-)
-  matriculeVehicule?: string; // Requis si typeTransaction === 'Opérations' (Distribution analytique)
+  status?: TransactionStatus; // 'draft' (Brouillon) ou 'posted' (Comptabilisé)
+  noDossier?: string; // Requis si service === 'Opérations' (ex: Matricule véhicule / Dossier)
   firstName?: string; // Optionnel pour rétrocompatibilité
-  employee?: string; // Nom de l'employé associé
-  quantity?: number; // Quantité (QTE) - Requis si typeTransaction === 'Opérations'
+  partenaire?: string; // Nom du partenaire ou de l'employé associé
+  employee?: string; // Alias employé
+  quantity?: number; // Quantité (QTE) - Requis si service === 'Opérations'
   montant: number; // Valeur numérique signée (positif ou négatif)
   soldeApres?: number; // Solde cumulé calculé
   selected?: boolean; // Case à cocher de sélection

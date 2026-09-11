@@ -3,7 +3,6 @@ import {
   Component,
   ElementRef,
   EventEmitter,
-  HostListener,
   Input,
   OnInit,
   Output,
@@ -28,11 +27,16 @@ export interface CalendarWeek {
 
 @Component({
   selector: 'app-odoo-datepicker',
-  standalone: true,
   imports: [CommonModule],
   templateUrl: './odoo-datepicker.html',
   styleUrl: './odoo-datepicker.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: {
+    'class': 'odoo-datepicker-host block',
+    '(click)': '$event.stopPropagation()',
+    '(mousedown)': '$event.stopPropagation()',
+    '(document:click)': 'onGlobalClick($event)',
+  },
 })
 export class OdooDatepicker implements OnInit {
   private readonly elementRef = inject(ElementRef);
@@ -83,19 +87,17 @@ export class OdooDatepicker implements OnInit {
 
     // Premier jour du mois
     const firstDayOfMonth = new Date(year, month, 1);
-    // Dernier jour du mois
-    const lastDayOfMonth = new Date(year, month + 1, 0);
 
     // Jour de la semaine du 1er jour (0 = Dimanche, 1 = Lundi, ..., 6 = Samedi)
-    let startDayOfWeek = firstDayOfMonth.getDay();
+    const startDayOfWeek = firstDayOfMonth.getDay();
     // Convertir en 0 = Lundi, 6 = Dimanche (Norme ISO / Européenne Odoo)
-    let startOffset = startDayOfWeek === 0 ? 6 : startDayOfWeek - 1;
+    const startOffset = startDayOfWeek === 0 ? 6 : startDayOfWeek - 1;
 
     // Début de la grille (lundi de la première semaine)
     const startDate = new Date(year, month, 1 - startOffset);
 
     const weeks: CalendarWeek[] = [];
-    let currentCursor = new Date(startDate);
+    const currentCursor = new Date(startDate);
 
     // 6 semaines affichées (format standard calendrier Odoo)
     for (let w = 0; w < 6; w++) {
@@ -173,7 +175,6 @@ export class OdooDatepicker implements OnInit {
     this.closePicker.emit();
   }
 
-  @HostListener('document:click', ['$event'])
   public onGlobalClick(event: MouseEvent): void {
     const target = event.target as HTMLElement;
     if (target && !this.elementRef.nativeElement.contains(target)) {

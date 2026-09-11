@@ -159,7 +159,7 @@ export async function requireAuth(req: express.Request, res: express.Response, n
  * Middleware de contrôle d'accès basé sur les rôles (RBAC).
  * Exige que le rôle résolu de l'utilisateur fasse partie des rôles autorisés.
  */
-export function requireRole(allowedRoles: Array<'admin' | 'caissiere' | 'manager' | 'employe'>) {
+export function requireRole(allowedRoles: ('admin' | 'caissiere' | 'manager' | 'employe')[]) {
   return (req: express.Request, res: express.Response, next: express.NextFunction): void => {
     const user = (req as unknown as Record<string, unknown>)['user'] as { role?: string; email?: string } | undefined;
     if (!user || !user.role || !allowedRoles.includes(user.role as 'admin' | 'caissiere' | 'manager' | 'employe')) {
@@ -769,12 +769,12 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
 
     const payload = req.body || {};
     const libelle = typeof payload.libelle === 'string' ? payload.libelle.trim() : '';
-    const typeTransaction = payload.typeTransaction || payload.type_transaction || '';
+    const service = payload.service || payload.typeTransaction || payload.type_transaction || '';
     const typeDescription = payload.typeDescription || payload.type_description || null;
     const category = payload.category === 'sortie' ? 'sortie' : 'entree';
-    const matriculeVehicule = payload.matriculeVehicule || payload.matricule_vehicule || null;
+    const noDossier = payload.noDossier || payload.matriculeVehicule || payload.matricule_vehicule || null;
     const firstName = payload.firstName || payload.first_name || null;
-    const employee = payload.employee || null;
+    const employee = payload.employee || payload.partenaire || null;
     const quantity = payload.quantity !== undefined && payload.quantity !== null ? Number(payload.quantity) : 1;
     const montant = Number(payload.montant);
 
@@ -788,12 +788,15 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       return;
     }
 
+    const status = payload.status === 'posted' ? 'posted' : (payload.status === 'cancelled' ? 'cancelled' : 'draft');
+
     const rowToInsert = {
       libelle,
-      type_transaction: typeTransaction,
+      type_transaction: service,
       type_description: typeDescription,
       category,
-      matricule_vehicule: matriculeVehicule,
+      status,
+      matricule_vehicule: noDossier,
       first_name: firstName,
       employee,
       quantity: isNaN(quantity) ? 1 : quantity,
@@ -861,8 +864,8 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       updateData['libelle'] = libelle;
     }
 
-    if (payload.typeTransaction !== undefined || payload.type_transaction !== undefined) {
-      updateData['type_transaction'] = payload.typeTransaction ?? payload.type_transaction ?? '';
+    if (payload.service !== undefined || payload.typeTransaction !== undefined || payload.type_transaction !== undefined) {
+      updateData['type_transaction'] = payload.service ?? payload.typeTransaction ?? payload.type_transaction ?? '';
     }
 
     if (payload.typeDescription !== undefined || payload.type_description !== undefined) {
@@ -873,16 +876,20 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       updateData['category'] = payload.category === 'sortie' ? 'sortie' : 'entree';
     }
 
-    if (payload.matriculeVehicule !== undefined || payload.matricule_vehicule !== undefined) {
-      updateData['matricule_vehicule'] = payload.matriculeVehicule ?? payload.matricule_vehicule ?? null;
+    if (payload.status !== undefined) {
+      updateData['status'] = payload.status === 'posted' ? 'posted' : (payload.status === 'cancelled' ? 'cancelled' : 'draft');
+    }
+
+    if (payload.noDossier !== undefined || payload.matriculeVehicule !== undefined || payload.matricule_vehicule !== undefined) {
+      updateData['matricule_vehicule'] = payload.noDossier ?? payload.matriculeVehicule ?? payload.matricule_vehicule ?? null;
     }
 
     if (payload.firstName !== undefined || payload.first_name !== undefined) {
       updateData['first_name'] = payload.firstName ?? payload.first_name ?? null;
     }
 
-    if (payload.employee !== undefined) {
-      updateData['employee'] = payload.employee ?? null;
+    if (payload.employee !== undefined || payload.partenaire !== undefined) {
+      updateData['employee'] = payload.employee ?? payload.partenaire ?? null;
     }
 
     if (payload.quantity !== undefined && payload.quantity !== null) {

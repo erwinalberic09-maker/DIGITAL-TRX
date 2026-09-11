@@ -33,7 +33,7 @@
     </div>
 
     <!-- TABLEAU DE CAISSE PLEINE LARGEUR STYLE ODOO TREE VIEW -->
-    <div class="w-full overflow-x-auto">
+    <div class="w-full overflow-x-auto min-h-[380px] pb-32">
       <table class="w-full text-left text-sm border-collapse bg-transparent odoo-table" id="cashier-transactions-table">
         <thead>
           <tr class="odoo-head-row select-none">
@@ -57,10 +57,10 @@
             <th scope="col" class="py-2 px-3 font-semibold whitespace-nowrap w-44">Partenaire</th>
             <th scope="col" class="py-2 px-3 font-semibold whitespace-nowrap w-28">
               <span class="inline-flex items-center gap-1">
-                Référence <span class="text-[10px] opacity-80">▲</span>
+                N°Dossier <span class="text-[10px] opacity-80">▲</span>
               </span>
             </th>
-            <th scope="col" class="py-2 px-3 font-semibold whitespace-nowrap w-36">Type de transaction</th>
+            <th scope="col" class="py-2 px-3 font-semibold whitespace-nowrap w-36">Service</th>
             <th scope="col" class="py-2 px-3 font-semibold text-right whitespace-nowrap w-32">Montant</th>
             <th scope="col" class="py-2 px-3 font-semibold text-right whitespace-nowrap w-32">Solde courant</th>
             <th scope="col" class="py-2 px-3 font-semibold text-center whitespace-nowrap w-28">Statut</th>
@@ -115,7 +115,6 @@
                   formControlName="libelle"
                   placeholder="retour en caisse de l'approvisionnement"
                   class="odoo-field-input odoo-active-underline w-full"
-                  autofocus
                 />
               </td>
 
@@ -138,9 +137,19 @@
                 <span></span>
               </td>
 
-              <!-- Type de transaction -->
-              <td class="py-2 px-3 whitespace-nowrap align-middle text-slate-400 text-xs">
-                <span>{{ transactionForm.get('typeTransaction')?.value || '' }}</span>
+              <!-- Services -->
+              <td class="py-2 px-3 align-middle">
+                <div class="relative flex items-center">
+                  <select
+                    id="inline-input-service"
+                    formControlName="service"
+                    class="odoo-field-input w-full pr-4 bg-transparent cursor-pointer appearance-none text-xs text-slate-700 dark:text-slate-200"
+                  >
+                    <option value="Administration" class="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">Administration</option>
+                    <option value="Opérations" class="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">Opérations</option>
+                  </select>
+                  <span class="absolute right-0 text-slate-400 text-xs pointer-events-none">▾</span>
+                </div>
               </td>
 
               <!-- Montant avec Bascule Débit / Crédit -->
@@ -170,9 +179,19 @@
                 {{ getEstimatedBalance() }}
               </td>
 
-              <!-- Statut -->
+              <!-- Statut (Sélecteur interactif Odoo Option B) -->
               <td class="py-2 px-3 text-center whitespace-nowrap align-middle">
-                <span class="odoo-badge-posted">Comptabilisé</span>
+                <select
+                  id="inline-add-status-select"
+                  formControlName="status"
+                  aria-label="Statut de la transaction"
+                  class="cursor-pointer border-0 outline-none text-xs font-semibold py-1 px-2.5 rounded-full transition-colors appearance-none text-center"
+                  [class.odoo-badge-posted]="transactionForm.get('status')?.value === 'posted'"
+                  [class.odoo-badge-draft]="transactionForm.get('status')?.value !== 'posted'"
+                >
+                  <option value="draft" class="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200">Brouillon</option>
+                  <option value="posted" class="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200">Comptabilisé</option>
+                </select>
               </td>
             </tr>
           }
@@ -260,9 +279,19 @@
                     <span></span>
                   </td>
 
-                  <!-- Type de transaction -->
-                  <td class="py-2 px-3 whitespace-nowrap align-middle text-slate-400 text-xs">
-                    <span>{{ editTransactionForm.get('typeTransaction')?.value || '' }}</span>
+                  <!-- Services -->
+                  <td class="py-2 px-3 align-middle">
+                    <div class="relative flex items-center">
+                      <select
+                        id="inline-edit-service"
+                        formControlName="service"
+                        class="odoo-field-input w-full pr-4 bg-transparent cursor-pointer appearance-none text-xs text-slate-700 dark:text-slate-200"
+                      >
+                        <option value="Administration" class="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">Administration</option>
+                        <option value="Opérations" class="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">Opérations</option>
+                      </select>
+                      <span class="absolute right-0 text-slate-400 text-xs pointer-events-none">▾</span>
+                    </div>
                   </td>
 
                   <!-- Montant -->
@@ -291,9 +320,19 @@
                     {{ tx.soldeApres !== undefined ? formatCurrency(tx.soldeApres) : '' }}
                   </td>
 
-                  <!-- Statut -->
+                  <!-- Statut (Sélecteur interactif Odoo Option B) -->
                   <td class="py-2 px-3 text-center whitespace-nowrap align-middle">
-                    <span class="odoo-badge-posted">Comptabilisé</span>
+                    <select
+                      id="inline-edit-status-select-{{ tx.id }}"
+                      formControlName="status"
+                      aria-label="Statut de la transaction"
+                      class="cursor-pointer border-0 outline-none text-xs font-semibold py-1 px-2.5 rounded-full transition-colors appearance-none text-center"
+                      [class.odoo-badge-posted]="editTransactionForm.get('status')?.value === 'posted'"
+                      [class.odoo-badge-draft]="editTransactionForm.get('status')?.value !== 'posted'"
+                    >
+                      <option value="draft" class="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200">Brouillon</option>
+                      <option value="posted" class="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200">Comptabilisé</option>
+                    </select>
                   </td>
                 </tr>
               } @else {
@@ -337,12 +376,12 @@
 
                   <!-- Référence (Vide si absent) -->
                   <td class="py-2.5 px-3 whitespace-nowrap text-slate-600 dark:text-slate-400 font-normal">
-                    {{ tx.matriculeVehicule || '' }}
+                    {{ tx.noDossier || '' }}
                   </td>
 
-                  <!-- Type de transaction (Vide ou valeur) -->
+                  <!-- Service -->
                   <td class="py-2.5 px-3 whitespace-nowrap text-slate-600 dark:text-slate-400 font-normal">
-                    {{ tx.typeTransaction === 'Administration' ? '' : (tx.typeTransaction || '') }}
+                    {{ tx.service || '' }}
                   </td>
 
                   <!-- Montant signé (ex: -45 000 FCFA ou 500 000 FCFA) -->
@@ -355,9 +394,19 @@
                     {{ tx.soldeApres !== undefined ? formatCurrency(tx.soldeApres) : '' }}
                   </td>
 
-                  <!-- Statut (Badge Comptabilisé vert Odoo) -->
+                  <!-- Statut (Badge dynamique Odoo) -->
                   <td class="py-2.5 px-3 text-center whitespace-nowrap">
-                    <span class="odoo-badge-posted">Comptabilisé</span>
+                    @switch (tx.status) {
+                      @case ('posted') {
+                        <span class="odoo-badge-posted">Comptabilisé</span>
+                      }
+                      @case ('cancelled') {
+                        <span class="odoo-badge-cancelled">Annulé</span>
+                      }
+                      @default {
+                        <span class="odoo-badge-draft">Brouillon</span>
+                      }
+                    }
                   </td>
                 </tr>
               }

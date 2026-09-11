@@ -71,7 +71,10 @@ export class SupabaseService {
         try {
           const raw = sessionStorage.getItem('supabase_config');
           if (raw) cachedConfig = JSON.parse(raw);
-        } catch {}
+        } catch (_e) {
+          // Ignorer l'erreur de lecture sessionStorage
+          void _e;
+        }
       }
 
       const configToUse = transferredConfig || cachedConfig;
@@ -117,7 +120,10 @@ export class SupabaseService {
                 return this._isConfigured();
               }
             }
-          } catch {}
+          } catch (_e) {
+            // Ignorer si parsing invalide
+            void _e;
+          }
         }
 
         const response = await fetch('/api/supabase-config', {
@@ -130,7 +136,10 @@ export class SupabaseService {
             if (typeof window !== 'undefined' && window.sessionStorage) {
               try {
                 sessionStorage.setItem('supabase_config', JSON.stringify(config));
-              } catch {}
+              } catch (_e) {
+                // Ignorer si sessionStorage plein ou restreint
+                void _e;
+              }
             }
           }
         }

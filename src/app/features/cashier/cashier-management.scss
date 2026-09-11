@@ -152,6 +152,19 @@
     white-space: nowrap;
   }
 
+  .odoo-badge-cancelled {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    font-weight: 500;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.65rem;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+  }
+
   // Micro-animations sur les boutons de pagination
   #cashier-prev-page-btn,
   #cashier-next-page-btn {

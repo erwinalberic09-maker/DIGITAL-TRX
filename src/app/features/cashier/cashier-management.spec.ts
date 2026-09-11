@@ -63,7 +63,7 @@ describe('CashierManagement', () => {
       libelle: 'Fournitures de bureau',
       category: 'sortie',
       montant: 25000,
-      typeTransaction: 'Administration',
+      service: 'Administration',
     });
 
     await component.submitInlineTransaction();
@@ -73,21 +73,21 @@ describe('CashierManagement', () => {
     expect(component.currentBalance()).toBe(-25000);
   });
 
-  it('devrait exiger le matricule et la quantité lorsque le type est Opérations', async () => {
+  it('devrait exiger le numéro de dossier et la quantité lorsque le type est Opérations', async () => {
     component.startAddInline();
     component.transactionForm.patchValue({
       libelle: 'Carburant citerne',
       category: 'sortie',
       montant: 150000,
-      typeTransaction: 'Opérations',
-      matriculeVehicule: '',
+      service: 'Opérations',
+      noDossier: '',
       quantity: null,
     });
 
     expect(component.transactionForm.invalid).toBe(true);
 
     component.transactionForm.patchValue({
-      matriculeVehicule: 'LT-842-AB',
+      noDossier: 'LT-842-AB',
       quantity: 50,
     });
 
@@ -102,10 +102,10 @@ describe('CashierManagement', () => {
       id: 'tx-100',
       date: '06/09/2026',
       libelle: 'Réparation pneu',
-      typeTransaction: 'Administration' as const,
+      service: 'Administration' as const,
       typeDescription: '',
       category: 'sortie' as const,
-      matriculeVehicule: '',
+      noDossier: '',
       employee: 'Mamadou',
       quantity: undefined,
       montant: -15000,
@@ -134,7 +134,7 @@ describe('CashierManagement', () => {
       libelle: 'Fournitures de bureau',
       category: 'sortie',
       montant: 20000,
-      typeTransaction: 'Administration',
+      service: 'Administration',
     });
     await component.submitInlineTransaction();
 
@@ -159,5 +159,35 @@ describe('CashierManagement', () => {
     expect(updatedTx.libelle).toBe('Fournitures de bureau modifiées');
     expect(updatedTx.montant).toBe(-30000);
     expect(component.currentBalance()).toBe(-30000);
+  });
+
+  it('devrait permettre de choisir le statut (Brouillon / Comptabilisé) lors de l’ajout et de la modification', async () => {
+    component.startAddInline();
+    expect(component.transactionForm.get('status')?.value).toBe('draft');
+
+    component.transactionForm.patchValue({
+      libelle: 'Versement initial',
+      category: 'entree',
+      montant: 100000,
+      service: 'Administration',
+      status: 'posted',
+    });
+
+    await component.submitInlineTransaction();
+
+    const createdTx = service.allTransactions()[0];
+    expect(createdTx.status).toBe('posted');
+
+    // Modification vers brouillon
+    component.startInlineEdit(createdTx);
+    expect(component.editTransactionForm.get('status')?.value).toBe('posted');
+
+    component.editTransactionForm.patchValue({
+      status: 'draft',
+    });
+
+    await component.submitInlineEdit();
+    const updatedTx = service.allTransactions()[0];
+    expect(updatedTx.status).toBe('draft');
   });
 });

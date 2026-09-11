@@ -35,6 +35,7 @@ import { CashierService } from '../../core/services/cashier.service';
 import { AuthService } from '../../core/services/auth.service';
 import {
   CashierTransaction,
+  TransactionStatus,
   TransactionTypeCategory,
 } from '../../core/models/cashier-transaction.model';
 import { OdooDatepicker } from '../../shared/components/odoo-datepicker/odoo-datepicker';
@@ -175,7 +176,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       nonNullable: true,
       validators: [Validators.required, Validators.minLength(2)],
     }),
-    typeTransaction: new FormControl<'Opérations' | 'Administration'>('Administration', {
+    service: new FormControl<'Opérations' | 'Administration'>('Administration', {
       nonNullable: true,
       validators: [Validators.required],
     }),
@@ -184,7 +185,11 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       nonNullable: true,
       validators: [Validators.required],
     }),
-    matriculeVehicule: new FormControl<string>('', { nonNullable: true }),
+    status: new FormControl<TransactionStatus>('draft', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    noDossier: new FormControl<string>('', { nonNullable: true }),
     employee: new FormControl<string>('', { nonNullable: true }),
     quantity: new FormControl<number | null>(null),
     montant: new FormControl<number | null>(null, {
@@ -212,7 +217,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       nonNullable: true,
       validators: [Validators.required, Validators.minLength(2)],
     }),
-    typeTransaction: new FormControl<'Opérations' | 'Administration'>('Administration', {
+    service: new FormControl<'Opérations' | 'Administration'>('Administration', {
       nonNullable: true,
       validators: [Validators.required],
     }),
@@ -221,7 +226,11 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       nonNullable: true,
       validators: [Validators.required],
     }),
-    matriculeVehicule: new FormControl<string>('', { nonNullable: true }),
+    status: new FormControl<TransactionStatus>('draft', {
+      nonNullable: true,
+      validators: [Validators.required],
+    }),
+    noDossier: new FormControl<string>('', { nonNullable: true }),
     employee: new FormControl<string>('', { nonNullable: true }),
     quantity: new FormControl<number | null>(null),
     montant: new FormControl<number | null>(null, {
@@ -238,10 +247,11 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         this.transactionForm.reset({
           date: isoDate,
           libelle: '',
-          typeTransaction: 'Administration',
+          service: 'Administration',
           typeDescription: '',
           category: 'sortie',
-          matriculeVehicule: '',
+          status: 'draft',
+          noDossier: '',
           employee: '',
           quantity: null,
           montant: null,
@@ -263,14 +273,14 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       this.cashierService.setSearchQuery(val);
     });
 
-    // Écoute dynamique du type de transaction pour activer la distribution analytique
-    this.transactionForm.get('typeTransaction')?.valueChanges.subscribe((type) => {
+    // Écoute dynamique du type de service pour activer la distribution analytique
+    this.transactionForm.get('service')?.valueChanges.subscribe((type) => {
       const isOps = type === 'Opérations';
       this.isOperationsType.set(isOps);
       this.updateConditionalValidators(isOps);
     });
 
-    this.editTransactionForm.get('typeTransaction')?.valueChanges.subscribe((type) => {
+    this.editTransactionForm.get('service')?.valueChanges.subscribe((type) => {
       const isOps = type === 'Opérations';
       this.isEditOperationsType.set(isOps);
       this.updateEditConditionalValidators(isOps);
@@ -278,32 +288,32 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private updateConditionalValidators(isOps: boolean): void {
-    const matriculeCtrl = this.transactionForm.get('matriculeVehicule');
+    const noDossierCtrl = this.transactionForm.get('noDossier');
     const quantityCtrl = this.transactionForm.get('quantity');
 
     if (isOps) {
-      matriculeCtrl?.setValidators([Validators.required, Validators.minLength(2)]);
+      noDossierCtrl?.setValidators([Validators.required, Validators.minLength(2)]);
       quantityCtrl?.setValidators([Validators.required, Validators.min(1)]);
     } else {
-      matriculeCtrl?.clearValidators();
+      noDossierCtrl?.clearValidators();
       quantityCtrl?.clearValidators();
     }
-    matriculeCtrl?.updateValueAndValidity();
+    noDossierCtrl?.updateValueAndValidity();
     quantityCtrl?.updateValueAndValidity();
   }
 
   private updateEditConditionalValidators(isOps: boolean): void {
-    const matriculeCtrl = this.editTransactionForm.get('matriculeVehicule');
+    const noDossierCtrl = this.editTransactionForm.get('noDossier');
     const quantityCtrl = this.editTransactionForm.get('quantity');
 
     if (isOps) {
-      matriculeCtrl?.setValidators([Validators.required, Validators.minLength(2)]);
+      noDossierCtrl?.setValidators([Validators.required, Validators.minLength(2)]);
       quantityCtrl?.setValidators([Validators.required, Validators.min(1)]);
     } else {
-      matriculeCtrl?.clearValidators();
+      noDossierCtrl?.clearValidators();
       quantityCtrl?.clearValidators();
     }
-    matriculeCtrl?.updateValueAndValidity();
+    noDossierCtrl?.updateValueAndValidity();
     quantityCtrl?.updateValueAndValidity();
   }
 
@@ -498,10 +508,11 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     this.transactionForm.reset({
       date: isoDate,
       libelle: '',
-      typeTransaction: 'Administration',
+      service: 'Administration',
       typeDescription: '',
       category: 'sortie',
-      matriculeVehicule: '',
+      status: 'draft',
+      noDossier: '',
       employee: '',
       quantity: null,
       montant: null,
@@ -544,10 +555,11 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       const result = await this.cashierService.addTransaction({
         date: formattedDate,
         libelle: formValues.libelle,
-        typeTransaction: formValues.typeTransaction,
+        service: formValues.service,
         typeDescription: formValues.typeDescription || undefined,
         category: formValues.category,
-        matriculeVehicule: formValues.matriculeVehicule || undefined,
+        status: formValues.status,
+        noDossier: formValues.noDossier || undefined,
         employee: formValues.employee || undefined,
         quantity: formValues.quantity !== null && formValues.quantity !== undefined ? Number(formValues.quantity) : undefined,
         montant: finalMontant,
@@ -580,16 +592,17 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       }
     }
 
-    const isOps = tx.typeTransaction === 'Opérations';
+    const isOps = tx.service === 'Opérations';
     this.isEditOperationsType.set(isOps);
 
     this.editTransactionForm.patchValue({
       date: isoDate,
       libelle: tx.libelle,
-      typeTransaction: isOps ? 'Opérations' : 'Administration',
+      service: isOps ? 'Opérations' : 'Administration',
       typeDescription: tx.typeDescription || '',
       category: tx.category,
-      matriculeVehicule: tx.matriculeVehicule || '',
+      status: tx.status || 'draft',
+      noDossier: tx.noDossier || '',
       employee: tx.employee || '',
       quantity: tx.quantity !== undefined ? tx.quantity : null,
       montant: Math.abs(tx.montant),
@@ -607,8 +620,8 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     const target = event.target as HTMLElement | null;
     if (!target) return;
 
-    // Si on a cliqué sur le bouton "Nouveau" du bandeau, laisser startAddInline() gérer
-    if (target.closest('#cashier-new-btn')) {
+    // Si on a cliqué sur le bouton "Nouveau" du bandeau ou dans un popover de datepicker, ne pas fermer la ligne
+    if (target.closest('#cashier-new-btn') || target.closest('app-odoo-datepicker') || target.closest('.odoo-datepicker-popover')) {
       return;
     }
 
@@ -724,10 +737,11 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       const result = await this.cashierService.updateTransaction(activeId, {
         date: formattedDate,
         libelle: formValues.libelle,
-        typeTransaction: formValues.typeTransaction,
+        service: formValues.service,
         typeDescription: formValues.typeDescription || undefined,
         category: formValues.category,
-        matriculeVehicule: formValues.matriculeVehicule || undefined,
+        status: formValues.status,
+        noDossier: formValues.noDossier || undefined,
         employee: formValues.employee || undefined,
         quantity: formValues.quantity !== null && formValues.quantity !== undefined ? Number(formValues.quantity) : undefined,
         montant: finalMontant,
