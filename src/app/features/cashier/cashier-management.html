@@ -2,7 +2,7 @@
   <div class="w-full">
 
     <!-- Actions de sélection & Solde Actuel -->
-    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 px-3 py-2 border-b border-white/5">
+    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 px-3 py-2 border-b border-slate-200 dark:border-white/5">
       <div class="flex items-center gap-3">
         @if (canEdit() && selectedCount() > 0) {
           <button
@@ -10,7 +10,7 @@
             type="button"
             (click)="deleteSelectedTransactions()"
             [disabled]="isDeleting()"
-            class="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded text-xs font-medium transition-all cursor-pointer disabled:opacity-50"
+            class="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 rounded text-xs font-medium transition-all cursor-pointer disabled:opacity-50"
           >
             <mat-icon class="text-xs w-4 h-4">delete</mat-icon>
             <span>Supprimer ({{ selectedCount() }})</span>
@@ -20,12 +20,12 @@
 
       <!-- Solde Actuel -->
       <div class="flex items-center gap-2 self-end sm:self-auto">
-        <span class="text-slate-400 font-medium text-xs uppercase tracking-wider">
+        <span class="text-slate-600 dark:text-slate-400 font-medium text-xs uppercase tracking-wider">
           Solde Actuel :
         </span>
         <span
           id="cashier-current-balance"
-          class="text-emerald-400 font-bold text-sm tracking-tight"
+          class="text-emerald-600 dark:text-emerald-400 font-bold text-sm tracking-tight"
         >
           {{ formatSolde(currentBalance()) }} FCFA
         </span>
@@ -149,7 +149,7 @@
                   <button
                     type="button"
                     (click)="transactionForm.patchValue({ category: transactionForm.get('category')?.value === 'sortie' ? 'entree' : 'sortie' })"
-                    class="text-xs font-bold cursor-pointer hover:underline text-slate-400"
+                    class="text-xs font-bold cursor-pointer hover:underline text-slate-500 dark:text-slate-400"
                     title="Bascule Débit/Crédit"
                   >
                     {{ transactionForm.get('category')?.value === 'sortie' ? '-' : '' }}
@@ -161,12 +161,12 @@
                     placeholder="0"
                     class="odoo-field-input text-right font-normal w-24"
                   />
-                  <span class="text-xs text-slate-300">FCFA</span>
+                  <span class="text-xs text-slate-600 dark:text-slate-300">FCFA</span>
                 </div>
               </td>
 
               <!-- Solde courant prévisionnel -->
-              <td class="py-2 px-3 text-right text-slate-300 text-xs whitespace-nowrap align-middle">
+              <td class="py-2 px-3 text-right text-slate-600 dark:text-slate-300 text-xs whitespace-nowrap align-middle">
                 {{ getEstimatedBalance() }}
               </td>
 
@@ -179,9 +179,9 @@
 
           @if (isLoading() && pagedTransactions().length === 0) {
             <tr>
-              <td colspan="10" class="py-12 text-center text-slate-400 text-sm">
+              <td colspan="10" class="py-12 text-center text-slate-500 dark:text-slate-400 text-sm">
                 <div class="inline-flex items-center gap-2">
-                  <mat-icon class="animate-spin text-emerald-400 text-lg">refresh</mat-icon>
+                  <mat-icon class="animate-spin text-emerald-500 dark:text-emerald-400 text-lg">refresh</mat-icon>
                   <span>Chargement des opérations de caisse...</span>
                 </div>
               </td>
@@ -271,7 +271,7 @@
                       <button
                         type="button"
                         (click)="editTransactionForm.patchValue({ category: editTransactionForm.get('category')?.value === 'sortie' ? 'entree' : 'sortie' })"
-                        class="text-xs font-bold cursor-pointer hover:underline text-slate-400"
+                        class="text-xs font-bold cursor-pointer hover:underline text-slate-500 dark:text-slate-400"
                         title="Bascule Débit/Crédit"
                       >
                         {{ editTransactionForm.get('category')?.value === 'sortie' ? '-' : '' }}
@@ -282,12 +282,12 @@
                         formControlName="montant"
                         class="odoo-field-input text-right font-normal w-24"
                       />
-                      <span class="text-xs text-slate-300">FCFA</span>
+                      <span class="text-xs text-slate-600 dark:text-slate-300">FCFA</span>
                     </div>
                   </td>
 
                   <!-- Solde courant -->
-                  <td class="py-2 px-3 text-right whitespace-nowrap text-slate-300 text-xs align-middle">
+                  <td class="py-2 px-3 text-right whitespace-nowrap text-slate-600 dark:text-slate-300 text-xs align-middle">
                     {{ tx.soldeApres !== undefined ? formatCurrency(tx.soldeApres) : '' }}
                   </td>
 
@@ -320,38 +320,38 @@
                   </td>
 
                   <!-- Date (Compacte ex: 2 sept.) -->
-                  <td class="py-2.5 px-3 whitespace-nowrap text-slate-100 font-normal">{{ formatOdooDate(tx.date) }}</td>
+                  <td class="py-2.5 px-3 whitespace-nowrap text-slate-900 dark:text-slate-100 font-normal">{{ formatOdooDate(tx.date) }}</td>
 
                   <!-- Pièce comptable (Blanc normal une fois enregistrée) -->
-                  <td class="py-2.5 px-3 whitespace-nowrap text-slate-100 font-normal">
+                  <td class="py-2.5 px-3 whitespace-nowrap text-slate-900 dark:text-slate-100 font-normal">
                     <span>{{ getOdooSequence(tx, $index) }}</span>
                   </td>
 
                   <!-- Libellé -->
-                  <td class="py-2.5 px-3 text-slate-100 font-normal">{{ tx.libelle }}</td>
+                  <td class="py-2.5 px-3 text-slate-900 dark:text-slate-100 font-normal">{{ tx.libelle }}</td>
 
                   <!-- Partenaire (Vide si absent, pas de tiret) -->
-                  <td class="py-2.5 px-3 whitespace-nowrap text-slate-200 font-normal">
+                  <td class="py-2.5 px-3 whitespace-nowrap text-slate-700 dark:text-slate-300 font-normal">
                     {{ tx.employee || '' }}
                   </td>
 
                   <!-- Référence (Vide si absent) -->
-                  <td class="py-2.5 px-3 whitespace-nowrap text-slate-300 font-normal">
+                  <td class="py-2.5 px-3 whitespace-nowrap text-slate-600 dark:text-slate-400 font-normal">
                     {{ tx.matriculeVehicule || '' }}
                   </td>
 
                   <!-- Type de transaction (Vide ou valeur) -->
-                  <td class="py-2.5 px-3 whitespace-nowrap text-slate-300 font-normal">
+                  <td class="py-2.5 px-3 whitespace-nowrap text-slate-600 dark:text-slate-400 font-normal">
                     {{ tx.typeTransaction === 'Administration' ? '' : (tx.typeTransaction || '') }}
                   </td>
 
                   <!-- Montant signé (ex: -45 000 FCFA ou 500 000 FCFA) -->
-                  <td class="py-2.5 px-3 text-right whitespace-nowrap text-slate-100 font-normal">
+                  <td class="py-2.5 px-3 text-right whitespace-nowrap text-slate-900 dark:text-slate-100 font-normal">
                     {{ formatCurrency(tx.montant) }}
                   </td>
 
                   <!-- Solde courant (ex: 455 000 FCFA) -->
-                  <td class="py-2.5 px-3 text-right whitespace-nowrap text-slate-100 font-normal">
+                  <td class="py-2.5 px-3 text-right whitespace-nowrap text-slate-900 dark:text-slate-100 font-normal">
                     {{ tx.soldeApres !== undefined ? formatCurrency(tx.soldeApres) : '' }}
                   </td>
 
