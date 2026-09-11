@@ -176,16 +176,16 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       nonNullable: true,
       validators: [Validators.required, Validators.minLength(2)],
     }),
-    service: new FormControl<'Opérations' | 'Administration'>('Administration', {
+    service: new FormControl<'Opérations' | 'Administration' | ''>('', {
       nonNullable: true,
       validators: [Validators.required],
     }),
     typeDescription: new FormControl<string>('', { nonNullable: true }),
-    category: new FormControl<TransactionTypeCategory>('sortie', {
+    category: new FormControl<TransactionTypeCategory | ''>('', {
       nonNullable: true,
       validators: [Validators.required],
     }),
-    status: new FormControl<TransactionStatus>('draft', {
+    status: new FormControl<TransactionStatus | ''>('', {
       nonNullable: true,
       validators: [Validators.required],
     }),
@@ -217,16 +217,16 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       nonNullable: true,
       validators: [Validators.required, Validators.minLength(2)],
     }),
-    service: new FormControl<'Opérations' | 'Administration'>('Administration', {
+    service: new FormControl<'Opérations' | 'Administration' | ''>('', {
       nonNullable: true,
       validators: [Validators.required],
     }),
     typeDescription: new FormControl<string>('', { nonNullable: true }),
-    category: new FormControl<TransactionTypeCategory>('sortie', {
+    category: new FormControl<TransactionTypeCategory | ''>('', {
       nonNullable: true,
       validators: [Validators.required],
     }),
-    status: new FormControl<TransactionStatus>('draft', {
+    status: new FormControl<TransactionStatus | ''>('', {
       nonNullable: true,
       validators: [Validators.required],
     }),
@@ -242,15 +242,13 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     // Initialisation automatique du formulaire quand l'ajout est déclenché
     effect(() => {
       if (this.cashierService.isAddingRow()) {
-        const today = new Date();
-        const isoDate = today.toISOString().split('T')[0];
         this.transactionForm.reset({
-          date: isoDate,
+          date: '',
           libelle: '',
-          service: 'Administration',
+          service: '',
           typeDescription: '',
-          category: 'sortie',
-          status: 'draft',
+          category: '',
+          status: '',
           noDossier: '',
           employee: '',
           quantity: null,
@@ -503,15 +501,13 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       this.cancelInlineEdit();
     }
 
-    const today = new Date();
-    const isoDate = today.toISOString().split('T')[0];
     this.transactionForm.reset({
-      date: isoDate,
+      date: '',
       libelle: '',
-      service: 'Administration',
+      service: '',
       typeDescription: '',
-      category: 'sortie',
-      status: 'draft',
+      category: '',
+      status: '',
       noDossier: '',
       employee: '',
       quantity: null,
@@ -555,10 +551,10 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       const result = await this.cashierService.addTransaction({
         date: formattedDate,
         libelle: formValues.libelle,
-        service: formValues.service,
+        service: (formValues.service as 'Opérations' | 'Administration') || 'Administration',
         typeDescription: formValues.typeDescription || undefined,
-        category: formValues.category,
-        status: formValues.status,
+        category: (formValues.category as TransactionTypeCategory) || 'sortie',
+        status: (formValues.status as TransactionStatus) || 'draft',
         noDossier: formValues.noDossier || undefined,
         employee: formValues.employee || undefined,
         quantity: formValues.quantity !== null && formValues.quantity !== undefined ? Number(formValues.quantity) : undefined,
@@ -737,10 +733,10 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       const result = await this.cashierService.updateTransaction(activeId, {
         date: formattedDate,
         libelle: formValues.libelle,
-        service: formValues.service,
+        service: (formValues.service as 'Opérations' | 'Administration') || 'Administration',
         typeDescription: formValues.typeDescription || undefined,
-        category: formValues.category,
-        status: formValues.status,
+        category: (formValues.category as TransactionTypeCategory) || 'sortie',
+        status: (formValues.status as TransactionStatus) || 'draft',
         noDossier: formValues.noDossier || undefined,
         employee: formValues.employee || undefined,
         quantity: formValues.quantity !== null && formValues.quantity !== undefined ? Number(formValues.quantity) : undefined,
