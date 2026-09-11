@@ -61,6 +61,7 @@
               </span>
             </th>
             <th scope="col" class="py-2 px-3 font-semibold whitespace-nowrap w-36">Service</th>
+            <th scope="col" class="py-2 px-3 font-semibold text-right whitespace-nowrap w-24">Quantité</th>
             <th scope="col" class="py-2 px-3 font-semibold text-right whitespace-nowrap w-32">Montant</th>
             <th scope="col" class="py-2 px-3 font-semibold text-right whitespace-nowrap w-32">Solde courant</th>
             <th scope="col" class="py-2 px-3 font-semibold text-center whitespace-nowrap w-28">Statut</th>
@@ -152,6 +153,17 @@
                 </div>
               </td>
 
+              <!-- Quantité -->
+              <td class="py-2 px-3 align-middle text-right whitespace-nowrap">
+                <input
+                  id="inline-input-quantity"
+                  type="number"
+                  formControlName="quantity"
+                  placeholder="1"
+                  class="odoo-field-input text-right font-normal w-20"
+                />
+              </td>
+
               <!-- Montant avec Bascule Débit / Crédit -->
               <td class="py-2 px-3 align-middle text-right whitespace-nowrap">
                 <div class="inline-flex items-center gap-1 justify-end">
@@ -198,7 +210,7 @@
 
           @if (isLoading() && pagedTransactions().length === 0) {
             <tr>
-              <td colspan="10" class="py-12 text-center text-slate-500 dark:text-slate-400 text-sm">
+              <td colspan="11" class="py-12 text-center text-slate-500 dark:text-slate-400 text-sm">
                 <div class="inline-flex items-center gap-2">
                   <mat-icon class="animate-spin text-emerald-500 dark:text-emerald-400 text-lg">refresh</mat-icon>
                   <span>Chargement des opérations de caisse...</span>
@@ -294,6 +306,16 @@
                     </div>
                   </td>
 
+                  <!-- Quantité -->
+                  <td class="py-2 px-3 align-middle text-right whitespace-nowrap">
+                    <input
+                      id="inline-edit-quantity"
+                      type="number"
+                      formControlName="quantity"
+                      class="odoo-field-input text-right font-normal w-20"
+                    />
+                  </td>
+
                   <!-- Montant -->
                   <td class="py-2 px-3 align-middle text-right whitespace-nowrap">
                     <div class="inline-flex items-center gap-1 justify-end">
@@ -384,6 +406,11 @@
                     {{ tx.service || '' }}
                   </td>
 
+                  <!-- Quantité -->
+                  <td class="py-2.5 px-3 text-right whitespace-nowrap text-slate-700 dark:text-slate-300 font-normal">
+                    {{ tx.quantity !== null && tx.quantity !== undefined ? tx.quantity : '' }}
+                  </td>
+
                   <!-- Montant signé (ex: -45 000 FCFA ou 500 000 FCFA) -->
                   <td class="py-2.5 px-3 text-right whitespace-nowrap text-slate-900 dark:text-slate-100 font-normal">
                     {{ formatCurrency(tx.montant) }}
@@ -413,7 +440,7 @@
             } @empty {
               @if (!isAddingRow()) {
                 <tr>
-                  <td colspan="10" class="py-12 text-center text-slate-400 text-sm">
+                  <td colspan="11" class="py-12 text-center text-slate-400 text-sm">
                     Aucune opération de caisse. Cliquez sur <strong>Nouveau</strong> pour ajouter une première ligne.
                   </td>
                 </tr>
