@@ -37,6 +37,7 @@ import {
   CashierTransaction,
   TransactionTypeCategory,
 } from '../../core/models/cashier-transaction.model';
+import { OdooDatepicker } from '../../shared/components/odoo-datepicker/odoo-datepicker';
 
 // Enregistrement des composants nécessaires de Chart.js
 Chart.register(
@@ -57,7 +58,7 @@ export interface CaisseTimelineData {
 
 @Component({
   selector: 'app-cashier-management',
-  imports: [ReactiveFormsModule, MatIconModule],
+  imports: [ReactiveFormsModule, MatIconModule, OdooDatepicker],
   templateUrl: './cashier-management.html',
   styleUrl: './cashier-management.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -192,6 +193,10 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   });
 
   public readonly isOperationsType = signal<boolean>(false);
+
+  // État du DatePicker Odoo pour l'ajout et l'édition
+  public readonly isAddDatePickerOpen = signal<boolean>(false);
+  public readonly isEditDatePickerOpen = signal<boolean>(false);
 
   // État et Formulaire d'édition par Double-Clic
   public readonly editingTxId = signal<string | null>(null);
@@ -635,15 +640,48 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   public onAddKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter') {
       event.preventDefault();
+      this.isAddDatePickerOpen.set(false);
       this.submitInlineTransaction();
     } else if (event.key === 'Escape') {
       event.preventDefault();
+      this.isAddDatePickerOpen.set(false);
       this.cancelAddInline();
     }
   }
 
+  public openAddDatePicker(event?: Event): void {
+    if (event) event.stopPropagation();
+    this.isAddDatePickerOpen.set(true);
+    this.isEditDatePickerOpen.set(false);
+  }
+
+  public closeAddDatePicker(): void {
+    this.isAddDatePickerOpen.set(false);
+  }
+
+  public onAddDateSelected(isoDate: string): void {
+    this.transactionForm.patchValue({ date: isoDate });
+    this.isAddDatePickerOpen.set(false);
+  }
+
+  public openEditDatePicker(event?: Event): void {
+    if (event) event.stopPropagation();
+    this.isEditDatePickerOpen.set(true);
+    this.isAddDatePickerOpen.set(false);
+  }
+
+  public closeEditDatePicker(): void {
+    this.isEditDatePickerOpen.set(false);
+  }
+
+  public onEditDateSelected(isoDate: string): void {
+    this.editTransactionForm.patchValue({ date: isoDate });
+    this.isEditDatePickerOpen.set(false);
+  }
+
   public cancelInlineEdit(): void {
     this.editingTxId.set(null);
+    this.isEditDatePickerOpen.set(false);
     this.editTransactionForm.reset();
   }
 

@@ -75,16 +75,29 @@
                 <input type="checkbox" disabled class="odoo-checkbox opacity-40" />
               </td>
 
-              <!-- Date (Soulignée comme sur image 1) -->
-              <td class="py-2 px-3 whitespace-nowrap align-middle">
-                <input
-                  id="inline-input-date"
-                  type="text"
-                  formControlName="date"
-                  placeholder="2 sept."
-                  class="odoo-field-input odoo-active-underline"
-                  title="Date de l'opération"
-                />
+              <!-- Date (Soulignée avec popover calendrier Odoo) -->
+              <td class="py-2 px-3 whitespace-nowrap align-middle relative">
+                <div class="relative inline-block">
+                  <input
+                    id="inline-input-date"
+                    type="text"
+                    formControlName="date"
+                    placeholder="2 sept."
+                    class="odoo-field-input odoo-active-underline cursor-pointer"
+                    [class.odoo-date-active]="isAddDatePickerOpen()"
+                    (click)="openAddDatePicker($event)"
+                    (focus)="openAddDatePicker($event)"
+                    title="Cliquer pour choisir une date"
+                    readonly
+                  />
+                  @if (isAddDatePickerOpen()) {
+                    <app-odoo-datepicker
+                      [value]="transactionForm.get('date')?.value"
+                      (dateChange)="onAddDateSelected($event)"
+                      (closePicker)="closeAddDatePicker()"
+                    ></app-odoo-datepicker>
+                  }
+                </div>
               </td>
 
               <!-- Pièce comptable (Cyan/Teal pendant la création) -->
@@ -188,15 +201,28 @@
                     <input type="checkbox" disabled class="odoo-checkbox opacity-40" />
                   </td>
 
-                  <!-- Date -->
-                  <td class="py-2 px-3 whitespace-nowrap align-middle">
-                    <input
-                      id="inline-edit-date"
-                      type="text"
-                      formControlName="date"
-                      class="odoo-field-input odoo-active-underline"
-                      title="Modifier la date"
-                    />
+                  <!-- Date (Soulignée avec popover calendrier Odoo) -->
+                  <td class="py-2 px-3 whitespace-nowrap align-middle relative">
+                    <div class="relative inline-block">
+                      <input
+                        id="inline-edit-date"
+                        type="text"
+                        formControlName="date"
+                        class="odoo-field-input odoo-active-underline cursor-pointer"
+                        [class.odoo-date-active]="isEditDatePickerOpen()"
+                        (click)="openEditDatePicker($event)"
+                        (focus)="openEditDatePicker($event)"
+                        title="Modifier la date"
+                        readonly
+                      />
+                      @if (isEditDatePickerOpen()) {
+                        <app-odoo-datepicker
+                          [value]="editTransactionForm.get('date')?.value"
+                          (dateChange)="onEditDateSelected($event)"
+                          (closePicker)="closeEditDatePicker()"
+                        ></app-odoo-datepicker>
+                      }
+                    </div>
                   </td>
 
                   <!-- Pièce comptable (Cyan/Teal pendant l'édition active) -->

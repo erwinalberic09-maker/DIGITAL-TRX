@@ -114,6 +114,16 @@
     }
   }
 
+  // Date active sélectionnée (Fond bleu électrique de la capture d.png sur 02/09/2026)
+  .odoo-date-active,
+  input.odoo-date-active {
+    background-color: #1d4ed8 !important; // Bleu intense de sélection Odoo
+    color: #ffffff !important;
+    padding: 2px 6px !important;
+    border-radius: 2px !important;
+    border-bottom: none !important;
+  }
+
   // Badge statut Odoo Comptabilisé (Pilule vert émeraude vive fidèle à image 1 & 2)
   .odoo-badge-posted {
     background-color: #00a09d;
