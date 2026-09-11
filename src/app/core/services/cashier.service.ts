@@ -258,6 +258,20 @@ export class CashierService implements OnDestroy {
     return this.activeLoadPromise;
   }
 
+  private toIsoDateString(dStr?: string): string {
+    if (!dStr) return new Date().toISOString();
+    if (dStr.includes('/')) {
+      const parts = dStr.split('/');
+      if (parts.length === 3) {
+        const parsed = new Date(`${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`);
+        if (!isNaN(parsed.getTime())) return parsed.toISOString();
+      }
+    }
+    const parsed = new Date(dStr);
+    if (!isNaN(parsed.getTime())) return parsed.toISOString();
+    return new Date().toISOString();
+  }
+
   /**
    * ───────────────────────────────────────────────────────────────────────────
    * 2. SAUVEGARDE VIA API SERVEUR-RELAIS & RÉACTIVITÉ INSTANTANÉE VIA SIGNALS
@@ -300,7 +314,7 @@ export class CashierService implements OnDestroy {
           partenaire: op.partenaire || op.employee || null,
           quantity: op.quantity || 1,
           montant: op.montant,
-          date: op.date ? new Date(op.date).toISOString() : new Date().toISOString(),
+          date: this.toIsoDateString(op.date),
         }),
       });
 

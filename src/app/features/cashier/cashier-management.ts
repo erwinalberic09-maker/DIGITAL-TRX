@@ -168,7 +168,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
   // Formulaire de transaction réactif
   public readonly transactionForm = new FormGroup({
-    date: new FormControl<string>('', {
+    date: new FormControl<string>(new Date().toISOString().split('T')[0], {
       nonNullable: true,
       validators: [Validators.required],
     }),
@@ -176,16 +176,16 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       nonNullable: true,
       validators: [Validators.required, Validators.minLength(2)],
     }),
-    service: new FormControl<'Opérations' | 'Administration' | ''>('', {
+    service: new FormControl<'Opérations' | 'Administration' | ''>('Administration', {
       nonNullable: true,
       validators: [Validators.required],
     }),
     typeDescription: new FormControl<string>('', { nonNullable: true }),
-    category: new FormControl<TransactionTypeCategory | ''>('', {
+    category: new FormControl<TransactionTypeCategory | ''>('sortie', {
       nonNullable: true,
       validators: [Validators.required],
     }),
-    status: new FormControl<TransactionStatus | ''>('', {
+    status: new FormControl<TransactionStatus | ''>('draft', {
       nonNullable: true,
       validators: [Validators.required],
     }),
@@ -193,7 +193,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     employee: new FormControl<string>('', { nonNullable: true }),
     quantity: new FormControl<number | null>(null),
     montant: new FormControl<number | null>(null, {
-      validators: [Validators.required, Validators.min(1)],
+      validators: [Validators.required],
     }),
   });
 
@@ -234,7 +234,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     employee: new FormControl<string>('', { nonNullable: true }),
     quantity: new FormControl<number | null>(null),
     montant: new FormControl<number | null>(null, {
-      validators: [Validators.required, Validators.min(1)],
+      validators: [Validators.required],
     }),
   });
 
@@ -243,12 +243,12 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     effect(() => {
       if (this.cashierService.isAddingRow()) {
         this.transactionForm.reset({
-          date: '',
+          date: this.todayIsoDate() || new Date().toISOString().split('T')[0],
           libelle: '',
-          service: '',
+          service: 'Administration',
           typeDescription: '',
-          category: '',
-          status: '',
+          category: 'sortie',
+          status: 'draft',
           noDossier: '',
           employee: '',
           quantity: null,
@@ -282,6 +282,31 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       const isOps = type === 'Opérations';
       this.isEditOperationsType.set(isOps);
       this.updateEditConditionalValidators(isOps);
+    });
+
+    // Conversion automatique si saisie directe d'un montant négatif (ex: -5000 -> catégorie sortie + 5000)
+    this.transactionForm.get('montant')?.valueChanges.subscribe((val) => {
+      if (typeof val === 'number' && val < 0) {
+        this.transactionForm.patchValue(
+          {
+            category: 'sortie',
+            montant: Math.abs(val),
+          },
+          { emitEvent: false }
+        );
+      }
+    });
+
+    this.editTransactionForm.get('montant')?.valueChanges.subscribe((val) => {
+      if (typeof val === 'number' && val < 0) {
+        this.editTransactionForm.patchValue(
+          {
+            category: 'sortie',
+            montant: Math.abs(val),
+          },
+          { emitEvent: false }
+        );
+      }
     });
   }
 
@@ -502,12 +527,12 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     }
 
     this.transactionForm.reset({
-      date: '',
+      date: this.todayIsoDate() || new Date().toISOString().split('T')[0],
       libelle: '',
-      service: '',
+      service: 'Administration',
       typeDescription: '',
-      category: '',
-      status: '',
+      category: 'sortie',
+      status: 'draft',
       noDossier: '',
       employee: '',
       quantity: null,
@@ -520,7 +545,18 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
   public cancelAddInline(): void {
     this.cashierService.isAddingRow.set(false);
-    this.transactionForm.reset();
+    this.transactionForm.reset({
+      date: this.todayIsoDate() || new Date().toISOString().split('T')[0],
+      libelle: '',
+      service: 'Administration',
+      typeDescription: '',
+      category: 'sortie',
+      status: 'draft',
+      noDossier: '',
+      employee: '',
+      quantity: null,
+      montant: null,
+    });
   }
 
   public async submitInlineTransaction(): Promise<void> {
@@ -535,8 +571,12 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     try {
       const formValues = this.transactionForm.getRawValue();
       const rawMontant = Number(formValues.montant) || 0;
+      const resolvedCategory: TransactionTypeCategory =
+        rawMontant < 0
+          ? 'sortie'
+          : ((formValues.category as TransactionTypeCategory) || 'sortie');
       const finalMontant =
-        formValues.category === 'sortie' ? -Math.abs(rawMontant) : Math.abs(rawMontant);
+        resolvedCategory === 'sortie' ? -Math.abs(rawMontant) : Math.abs(rawMontant);
 
       let formattedDate = this.todayFormatted();
       if (formValues.date) {
@@ -553,7 +593,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         libelle: formValues.libelle,
         service: (formValues.service as 'Opérations' | 'Administration') || 'Administration',
         typeDescription: formValues.typeDescription || undefined,
-        category: (formValues.category as TransactionTypeCategory) || 'sortie',
+        category: resolvedCategory,
         status: (formValues.status as TransactionStatus) || 'draft',
         noDossier: formValues.noDossier || undefined,
         employee: formValues.employee || undefined,
@@ -632,7 +672,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         // Sauvegarder si valide ou fermer
         const libelleVal = this.transactionForm.get('libelle')?.value?.trim();
         const montantVal = this.transactionForm.get('montant')?.value;
-        if (libelleVal && montantVal) {
+        if (libelleVal && montantVal !== null && montantVal !== undefined && Number(montantVal) !== 0) {
           this.submitInlineTransaction();
         } else {
           this.cancelAddInline();
@@ -721,8 +761,12 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     this.isEditingSubmitting.set(true);
     try {
       const rawMontant = Number(formValues.montant) || 0;
+      const resolvedCategory: TransactionTypeCategory =
+        rawMontant < 0
+          ? 'sortie'
+          : ((formValues.category as TransactionTypeCategory) || 'sortie');
       const finalMontant =
-        formValues.category === 'sortie' ? -Math.abs(rawMontant) : Math.abs(rawMontant);
+        resolvedCategory === 'sortie' ? -Math.abs(rawMontant) : Math.abs(rawMontant);
 
       let formattedDate = this.todayFormatted();
       if (formValues.date) {
@@ -743,7 +787,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         libelle: libelle,
         service: (formValues.service as 'Opérations' | 'Administration') || '',
         typeDescription: formValues.typeDescription || undefined,
-        category: (formValues.category as TransactionTypeCategory) || 'sortie',
+        category: resolvedCategory,
         status: (formValues.status as TransactionStatus) || 'draft',
         noDossier: formValues.noDossier || undefined,
         employee: formValues.employee || undefined,
