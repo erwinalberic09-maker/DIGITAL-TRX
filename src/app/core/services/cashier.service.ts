@@ -11,22 +11,27 @@ export interface CashierDbRow {
   id: string;
   date: string;
   libelle: string;
-  type_transaction: string;
-  type_description: string | null;
-  category: 'entree' | 'sortie' | null;
-  status?: 'draft' | 'posted' | 'cancelled' | null;
+  service?: string | null;
+  type_transaction?: string | null;
+  type_description?: string | null;
+  category: 'entree' | 'sortie';
+  status: 'draft' | 'posted' | 'cancelled';
+  no_dossier?: string | null;
   matricule_vehicule?: string | null;
-  first_name: string | null;
-  employee: string | null;
-  quantity: number | null;
+  first_name?: string | null;
+  partenaire?: string | null;
+  employee?: string | null;
+  quantity?: number | null;
   montant: number;
-  created_by?: string | null;
+  solde_apres?: number | null;
+  selected?: boolean;
   created_at?: string;
+  updated_at?: string;
 }
 
-// Colonnes sélectionnées selon le principe du moindre privilège (PostgREST Best Practices)
+// Colonnes sélectionnées selon le principe du moindre privilège alignées sur le schéma Supabase
 const CASHIER_SELECTED_COLUMNS =
-  'id, date, libelle, type_transaction, type_description, category, status, matricule_vehicule, first_name, employee, quantity, montant, created_by';
+  'id, date, libelle, service, type_description, category, status, no_dossier, first_name, partenaire, employee, quantity, montant, solde_apres, selected';
 
 @Injectable({
   providedIn: 'root',
@@ -154,7 +159,7 @@ export class CashierService implements OnDestroy {
     return currentList.length > 0 && currentList.every((tx) => !!tx.selected);
   });
 
-  private isLoadingTransactions = false;
+  private activeLoadPromise: Promise<void> | null = null;
 
   /**
    * ───────────────────────────────────────────────────────────────────────────
@@ -162,82 +167,95 @@ export class CashierService implements OnDestroy {
    * ───────────────────────────────────────────────────────────────────────────
    * Tente d'abord de récupérer les opérations via l'API Express rapide (/api/cahier/operations).
    * En cas d'indisponibilité ou d'erreur réseau, bascule immédiatement sur le SDK client Supabase.
+   * Gère la déduplication des appels concurrents via une Promesse unique partagée.
    */
   public async loadTransactions(): Promise<void> {
-    if (this.isLoadingTransactions) return;
-    this.isLoadingTransactions = true;
-    this._isLoading.set(true);
-    this._error.set(null);
-
-    let rawRows: CashierDbRow[] | null = null;
-    let token = this.authService.token();
-
-    try {
-      // Si le token n'est pas encore dans le signal, tenter de le lire depuis la session Supabase
-      if (!token && this.supabaseService.supabase) {
-        try {
-          const { data } = await this.supabaseService.supabase.auth.getSession();
-          if (data.session?.access_token) {
-            token = data.session.access_token;
-          }
-        } catch {
-          // Ignorer
-        }
-      }
-
-      // Canal 1 : API Express Serveur-Relais
-      try {
-        const headers: Record<string, string> = { Accept: 'application/json' };
-        if (token) {
-          headers['Authorization'] = `Bearer ${token}`;
-        }
-
-        const response = await fetch('/api/cahier/operations', {
-          method: 'GET',
-          headers,
-        });
-
-        if (response.ok) {
-          const resJson = await response.json();
-          const ops = resJson.operations || resJson.transactions;
-          if (Array.isArray(ops)) {
-            rawRows = ops as CashierDbRow[];
-          }
-        }
-      } catch (apiErr) {
-        console.warn('API Express /api/cahier/operations injoignable, bascule sur le repli direct Supabase:', apiErr);
-      }
-
-      // Canal 2 (REPLI DE SECOURS) : Interrogation directe de Supabase SDK
-      if (!rawRows) {
-        try {
-          await this.supabaseService.ensureInitialized();
-          const client = this.supabaseService.supabase;
-
-          if (client) {
-            const { data, error } = await client
-              .from('cashier_transactions')
-              .select(CASHIER_SELECTED_COLUMNS)
-              .order('date', { ascending: false });
-
-            if (!error && data && Array.isArray(data)) {
-              rawRows = data as CashierDbRow[];
-            }
-          }
-        } catch (supabaseErr) {
-          console.warn('Échec du repli direct Supabase:', supabaseErr);
-        }
-      }
-
-      // Traitement et injection dans le Signal Angular 19
-      if (rawRows && Array.isArray(rawRows)) {
-        const mappedTransactions = this.mapDatabaseOperations(rawRows);
-        this._transactions.set(mappedTransactions);
-      }
-    } finally {
-      this._isLoading.set(false);
-      this.isLoadingTransactions = false;
+    if (this.activeLoadPromise) {
+      return this.activeLoadPromise;
     }
+
+    this.activeLoadPromise = (async () => {
+      this._isLoading.set(true);
+      this._error.set(null);
+
+      let rawRows: CashierDbRow[] | null = null;
+      let token = this.authService.token();
+
+      try {
+        // Si le token n'est pas encore dans le signal, tenter de le lire depuis la session Supabase
+        if (!token && this.supabaseService.supabase) {
+          try {
+            const { data } = await this.supabaseService.supabase.auth.getSession();
+            if (data.session?.access_token) {
+              token = data.session.access_token;
+            }
+          } catch {
+            // Ignorer
+          }
+        }
+
+        // Canal 1 : API Express Serveur-Relais (si token disponible)
+        if (token) {
+          try {
+            const headers: Record<string, string> = {
+              Accept: 'application/json',
+              Authorization: `Bearer ${token}`,
+            };
+
+            const response = await fetch('/api/cahier/operations', {
+              method: 'GET',
+              headers,
+            });
+
+            if (response.ok) {
+              const resJson = await response.json();
+              const ops = resJson.operations || resJson.transactions;
+              if (Array.isArray(ops)) {
+                rawRows = ops as CashierDbRow[];
+              }
+            }
+          } catch (apiErr) {
+            console.warn('API Express /api/cahier/operations indisponible, bascule sur Supabase direct:', apiErr);
+          }
+        }
+
+        // Canal 2 (REPLI DIRECT SUPABASE CLIENT) : Interrogation directe de Supabase
+        if (!rawRows) {
+          try {
+            await this.supabaseService.ensureInitialized();
+            const client = this.supabaseService.supabase;
+
+            if (client) {
+              const { data, error } = await client
+                .from('cashier_transactions')
+                .select(CASHIER_SELECTED_COLUMNS)
+                .order('date', { ascending: false });
+
+              if (!error && data && Array.isArray(data)) {
+                rawRows = data as CashierDbRow[];
+              } else if (error) {
+                console.warn('Requête Supabase direct cashier_transactions:', error.message);
+              }
+            }
+          } catch (supabaseErr) {
+            console.warn('Échec de la récupération Supabase direct:', supabaseErr);
+          }
+        }
+
+        // Traitement et injection dans le Signal Angular 19
+        if (rawRows && Array.isArray(rawRows)) {
+          const mappedTransactions = this.mapDatabaseOperations(rawRows);
+          this._transactions.set(mappedTransactions);
+        }
+      } catch (err: unknown) {
+        console.error('Erreur globale lors du chargement des opérations de caisse:', err);
+      } finally {
+        this._isLoading.set(false);
+        this.activeLoadPromise = null;
+      }
+    })();
+
+    return this.activeLoadPromise;
   }
 
   /**
@@ -301,22 +319,22 @@ export class CashierService implements OnDestroy {
         await this.supabaseService.ensureInitialized();
         const client = this.supabaseService.supabase;
         if (client) {
-          const currentUser = this.authService.currentUser();
           const { data, error } = await client
             .from('cashier_transactions')
             .insert([
               {
                 libelle: op.libelle,
-                type_transaction: op.service || null,
+                service: op.service || null,
                 type_description: op.typeDescription || null,
                 category: op.category,
                 status: op.status || 'draft',
-                matricule_vehicule: op.noDossier || null,
+                no_dossier: op.noDossier || null,
                 first_name: op.firstName || null,
+                partenaire: op.partenaire || op.employee || null,
                 employee: op.employee || op.partenaire || null,
                 quantity: op.quantity || 1,
                 montant: op.montant,
-                created_by: currentUser?.id || null,
+                date: op.date || new Date().toISOString(),
               },
             ])
             .select()
@@ -337,17 +355,17 @@ export class CashierService implements OnDestroy {
           id: savedRow.id,
           date: this.formatDate(savedRow.date || new Date().toISOString()),
           libelle: savedRow.libelle,
-          service: savedRow.type_transaction || '',
+          service: savedRow.service || savedRow.type_transaction || '',
           typeDescription: savedRow.type_description || '',
           category: savedRow.category as 'entree' | 'sortie',
           status: (savedRow.status as 'draft' | 'posted' | 'cancelled') || op.status || 'draft',
-          noDossier: savedRow.matricule_vehicule || '',
+          noDossier: savedRow.no_dossier || savedRow.matricule_vehicule || '',
           firstName: savedRow.first_name || '',
           employee: savedRow.employee || '',
-          partenaire: savedRow.employee || '',
+          partenaire: savedRow.partenaire || savedRow.employee || '',
           quantity: savedRow.quantity ? Number(savedRow.quantity) : undefined,
           montant: Number(savedRow.montant),
-          soldeApres: estimatedNewSolde,
+          soldeApres: savedRow.solde_apres !== undefined && savedRow.solde_apres !== null ? Number(savedRow.solde_apres) : estimatedNewSolde,
           selected: false,
         }
       : {
@@ -455,15 +473,14 @@ export class CashierService implements OnDestroy {
         if (client) {
           const directPayload: Record<string, unknown> = {};
           if (updatedFields.libelle !== undefined) directPayload['libelle'] = updatedFields.libelle;
-          if (updatedFields.service !== undefined) directPayload['type_transaction'] = updatedFields.service;
+          if (updatedFields.service !== undefined) directPayload['service'] = updatedFields.service;
           if (updatedFields.typeDescription !== undefined) directPayload['type_description'] = updatedFields.typeDescription || null;
           if (updatedFields.category !== undefined) directPayload['category'] = updatedFields.category;
           if (updatedFields.status !== undefined) directPayload['status'] = updatedFields.status;
-          if (updatedFields.noDossier !== undefined) directPayload['matricule_vehicule'] = updatedFields.noDossier || null;
+          if (updatedFields.noDossier !== undefined) directPayload['no_dossier'] = updatedFields.noDossier || null;
           if (updatedFields.firstName !== undefined) directPayload['first_name'] = updatedFields.firstName || null;
-          if (updatedFields.employee !== undefined || updatedFields.partenaire !== undefined) {
-            directPayload['employee'] = updatedFields.employee || updatedFields.partenaire || null;
-          }
+          if (updatedFields.partenaire !== undefined) directPayload['partenaire'] = updatedFields.partenaire || null;
+          if (updatedFields.employee !== undefined) directPayload['employee'] = updatedFields.employee || null;
           if (updatedFields.quantity !== undefined) directPayload['quantity'] = updatedFields.quantity;
           if (updatedFields.montant !== undefined) directPayload['montant'] = updatedFields.montant;
           if (isoDate) directPayload['date'] = isoDate;
@@ -577,18 +594,18 @@ export class CashierService implements OnDestroy {
       id: row.id,
       date: this.formatDate(row.date),
       libelle: row.libelle || '',
-      service: row.type_transaction || '',
+      service: row.service || row.type_transaction || '',
       typeDescription: row.type_description || '',
       category: (row.category || (numMontant >= 0 ? 'entree' : 'sortie')) as 'entree' | 'sortie',
       status: (row.status as 'draft' | 'posted' | 'cancelled') || 'draft',
-      noDossier: row.matricule_vehicule || '',
+      noDossier: row.no_dossier || row.matricule_vehicule || '',
       firstName: row.first_name || '',
       employee: row.employee || '',
-      partenaire: row.employee || '',
+      partenaire: row.partenaire || row.employee || '',
       quantity: row.quantity !== null && row.quantity !== undefined ? Number(row.quantity) : undefined,
       montant: numMontant,
-      soldeApres: 0,
-      selected: false,
+      soldeApres: row.solde_apres !== undefined && row.solde_apres !== null ? Number(row.solde_apres) : 0,
+      selected: !!row.selected,
     };
   }
 
@@ -606,18 +623,18 @@ export class CashierService implements OnDestroy {
         id: row.id,
         date: this.formatDate(row.date),
         libelle: row.libelle || '',
-        service: row.type_transaction || '',
+        service: row.service || row.type_transaction || '',
         typeDescription: row.type_description || '',
         category: (row.category || (numMontant >= 0 ? 'entree' : 'sortie')) as 'entree' | 'sortie',
         status: (row.status as 'draft' | 'posted' | 'cancelled') || 'draft',
-        noDossier: row.matricule_vehicule || '',
+        noDossier: row.no_dossier || row.matricule_vehicule || '',
         firstName: row.first_name || '',
         employee: row.employee || '',
-        partenaire: row.employee || '',
+        partenaire: row.partenaire || row.employee || '',
         quantity: row.quantity !== null && row.quantity !== undefined ? Number(row.quantity) : undefined,
         montant: numMontant,
-        soldeApres: runningBalance,
-        selected: false,
+        soldeApres: row.solde_apres !== undefined && row.solde_apres !== null ? Number(row.solde_apres) : runningBalance,
+        selected: !!row.selected,
       } as CashierTransaction;
     });
 

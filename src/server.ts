@@ -732,7 +732,7 @@ const getOperationsHandler = async (req: express.Request, res: express.Response)
   try {
     const { data, error } = await adminClient
       .from('cashier_transactions')
-      .select('id, date, libelle, type_transaction, type_description, category, matricule_vehicule, first_name, employee, quantity, montant, created_by')
+      .select('id, date, libelle, service, type_description, category, status, no_dossier, first_name, partenaire, employee, quantity, montant, solde_apres, selected, created_at, updated_at')
       .order('date', { ascending: false });
 
     if (error) {
@@ -769,13 +769,14 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
 
     const payload = req.body || {};
     const libelle = typeof payload.libelle === 'string' ? payload.libelle.trim() : '';
-    const service = payload.service || payload.typeTransaction || payload.type_transaction || '';
+    const service = payload.service || payload.typeTransaction || payload.type_transaction || null;
     const typeDescription = payload.typeDescription || payload.type_description || null;
     const category = payload.category === 'sortie' ? 'sortie' : 'entree';
-    const noDossier = payload.noDossier || payload.matriculeVehicule || payload.matricule_vehicule || null;
+    const noDossier = payload.noDossier || payload.no_dossier || payload.matriculeVehicule || payload.matricule_vehicule || null;
     const firstName = payload.firstName || payload.first_name || null;
+    const partenaire = payload.partenaire || payload.employee || null;
     const employee = payload.employee || payload.partenaire || null;
-    const quantity = payload.quantity !== undefined && payload.quantity !== null ? Number(payload.quantity) : 1;
+    const quantity = payload.quantity !== undefined && payload.quantity !== null ? Number(payload.quantity) : (service === 'Opérations' ? 1 : null);
     const montant = Number(payload.montant);
 
     if (!libelle) {
@@ -792,17 +793,17 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
 
     const rowToInsert = {
       libelle,
-      type_transaction: service,
+      service,
       type_description: typeDescription,
       category,
       status,
-      matricule_vehicule: noDossier,
+      no_dossier: noDossier,
       first_name: firstName,
+      partenaire,
       employee,
-      quantity: isNaN(quantity) ? 1 : quantity,
+      quantity,
       montant,
-      created_by: callerId || payload.created_by || null,
-      date: payload.date ? new Date(payload.date).toISOString() : new Date().toISOString(),
+      date: payload.date ? (typeof payload.date === 'string' ? payload.date : new Date(payload.date).toISOString()) : new Date().toISOString(),
     };
 
     console.log(`[AUDIT CASHIER] Création opération par [${authenticatedUser?.email || callerId || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'}) : Montant=${montant}, Libellé="${libelle}"`);
@@ -865,7 +866,7 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
     }
 
     if (payload.service !== undefined || payload.typeTransaction !== undefined || payload.type_transaction !== undefined) {
-      updateData['type_transaction'] = payload.service ?? payload.typeTransaction ?? payload.type_transaction ?? '';
+      updateData['service'] = payload.service ?? payload.typeTransaction ?? payload.type_transaction ?? null;
     }
 
     if (payload.typeDescription !== undefined || payload.type_description !== undefined) {
@@ -880,21 +881,29 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       updateData['status'] = payload.status === 'posted' ? 'posted' : (payload.status === 'cancelled' ? 'cancelled' : 'draft');
     }
 
-    if (payload.noDossier !== undefined || payload.matriculeVehicule !== undefined || payload.matricule_vehicule !== undefined) {
-      updateData['matricule_vehicule'] = payload.noDossier ?? payload.matriculeVehicule ?? payload.matricule_vehicule ?? null;
+    if (payload.noDossier !== undefined || payload.no_dossier !== undefined || payload.matriculeVehicule !== undefined || payload.matricule_vehicule !== undefined) {
+      updateData['no_dossier'] = payload.noDossier ?? payload.no_dossier ?? payload.matriculeVehicule ?? payload.matricule_vehicule ?? null;
     }
 
     if (payload.firstName !== undefined || payload.first_name !== undefined) {
       updateData['first_name'] = payload.firstName ?? payload.first_name ?? null;
     }
 
-    if (payload.employee !== undefined || payload.partenaire !== undefined) {
-      updateData['employee'] = payload.employee ?? payload.partenaire ?? null;
+    if (payload.partenaire !== undefined) {
+      updateData['partenaire'] = payload.partenaire ?? null;
     }
 
-    if (payload.quantity !== undefined && payload.quantity !== null) {
-      const quantity = Number(payload.quantity);
-      updateData['quantity'] = isNaN(quantity) ? 1 : quantity;
+    if (payload.employee !== undefined) {
+      updateData['employee'] = payload.employee ?? null;
+    }
+
+    if (payload.quantity !== undefined) {
+      if (payload.quantity === null) {
+        updateData['quantity'] = null;
+      } else {
+        const quantity = Number(payload.quantity);
+        updateData['quantity'] = isNaN(quantity) ? null : quantity;
+      }
     }
 
     if (payload.montant !== undefined) {
@@ -907,13 +916,15 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
     }
 
     if (payload.date !== undefined && payload.date) {
-      updateData['date'] = new Date(payload.date).toISOString();
+      updateData['date'] = typeof payload.date === 'string' ? payload.date : new Date(payload.date).toISOString();
     }
 
     if (Object.keys(updateData).length === 0) {
       res.status(400).json({ error: 'Aucun champ à modifier fourni' });
       return;
     }
+
+    updateData['updated_at'] = new Date().toISOString();
 
     console.log(`[AUDIT CASHIER] Modification opération [${targetId}] par [${authenticatedUser?.email || authenticatedUser?.id || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'}) :`, Object.keys(updateData));
 
@@ -937,7 +948,7 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       message: 'Opération modifiée avec succès',
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Erreur interne lors de la mise à jour';
+    const message = err instanceof Error ? err.message : 'Erreur interne lors de la modification';
     res.status(500).json({ error: message });
   }
 };
