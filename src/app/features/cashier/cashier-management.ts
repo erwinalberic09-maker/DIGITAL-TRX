@@ -65,7 +65,9 @@ export interface CaisseTimelineData {
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     '(document:click)': 'onDocumentClick($event)',
-    '(document:touchend)': 'onDocumentClick($event)',
+    '(document:touchstart)': 'onDocumentTouchStart($event)',
+    '(document:touchmove)': 'onDocumentTouchMove($event)',
+    '(document:touchend)': 'onDocumentTouchEnd($event)',
   },
 })
 export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
@@ -79,6 +81,9 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   private readonly platformId = inject(PLATFORM_ID);
 
   private chartInstance: Chart | null = null;
+  private isTouchScrolling = false;
+  private touchStartX = 0;
+  private touchStartY = 0;
 
   // Permissions : Seuls admin et caissiere peuvent créer/modifier/supprimer
   public readonly canEdit = computed(() => {
@@ -541,14 +546,19 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   public async startAddInline(): Promise<void> {
     if (!this.canEdit()) return;
 
-    // Règle Odoo : sauvegarder la ligne en cours si modifiée avant d'ouvrir l'ajout
+    // Règle d'or : fermer impérativement toute ligne existante en édition avant d'ouvrir la ligne d'ajout
     if (this.editingTxId()) {
       const libelleVal = this.editTransactionForm.get('libelle')?.value?.trim();
-      if (libelleVal && this.editTransactionForm.dirty) {
+      const rawMontant = this.editTransactionForm.get('montant')?.value;
+      const hasMontant = rawMontant !== null && rawMontant !== undefined && !Number.isNaN(Number(rawMontant));
+
+      if (libelleVal && hasMontant && Number(rawMontant) !== 0) {
         await this.submitInlineEdit();
       } else {
         this.cancelInlineEdit();
       }
+      // Sécurité absolue : s'assurer que l'édition est éteinte
+      this.cancelInlineEdit();
     }
 
     this.transactionForm.reset({
@@ -638,24 +648,33 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     if (!this.canEdit()) return;
     if (this.editingTxId() === tx.id) return;
 
-    // Règle Odoo : fermer toute ligne d'ajout ou sauvegarder la ligne d'édition en cours
+    // Règle d'or : une seule ligne ouverte à la fois.
+    // 1. Si la ligne d'ajout était ouverte, la finaliser ou la refermer
     if (this.isAddingRow()) {
       const libelleVal = this.transactionForm.get('libelle')?.value?.trim();
-      const montantVal = this.transactionForm.get('montant')?.value;
-      if (libelleVal && montantVal !== null && montantVal !== undefined && Number(montantVal) !== 0) {
+      const rawMontant = this.transactionForm.get('montant')?.value;
+      const hasMontant = rawMontant !== null && rawMontant !== undefined && !Number.isNaN(Number(rawMontant));
+
+      if (libelleVal && hasMontant && Number(rawMontant) !== 0) {
         await this.submitInlineTransaction();
       } else {
         this.cancelAddInline();
       }
+      this.cancelAddInline(); // Garantie absolue de fermeture de la ligne d'ajout
     }
 
+    // 2. Si une autre ligne d'édition était ouverte, la finaliser ou la refermer
     if (this.editingTxId()) {
       const libelleVal = this.editTransactionForm.get('libelle')?.value?.trim();
-      if (libelleVal && this.editTransactionForm.dirty) {
+      const rawMontant = this.editTransactionForm.get('montant')?.value;
+      const hasMontant = rawMontant !== null && rawMontant !== undefined && !Number.isNaN(Number(rawMontant));
+
+      if (libelleVal && hasMontant && Number(rawMontant) !== 0) {
         await this.submitInlineEdit();
       } else {
         this.cancelInlineEdit();
       }
+      this.cancelInlineEdit(); // Garantie absolue d'extinction de l'ancienne ligne
     }
 
     let isoDate = this.todayIsoDate();
@@ -690,6 +709,33 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     this.editingTxId.set(tx.id);
   }
 
+  public onDocumentTouchStart(event: TouchEvent): void {
+    this.isTouchScrolling = false;
+    if (event.touches.length > 0) {
+      this.touchStartX = event.touches[0].clientX;
+      this.touchStartY = event.touches[0].clientY;
+    }
+  }
+
+  public onDocumentTouchMove(event: TouchEvent): void {
+    if (event.touches.length > 0) {
+      const deltaX = Math.abs(event.touches[0].clientX - this.touchStartX);
+      const deltaY = Math.abs(event.touches[0].clientY - this.touchStartY);
+      // Si le doigt a bougé de plus de 8 pixels, c'est un défilement/scroll
+      if (deltaX > 8 || deltaY > 8) {
+        this.isTouchScrolling = true;
+      }
+    }
+  }
+
+  public onDocumentTouchEnd(event: TouchEvent): void {
+    if (this.isTouchScrolling) {
+      this.isTouchScrolling = false;
+      return; // C'était un défilement / scroll, ne rien fermer !
+    }
+    this.onDocumentClick(event);
+  }
+
   /**
    * Fermeture ou sauvegarde automatique quand l'utilisateur clique ou touche hors de la ligne ouverte ou du tableau (PC & mobile)
    */
@@ -698,37 +744,61 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     const target = event.target as HTMLElement | null;
     if (!target) return;
 
-    // Si on a cliqué sur le bouton "Nouveau" du bandeau ou dans un popover de datepicker, ne pas fermer la ligne
-    if (target.closest('#cashier-new-btn') || target.closest('app-odoo-datepicker') || target.closest('.odoo-datepicker-popover')) {
+    // Ignorer si l'élément n'est plus dans le DOM ou fait partie d'un composant flottant (popover, datepicker, dropdown)
+    if (
+      !document.body.contains(target) ||
+      target.closest('#cashier-new-btn') ||
+      target.closest('app-odoo-datepicker') ||
+      target.closest('.odoo-datepicker-popover') ||
+      target.closest('.p-dropdown') ||
+      target.closest('.p-component')
+    ) {
       return;
     }
 
-    // 1. Si la ligne d'ajout est ouverte et qu'on clique en dehors
+    // 1. Si la ligne d'ajout est ouverte
     if (this.isAddingRow()) {
       const addRowEl = this.elementRef.nativeElement.querySelector('#inline-add-row');
-      if (addRowEl && !addRowEl.contains(target)) {
-        // Sauvegarder si valide ou fermer
-        const libelleVal = this.transactionForm.get('libelle')?.value?.trim();
-        const montantVal = this.transactionForm.get('montant')?.value;
-        if (libelleVal && montantVal !== null && montantVal !== undefined && Number(montantVal) !== 0) {
-          this.submitInlineTransaction();
-        } else {
-          this.cancelAddInline();
-        }
+      // Si le clic provient de la ligne elle-même ou de ses contrôles internes, ne RIEN faire
+      if (!addRowEl || addRowEl.contains(target) || target.closest('#inline-add-row')) {
+        return;
       }
+
+      // L'utilisateur a cliqué en dehors de la ligne d'ajout :
+      const libelleVal = this.transactionForm.get('libelle')?.value?.trim();
+      const rawMontant = this.transactionForm.get('montant')?.value;
+      const hasMontant = rawMontant !== null && rawMontant !== undefined && !Number.isNaN(Number(rawMontant));
+      const hasStartedTyping = Boolean(libelleVal) || hasMontant || this.transactionForm.dirty;
+
+      // RÈGLE MÉTIER STRICTE :
+      // - Si les champs obligatoires sont tous les deux remplis et valides -> on enregistre automatiquement.
+      // - Si l'utilisateur a commencé à taper du texte mais n'a pas fini -> NE JAMAIS FERMER LA LIGNE (garder ses saisies intactes).
+      // - Si et seulement si la ligne est totalement vierge et intacte -> on referme sans perte.
+      if (libelleVal && hasMontant && Number(rawMontant) !== 0) {
+        this.submitInlineTransaction();
+      } else if (!hasStartedTyping) {
+        this.cancelAddInline();
+      }
+      return;
     }
 
-    // 2. Si une ligne existante est en édition et qu'on clique en dehors
+    // 2. Si une ligne existante est en édition
     const activeEditId = this.editingTxId();
     if (activeEditId) {
       const editRowEl = this.elementRef.nativeElement.querySelector(`#inline-edit-row-${activeEditId}`);
-      if (editRowEl && !editRowEl.contains(target)) {
-        const libelleVal = this.editTransactionForm.get('libelle')?.value?.trim();
-        if (libelleVal && this.editTransactionForm.dirty) {
-          this.submitInlineEdit();
-        } else if (!this.editTransactionForm.dirty) {
-          this.cancelInlineEdit();
-        }
+      if (!editRowEl || editRowEl.contains(target) || target.closest(`#inline-edit-row-${activeEditId}`)) {
+        return;
+      }
+
+      const libelleVal = this.editTransactionForm.get('libelle')?.value?.trim();
+      const rawMontant = this.editTransactionForm.get('montant')?.value;
+      const hasMontant = rawMontant !== null && rawMontant !== undefined && !Number.isNaN(Number(rawMontant));
+      const hasStartedTyping = Boolean(libelleVal) || hasMontant || this.editTransactionForm.dirty;
+
+      if (libelleVal && hasMontant && Number(rawMontant) !== 0) {
+        this.submitInlineEdit();
+      } else if (!hasStartedTyping) {
+        this.cancelInlineEdit();
       }
     }
   }
