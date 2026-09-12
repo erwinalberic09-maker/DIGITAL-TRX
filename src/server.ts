@@ -881,6 +881,8 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       return;
     }
 
+    const updateData: Record<string, unknown> = {};
+
     // RÈGLE MÉTIER : chacun ne modifie que ce qu'il a lui-même enregistré.
     // Un manager ne peut pas modifier une opération saisie par un caissier, et un
     // caissier ne peut pas modifier celle d'un collègue. Seul un admin déroge à la règle.
@@ -900,14 +902,17 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
         res.status(404).json({ error: 'Opération introuvable' });
         return;
       }
-      if (existingRow.created_by !== authenticatedUser?.id) {
+      if (existingRow.created_by && existingRow.created_by !== authenticatedUser?.id) {
         res.status(403).json({ error: 'Action refusée : vous ne pouvez modifier que les opérations que vous avez vous-même enregistrées.' });
         return;
+      }
+      if (!existingRow.created_by && authenticatedUser?.id) {
+        updateData['created_by'] = authenticatedUser.id;
+        updateData['employee_id'] = authenticatedUser.id;
       }
     }
 
     const payload = req.body || {};
-    const updateData: Record<string, unknown> = {};
 
     if (payload.libelle !== undefined) {
       const libelle = typeof payload.libelle === 'string' ? payload.libelle.trim() : '';
@@ -1085,8 +1090,8 @@ app.get('/api/cashier/transactions', requireAuth, getOperationsHandler);
 app.get('/api/system/operations', requireAuth, getOperationsHandler);
 
 // Écriture : réservée aux Administrateurs et Caissières
-app.post('/api/cahier/operations', requireAuth, requireRole(['admin', 'caissiere']), saveOperationHandler);
-app.post('/api/cashier/transactions', requireAuth, requireRole(['admin', 'caissiere']), saveOperationHandler);
+app.post('/api/cahier/operations', requireAuth, requireRole(['admin', 'caissiere', 'manager']), saveOperationHandler);
+app.post('/api/cashier/transactions', requireAuth, requireRole(['admin', 'caissiere', 'manager']), saveOperationHandler);
 
 app.put('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationHandler);
 app.put('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationHandler);

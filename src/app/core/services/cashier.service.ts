@@ -469,6 +469,7 @@ export class CashierService implements OnDestroy {
 
     // 2. Appel vers l'API serveur-relais
     let updatedViaApi = false;
+    let apiErrorMessage = '';
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -485,6 +486,7 @@ export class CashierService implements OnDestroy {
       if (updatedFields.partenaire !== undefined) bodyPayload['partenaire'] = updatedFields.partenaire;
       if (updatedFields.quantity !== undefined) bodyPayload['quantity'] = updatedFields.quantity;
       if (updatedFields.montant !== undefined) bodyPayload['montant'] = updatedFields.montant;
+      if (updatedFields.pieceComptable !== undefined) bodyPayload['pieceComptable'] = updatedFields.pieceComptable;
       if (isoDate) bodyPayload['date'] = isoDate;
 
       const response = await fetch(`/api/cahier/operations/${encodeURIComponent(id)}`, {
@@ -495,12 +497,17 @@ export class CashierService implements OnDestroy {
 
       if (response.ok) {
         updatedViaApi = true;
+      } else {
+        const errJson = await response.json().catch(() => null);
+        apiErrorMessage = errJson?.error || `Erreur serveur (${response.status})`;
       }
     } catch (apiErr) {
       console.warn('Appel API update /api/cahier/operations échoué, tentative via client Supabase direct:', apiErr);
+      apiErrorMessage = apiErr instanceof Error ? apiErr.message : 'Erreur réseau';
     }
 
     // 3. Repli direct Supabase si l'API Express n'a pas répondu
+    let updatedViaSupabase = false;
     if (!updatedViaApi) {
       try {
         await this.supabaseService.ensureInitialized();
@@ -518,16 +525,30 @@ export class CashierService implements OnDestroy {
           if (updatedFields.employee !== undefined) directPayload['employee'] = updatedFields.employee || null;
           if (updatedFields.quantity !== undefined) directPayload['quantity'] = updatedFields.quantity;
           if (updatedFields.montant !== undefined) directPayload['montant'] = updatedFields.montant;
+          if (updatedFields.pieceComptable !== undefined) directPayload['piece_comptable'] = updatedFields.pieceComptable;
           if (isoDate) directPayload['date'] = isoDate;
 
-          await client
+          const { data, error } = await client
             .from('cashier_transactions')
             .update(directPayload)
-            .eq('id', id);
+            .eq('id', id)
+            .select();
+
+          if (!error && data && data.length > 0) {
+            updatedViaSupabase = true;
+          } else if (error) {
+            apiErrorMessage = error.message;
+          }
         }
       } catch (directErr) {
         console.warn('Échec du repli direct Supabase update:', directErr);
       }
+    }
+
+    if (!updatedViaApi && !updatedViaSupabase) {
+      const finalMsg = apiErrorMessage || 'Échec de la sauvegarde en base de données';
+      this._error.set(finalMsg);
+      return { success: false, message: finalMsg };
     }
 
     // 4. Mise à jour immédiate du Signal Angular 19 et recalcul des soldes cumulés

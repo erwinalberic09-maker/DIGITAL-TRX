@@ -65,6 +65,7 @@ export interface CaisseTimelineData {
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     '(document:click)': 'onDocumentClick($event)',
+    '(document:touchend)': 'onDocumentClick($event)',
   },
 })
 export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
@@ -537,10 +538,17 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     this.isDeleting.set(false);
   }
 
-  public startAddInline(): void {
-    // Règle Odoo : une seule ligne ouverte à la fois
+  public async startAddInline(): Promise<void> {
+    if (!this.canEdit()) return;
+
+    // Règle Odoo : sauvegarder la ligne en cours si modifiée avant d'ouvrir l'ajout
     if (this.editingTxId()) {
-      this.cancelInlineEdit();
+      const libelleVal = this.editTransactionForm.get('libelle')?.value?.trim();
+      if (libelleVal && this.editTransactionForm.dirty) {
+        await this.submitInlineEdit();
+      } else {
+        this.cancelInlineEdit();
+      }
     }
 
     this.transactionForm.reset({
@@ -626,15 +634,28 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  public startInlineEdit(tx: CashierTransaction): void {
+  public async startInlineEdit(tx: CashierTransaction): Promise<void> {
     if (!this.canEdit()) return;
+    if (this.editingTxId() === tx.id) return;
 
-    // Règle Odoo : fermer toute ligne d'ajout ou d'édition en cours
+    // Règle Odoo : fermer toute ligne d'ajout ou sauvegarder la ligne d'édition en cours
     if (this.isAddingRow()) {
-      this.cancelAddInline();
+      const libelleVal = this.transactionForm.get('libelle')?.value?.trim();
+      const montantVal = this.transactionForm.get('montant')?.value;
+      if (libelleVal && montantVal !== null && montantVal !== undefined && Number(montantVal) !== 0) {
+        await this.submitInlineTransaction();
+      } else {
+        this.cancelAddInline();
+      }
     }
+
     if (this.editingTxId()) {
-      this.cancelInlineEdit();
+      const libelleVal = this.editTransactionForm.get('libelle')?.value?.trim();
+      if (libelleVal && this.editTransactionForm.dirty) {
+        await this.submitInlineEdit();
+      } else {
+        this.cancelInlineEdit();
+      }
     }
 
     let isoDate = this.todayIsoDate();
@@ -670,9 +691,9 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   }
 
   /**
-   * Fermeture automatique Odoo quand l'utilisateur clique hors de la ligne ouverte ou du tableau
+   * Fermeture ou sauvegarde automatique quand l'utilisateur clique ou touche hors de la ligne ouverte ou du tableau (PC & mobile)
    */
-  public onDocumentClick(event: MouseEvent): void {
+  public onDocumentClick(event: MouseEvent | TouchEvent): void {
     if (this.isSubmitting() || this.isEditingSubmitting()) return;
     const target = event.target as HTMLElement | null;
     if (!target) return;
@@ -703,9 +724,9 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       const editRowEl = this.elementRef.nativeElement.querySelector(`#inline-edit-row-${activeEditId}`);
       if (editRowEl && !editRowEl.contains(target)) {
         const libelleVal = this.editTransactionForm.get('libelle')?.value?.trim();
-        if (libelleVal) {
+        if (libelleVal && this.editTransactionForm.dirty) {
           this.submitInlineEdit();
-        } else {
+        } else if (!this.editTransactionForm.dirty) {
           this.cancelInlineEdit();
         }
       }
