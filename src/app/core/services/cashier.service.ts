@@ -31,7 +31,7 @@ export interface CashierDbRow {
 
 // Colonnes sélectionnées selon le principe du moindre privilège alignées sur le schéma Supabase
 const CASHIER_SELECTED_COLUMNS =
-  'id, date, libelle, service, type_description, category, status, no_dossier, first_name, partenaire, employee, quantity, montant, solde_apres, selected';
+  'id, date, libelle, service, type_description, category, status, no_dossier, first_name, partenaire, employee, quantity, montant, solde_apres, selected, created_at, updated_at';
 
 @Injectable({
   providedIn: 'root',
@@ -229,7 +229,8 @@ export class CashierService implements OnDestroy {
               const { data, error } = await client
                 .from('cashier_transactions')
                 .select(CASHIER_SELECTED_COLUMNS)
-                .order('date', { ascending: false });
+                .order('date', { ascending: false })
+                .order('created_at', { ascending: false });
 
               if (!error && data && Array.isArray(data)) {
                 rawRows = data as CashierDbRow[];
@@ -381,6 +382,8 @@ export class CashierService implements OnDestroy {
           montant: Number(savedRow.montant),
           soldeApres: savedRow.solde_apres !== undefined && savedRow.solde_apres !== null ? Number(savedRow.solde_apres) : estimatedNewSolde,
           selected: false,
+          createdAt: savedRow.created_at || new Date().toISOString(),
+          updatedAt: savedRow.updated_at,
         }
       : {
           id: `tx-${Date.now()}`,
@@ -398,6 +401,7 @@ export class CashierService implements OnDestroy {
           montant,
           soldeApres: estimatedNewSolde,
           selected: false,
+          createdAt: new Date().toISOString(),
         };
 
     // Étape 4 (RÉACTIVITÉ INSTANTANÉE) : Mise à jour immédiate du Signal Angular 19
@@ -593,18 +597,53 @@ export class CashierService implements OnDestroy {
   /**
    * Recalcule les soldes progressifs de manière chronologique
    */
+  private parseDateTimestamp(dStr?: string): number {
+    if (!dStr) return 0;
+    if (dStr.includes('/')) {
+      const parts = dStr.split('/');
+      if (parts.length === 3) {
+        const time = new Date(`${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`).getTime();
+        if (!isNaN(time)) return time;
+      }
+    }
+    const time = new Date(dStr).getTime();
+    return isNaN(time) ? 0 : time;
+  }
+
+  /**
+   * Recalcule les soldes progressifs de manière chronologique et maintient l'ordre antéchronologique
+   */
   private recalculateRunningBalances(): void {
     const current = this._transactions();
     if (current.length === 0) return;
 
+    // Trier du plus ancien au plus récent pour calculer le solde progressif
+    const chronological = [...current].sort((a, b) => {
+      const timeA = this.parseDateTimestamp(a.date);
+      const timeB = this.parseDateTimestamp(b.date);
+      if (timeA !== timeB) return timeA - timeB;
+      const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return createdA - createdB;
+    });
+
     let balance = 0;
-    const chronological = [...current].reverse();
-    const updated = chronological.map((tx) => {
+    const updatedChronological = chronological.map((tx) => {
       balance += tx.montant;
       return { ...tx, soldeApres: balance };
     });
 
-    this._transactions.set(updated.reverse());
+    // Remettre en ordre antéchronologique strict (le plus récent en tête)
+    const antechronological = [...updatedChronological].sort((a, b) => {
+      const timeA = this.parseDateTimestamp(a.date);
+      const timeB = this.parseDateTimestamp(b.date);
+      if (timeA !== timeB) return timeB - timeA;
+      const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return createdB - createdA;
+    });
+
+    this._transactions.set(antechronological);
   }
 
   /**
@@ -628,6 +667,8 @@ export class CashierService implements OnDestroy {
       montant: numMontant,
       soldeApres: row.solde_apres !== undefined && row.solde_apres !== null ? Number(row.solde_apres) : 0,
       selected: !!row.selected,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     };
   }
 
@@ -635,9 +676,17 @@ export class CashierService implements OnDestroy {
    * Mappe les enregistrements de la base de données vers le modèle applicatif
    */
   public mapDatabaseOperations(rows: CashierDbRow[]): CashierTransaction[] {
-    let runningBalance = 0;
-    const chronological = [...rows].reverse();
+    // 1. Trier chronologiquement (du plus ancien au plus récent) pour calculer le solde cumulé exact
+    const chronological = [...rows].sort((a, b) => {
+      const timeA = this.parseDateTimestamp(a.date);
+      const timeB = this.parseDateTimestamp(b.date);
+      if (timeA !== timeB) return timeA - timeB;
+      const createdA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const createdB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return createdA - createdB;
+    });
 
+    let runningBalance = 0;
     const mappedChronological = chronological.map((row) => {
       const numMontant = Number(row.montant) || 0;
       runningBalance += numMontant;
@@ -657,10 +706,20 @@ export class CashierService implements OnDestroy {
         montant: numMontant,
         soldeApres: row.solde_apres !== undefined && row.solde_apres !== null ? Number(row.solde_apres) : runningBalance,
         selected: !!row.selected,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
       } as CashierTransaction;
     });
 
-    return mappedChronological.reverse();
+    // 2. Retourne en ordre antéchronologique strict (le plus récent en tête)
+    return [...mappedChronological].sort((a, b) => {
+      const timeA = this.parseDateTimestamp(a.date);
+      const timeB = this.parseDateTimestamp(b.date);
+      if (timeA !== timeB) return timeB - timeA;
+      const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return createdB - createdA;
+    });
   }
 
   public startAddTransaction(): void {

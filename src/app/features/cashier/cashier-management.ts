@@ -106,10 +106,26 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
   // Préparation réactive des données chronologiques pour Chart.js
   public readonly chartData = computed<CaisseTimelineData>(() => {
+    const parseDateToMs = (dStr: string) => {
+      if (!dStr) return 0;
+      if (dStr.includes('/')) {
+        const parts = dStr.split('/');
+        if (parts.length === 3) {
+          const t = new Date(`${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`).getTime();
+          if (!isNaN(t)) return t;
+        }
+      }
+      const t = new Date(dStr).getTime();
+      return isNaN(t) ? 0 : t;
+    };
+
     const list = [...this.allTransactions()].sort((a, b) => {
-      const dateA = new Date(a.date).getTime() || 0;
-      const dateB = new Date(b.date).getTime() || 0;
-      return dateA - dateB;
+      const dateA = parseDateToMs(a.date);
+      const dateB = parseDateToMs(b.date);
+      if (dateA !== dateB) return dateA - dateB;
+      const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return createdA - createdB;
     });
 
     if (list.length === 0) {

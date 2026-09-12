@@ -25,6 +25,8 @@ export interface CashierTransaction {
   montant: number; // Valeur numérique signée (positif ou négatif)
   soldeApres?: number; // Solde cumulé calculé
   selected?: boolean; // Case à cocher de sélection
+  createdAt?: string; // Date de création ISO
+  updatedAt?: string; // Date de modification ISO
 }
 
 export interface CashierFilterState {
