@@ -11,6 +11,7 @@ export type CashierOperationType = Service; // Rétrocompatibilité
 
 export interface CashierTransaction {
   id: string;
+  pieceComptable?: string; // Référence séquentielle Odoo (ex: CSH1/2026/00001)
   date: string; // Format DD/MM/YYYY
   libelle: string; // Ex: "Carburant", "Frais généraux"
   service?: Service | string; // "Opérations" ou "Administration"

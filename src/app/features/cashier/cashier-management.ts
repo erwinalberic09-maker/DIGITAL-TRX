@@ -94,6 +94,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   public readonly isAllSelected = this.cashierService.isAllSelected;
   public readonly isLoading = this.cashierService.isLoading;
   public readonly error = this.cashierService.error;
+  public readonly nextPieceComptable = this.cashierService.nextPieceComptable;
 
   // Contrôles UI synchronisés avec le service
   public readonly isAddingRow = this.cashierService.isAddingRow;
@@ -833,13 +834,17 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   }
 
   /**
-   * Génère la référence de pièce comptable séquentielle au format Odoo ERP (ex: CSH1/2026/00001)
+   * Retourne la référence officielle de pièce comptable séquentielle au format Odoo ERP (ex: CSH1/2026/00001)
    */
   public getOdooSequence(tx: CashierTransaction, index: number): string {
-    const year = tx.date?.includes('/') ? tx.date.split('/')[2] || '2026' : (tx.date?.includes('-') ? tx.date.split('-')[0] : '2026');
-    const cleanId = tx.id.replace(/\D/g, '');
-    const seqNum = cleanId ? String(parseInt(cleanId.slice(-4), 10) || (index + 1)) : String(index + 1);
-    return `CSH1/${year}/${seqNum.padStart(5, '0')}`;
+    if (tx.pieceComptable) {
+      return tx.pieceComptable;
+    }
+    const year = tx.date?.includes('/')
+      ? tx.date.split('/')[2] || '2026'
+      : (tx.date?.includes('-') ? tx.date.split('-')[0] : '2026');
+    const seqNum = String(index + 1).padStart(5, '0');
+    return `CSH1/${year}/${seqNum}`;
   }
 
   /**

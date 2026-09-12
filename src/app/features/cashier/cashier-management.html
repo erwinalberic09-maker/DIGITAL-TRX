@@ -104,7 +104,7 @@
               <!-- Pièce comptable (Cyan/Teal pendant la création) -->
               <td class="py-2 px-3 whitespace-nowrap align-middle">
                 <span class="text-[#00a09d] dark:text-[#2dd4bf] font-medium text-xs">
-                  {{ transactionForm.get('libelle')?.value ? 'CSH1/2026/00002' : '' }}
+                  {{ transactionForm.get('libelle')?.value ? nextPieceComptable() : '' }}
                 </span>
               </td>
 

@@ -659,6 +659,50 @@ app.delete('/api/admin/users/:id', requireAdmin, deleteCollaboratorHandler);
  */
 
 /**
+ * Enrichit les opérations de caisse avec leur numéro de pièce comptable séquentiel CSH1/AAAA/XXXXX
+ * basé sur l'ordre chronologique d'enregistrement par exercice comptable.
+ */
+const attachPiecesComptables = async (
+  client: NonNullable<ReturnType<typeof getSupabaseAdmin>>,
+  rows: Record<string, unknown>[]
+): Promise<Record<string, unknown>[]> => {
+  if (!rows || rows.length === 0) return rows;
+  try {
+    const { data: allSeqRows } = await client
+      .from('cashier_transactions')
+      .select('id, date, created_at')
+      .order('date', { ascending: true })
+      .order('created_at', { ascending: true });
+
+    const pieceMap = new Map<string, string>();
+    if (allSeqRows && Array.isArray(allSeqRows)) {
+      const yearCounters: Record<string, number> = {};
+      for (const r of allSeqRows) {
+        const rawYear = r.date ? new Date(r.date).getFullYear() : 2026;
+        const year = isNaN(rawYear) ? 2026 : rawYear;
+        yearCounters[year] = (yearCounters[year] || 0) + 1;
+        const seq = String(yearCounters[year]).padStart(5, '0');
+        pieceMap.set(r.id, `CSH1/${year}/${seq}`);
+      }
+    }
+
+    return rows.map((row) => {
+      const rowId = typeof row['id'] === 'string' ? row['id'] : String(row['id'] || '');
+      const rawDate = row['date'];
+      const dateVal = typeof rawDate === 'string' || typeof rawDate === 'number' ? rawDate : Date.now();
+      const fallbackYear = new Date(dateVal).getFullYear() || 2026;
+      return {
+        ...row,
+        piece_comptable: pieceMap.get(rowId) || `CSH1/${fallbackYear}/00001`,
+      };
+    });
+  } catch (e) {
+    console.warn('Impossible de calculer la séquence de pièces comptables:', e);
+    return rows;
+  }
+};
+
+/**
  * Récupération des opérations de caisse (GET /api/cahier/operations & /api/cashier/transactions)
  * Supporte la pagination optionnelle via limit/offset (défaut limit: 100, max: 1000) pour préserver les ressources.
  */
@@ -700,9 +744,11 @@ const getOperationsHandler = async (req: express.Request, res: express.Response)
       return;
     }
 
+    const enrichedRows = await attachPiecesComptables(adminClient, data || []);
+
     res.json({
-      operations: data || [],
-      transactions: data || [],
+      operations: enrichedRows,
+      transactions: enrichedRows,
       total: count ?? (data?.length || 0),
       limit,
       offset,
@@ -800,10 +846,12 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       return;
     }
 
+    const [enrichedOperation] = await attachPiecesComptables(adminClient, [data]);
+
     res.status(201).json({
       success: true,
-      operation: data,
-      transaction: data,
+      operation: enrichedOperation || data,
+      transaction: enrichedOperation || data,
       message: 'Opération enregistrée avec succès',
     });
   } catch (err: unknown) {
@@ -965,10 +1013,12 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       return;
     }
 
+    const [enrichedOperation] = await attachPiecesComptables(adminClient, [data]);
+
     res.json({
       success: true,
-      operation: data,
-      transaction: data,
+      operation: enrichedOperation || data,
+      transaction: enrichedOperation || data,
       message: 'Opération modifiée avec succès',
     });
   } catch (err: unknown) {

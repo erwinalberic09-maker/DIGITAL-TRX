@@ -9,6 +9,7 @@ import { AuthService } from './auth.service';
 
 export interface CashierDbRow {
   id: string;
+  piece_comptable?: string | null;
   date: string;
   libelle: string;
   service?: string | null;
@@ -92,6 +93,20 @@ export class CashierService implements OnDestroy {
 
   // Signal pour piloter l'ouverture de la ligne d'ajout inline depuis le Layout
   public readonly isAddingRow = signal<boolean>(false);
+
+  // Signal calculé pour la prochaine référence de pièce comptable prévisionnelle (ex: CSH1/2026/00004)
+  public readonly nextPieceComptable = computed<string>(() => {
+    const list = this._transactions();
+    const currentYear = new Date().getFullYear() || 2026;
+    const yearTxCount = list.filter((t) => {
+      const yrMatch = t.date?.includes('/')
+        ? Number(t.date.split('/')[2])
+        : (t.date?.includes('-') ? Number(t.date.split('-')[0]) : currentYear);
+      return (isNaN(yrMatch) ? currentYear : yrMatch) === currentYear;
+    }).length;
+
+    return `CSH1/${currentYear}/${String(yearTxCount + 1).padStart(5, '0')}`;
+  });
 
   // États exposés en lecture seule
   public readonly isLoading = computed(() => this._isLoading());
@@ -368,6 +383,7 @@ export class CashierService implements OnDestroy {
     const operationToStore: CashierTransaction = savedRow
       ? {
           id: savedRow.id,
+          pieceComptable: savedRow.piece_comptable || this.nextPieceComptable(),
           date: this.formatDate(savedRow.date || new Date().toISOString()),
           libelle: savedRow.libelle,
           service: savedRow.service || savedRow.type_transaction || '',
@@ -387,6 +403,7 @@ export class CashierService implements OnDestroy {
         }
       : {
           id: `tx-${Date.now()}`,
+          pieceComptable: this.nextPieceComptable(),
           date: this.formatDate(op.date || new Date().toISOString()),
           libelle: op.libelle || 'Opération',
           service: op.service || '',
@@ -628,9 +645,16 @@ export class CashierService implements OnDestroy {
     });
 
     let balance = 0;
+    const yearCounters: Record<string, number> = {};
     const updatedChronological = chronological.map((tx) => {
       balance += tx.montant;
-      return { ...tx, soldeApres: balance };
+      const yrMatch = tx.date?.includes('/')
+        ? Number(tx.date.split('/')[2])
+        : (tx.date?.includes('-') ? Number(tx.date.split('-')[0]) : 2026);
+      const year = isNaN(yrMatch) ? 2026 : yrMatch;
+      yearCounters[year] = (yearCounters[year] || 0) + 1;
+      const piece = tx.pieceComptable || `CSH1/${year}/${String(yearCounters[year]).padStart(5, '0')}`;
+      return { ...tx, soldeApres: balance, pieceComptable: piece };
     });
 
     // Remettre en ordre antéchronologique strict (le plus récent en tête)
@@ -653,6 +677,7 @@ export class CashierService implements OnDestroy {
     const numMontant = Number(row.montant) || 0;
     return {
       id: row.id,
+      pieceComptable: row.piece_comptable || undefined,
       date: this.formatDate(row.date),
       libelle: row.libelle || '',
       service: row.service || row.type_transaction || '',
@@ -687,11 +712,21 @@ export class CashierService implements OnDestroy {
     });
 
     let runningBalance = 0;
+    const yearCounters: Record<string, number> = {};
     const mappedChronological = chronological.map((row) => {
       const numMontant = Number(row.montant) || 0;
       runningBalance += numMontant;
+
+      const yrMatch = row.date?.includes('/')
+        ? Number(row.date.split('/')[2])
+        : (row.date?.includes('-') ? Number(row.date.split('-')[0]) : 2026);
+      const year = isNaN(yrMatch) ? 2026 : yrMatch;
+      yearCounters[year] = (yearCounters[year] || 0) + 1;
+      const computedPiece = `CSH1/${year}/${String(yearCounters[year]).padStart(5, '0')}`;
+
       return {
         id: row.id,
+        pieceComptable: row.piece_comptable || computedPiece,
         date: this.formatDate(row.date),
         libelle: row.libelle || '',
         service: row.service || row.type_transaction || '',
