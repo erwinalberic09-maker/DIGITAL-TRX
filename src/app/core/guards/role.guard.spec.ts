@@ -71,15 +71,15 @@ describe('roleGuard (Niveau 2 de Sécurité RBAC)', () => {
     expect(result).toBe(true);
   });
 
-  it('devrait autoriser l’accès si l’utilisateur a le rôle tresorier lorsque tresorier est autorisé', async () => {
+  it('devrait autoriser le rôle trésorier sur une route réservée aux managers', async () => {
     authServiceMock.currentUser.mockReturnValue({
       id: 'tresorier-1',
-      email: 'tresorerie@transmex.cm',
+      email: 'tresorier@transmex.cm',
       role: 'tresorier',
     });
 
     const routeSnapshot = {
-      data: { roles: ['manager', 'tresorier'] },
+      data: { roles: ['manager'] },
     } as unknown as ActivatedRouteSnapshot;
 
     const stateSnapshot = {} as RouterStateSnapshot;

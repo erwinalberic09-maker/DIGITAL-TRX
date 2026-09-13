@@ -70,10 +70,9 @@ function getSupabaseAdmin() {
   });
 }
 
-// Configuration des administrateurs système permanents (inviolables et extensibles via variable d'environnement ADMIN_EMAILS)
+// Configuration de l'administrateur système permanent unique
 const PERMANENT_ADMIN_EMAILS = [
   'erwinalberic09@gmail.com',
-  'erwinalberic99@gmail.com',
   ...(process.env['ADMIN_EMAILS'] || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
 ];
 
@@ -208,7 +207,9 @@ export async function requireAdmin(req: express.Request, res: express.Response, 
 
     const resolvedRole = await resolveServerRole(supabaseAdmin, user);
     if (resolvedRole !== 'admin') {
-      res.status(403).json({ error: 'Accès refusé. Rôle administrateur requis.' });
+      res.status(403).json({
+        error: `Accès refusé. Cette opération exige les privilèges de l'administrateur principal (connecté en tant que: ${user.email || 'anonyme'}). Seul l'administrateur erwinalberic09@gmail.com peut gérer les comptes utilisateurs.`,
+      });
       return;
     }
 

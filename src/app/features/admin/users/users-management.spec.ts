@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { UsersManagement } from './users-management';
 import { UserService } from '../../../core/services/user.service';
 import { SupabaseService } from '../../../core/services/supabase.service';
@@ -19,7 +20,7 @@ describe('UsersManagement Component', () => {
                 email: 'amine.k@transmex.com',
                 firstName: 'Amine',
                 lastName: 'Kadri',
-                role: 'employe',
+                role: 'agent',
                 department: 'Services Généraux',
                 phone: '+213 555 12 34 56',
                 isActive: true,

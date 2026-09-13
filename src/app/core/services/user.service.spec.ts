@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { UserService } from './user.service';
 import { SupabaseService } from './supabase.service';
 
@@ -14,6 +15,7 @@ describe('UserService', () => {
           useValue: {
             supabase: null,
             isConfigured: false,
+            ensureInitialized: vi.fn().mockResolvedValue(true),
           },
         },
       ],
@@ -46,6 +48,34 @@ describe('UserService', () => {
     ];
     localStorage.setItem('transmex_users_store', JSON.stringify(mockUsers));
     service = TestBed.inject(UserService);
+
+    // Mock global fetch for backend /api/system/collaborators
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/api/system/collaborators')) {
+        return Promise.resolve({
+          ok: true,
+          status: 201,
+          json: () => Promise.resolve({
+            user: {
+              id: 'mock-auth-id-123',
+              email: 'nouveau.collaborateur@transmex.com',
+              firstName: 'Tarik',
+              lastName: 'Haddad',
+              role: 'employe',
+              department: 'Ressources Humaines',
+              phone: '+213 555 11 22 33',
+              isActive: true,
+              createdAt: new Date().toISOString(),
+            },
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('devrait être instancié avec une liste d\'utilisateurs par défaut', () => {

@@ -10,10 +10,7 @@ const CACHED_TOKEN_KEY = 'transmex_auth_token';
 
 // Liste blanche des administrateurs système inaltérables
 const PERMANENT_ADMIN_EMAILS = [
-  'erwinalberic99@gmail.com',
-  'admin@transmex.cm',
-  'admin@transimex.cm',
-  'admin@transmex.com',
+  'erwinalberic09@gmail.com',
 ];
 
 @Injectable({
@@ -46,7 +43,7 @@ export class AuthService {
   public readonly isAuthenticated = computed(() => this._currentUser() !== null);
   public readonly currentRole = computed<UserRole | null>(() => this._currentUser()?.role ?? null);
   public readonly isAdmin = computed(() => this._currentUser()?.role === 'admin');
-  public readonly isManager = computed(() => this._currentUser()?.role === 'manager' || this._currentUser()?.role === 'admin');
+  public readonly isManager = computed(() => this._currentUser()?.role === 'manager' || this._currentUser()?.role === 'tresorier' || this._currentUser()?.role === 'admin');
   public readonly isTresorier = computed(() => this._currentUser()?.role === 'tresorier' || this._currentUser()?.role === 'admin');
   public readonly isCaissiere = computed(() => this._currentUser()?.role === 'caissiere' || this._currentUser()?.role === 'admin');
   public readonly isEmploye = computed(() => this._currentUser()?.role === 'employe' || this._currentUser()?.role === 'admin');

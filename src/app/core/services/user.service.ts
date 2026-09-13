@@ -7,10 +7,7 @@ import { normalizeUserRole } from '../utils/role.utils';
 const USERS_STORAGE_KEY = 'transmex_users_store';
 
 const PERMANENT_ADMIN_EMAILS = [
-  'erwinalberic99@gmail.com',
-  'admin@transmex.cm',
-  'admin@transimex.cm',
-  'admin@transmex.com',
+  'erwinalberic09@gmail.com',
 ];
 
 @Injectable({
@@ -34,8 +31,9 @@ export class UserService {
 
     try {
       if (this.checkSupabaseConfigured() && this.supabaseService.supabase) {
+        await this.supabaseService.ensureInitialized();
         const { data: sessionData } = await this.supabaseService.supabase.auth.getSession();
-        if (sessionData.session?.access_token) {
+        if (sessionData?.session?.access_token) {
           return sessionData.session.access_token;
         }
       }
@@ -75,7 +73,6 @@ export class UserService {
   public readonly activeUsersCount = computed(() => this._users().filter((u) => u.isActive).length);
   public readonly adminCount = computed(() => this._users().filter((u) => u.role === 'admin').length);
   public readonly managerCount = computed(() => this._users().filter((u) => u.role === 'manager').length);
-  public readonly tresorierCount = computed(() => this._users().filter((u) => u.role === 'tresorier').length);
   public readonly caissiereCount = computed(() => this._users().filter((u) => u.role === 'caissiere').length);
   public readonly employeCount = computed(() => this._users().filter((u) => u.role === 'employe').length);
 
@@ -377,7 +374,12 @@ export class UserService {
     try {
       if (this.isBrowser) {
         try {
-          const authToken = await this.getAuthToken();
+          let authToken = '';
+          if (this.checkSupabaseConfigured() && this.supabaseService.supabase) {
+            const { data: sessionData } = await this.supabaseService.supabase.auth.getSession();
+            authToken = sessionData.session?.access_token || '';
+          }
+
           const headers: Record<string, string> = {};
           if (authToken) {
             headers['Authorization'] = `Bearer ${authToken}`;

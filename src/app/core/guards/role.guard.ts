@@ -26,6 +26,7 @@ export const roleGuard: CanActivateFn = async (route) => {
 
   const currentUser = authService.currentUser();
 
+  // Vérification stricte via le Signal réactif
   // L'admin a accès à tout.
   // Le trésorier dispose des mêmes autorisations que le manager.
   if (currentUser) {

@@ -79,7 +79,7 @@ export class MainLayout {
       label: 'Tableau de bord',
       route: '/dashboard',
       icon: 'dashboard',
-      allowedRoles: ['admin', 'manager', 'tresorier', 'caissiere', 'employe'],
+      allowedRoles: ['admin', 'manager', 'caissiere', 'employe', 'tresorier'],
     },
     {
       id: 'caisse',
@@ -108,10 +108,9 @@ export class MainLayout {
   public readonly visibleMenuItems = computed<NavOption[]>(() => {
     const user = this.currentUser();
     if (!user) return [];
-    return this.allMenuItems.filter(
-      (item) =>
-        item.allowedRoles.includes(user.role) ||
-        (user.role === 'tresorier' && item.allowedRoles.includes('manager'))
+    return this.allMenuItems.filter((item) =>
+      item.allowedRoles.includes(user.role) ||
+      (user.role === 'tresorier' && item.allowedRoles.includes('manager'))
     );
   });
 
