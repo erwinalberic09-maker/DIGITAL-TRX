@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'manager' | 'caissiere' | 'employe';
+export type UserRole = 'admin' | 'manager' | 'tresorier' | 'caissiere' | 'employe';
 
 export interface RoleDefinition {
   id: UserRole;
@@ -78,6 +78,12 @@ export const ROLE_DEFINITIONS: Record<UserRole, RoleDefinition> = {
     label: 'Manager',
     description: 'Supervision des opérations, validation et suivi global',
     badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  },
+  tresorier: {
+    id: 'tresorier',
+    label: 'Trésorier',
+    description: 'Gestion de trésorerie, suivi des flux et reporting financier',
+    badgeClass: 'bg-amber-50 text-amber-700 border-amber-200',
   },
   caissiere: {
     id: 'caissiere',

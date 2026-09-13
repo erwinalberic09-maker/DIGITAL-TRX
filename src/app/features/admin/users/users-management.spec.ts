@@ -19,7 +19,7 @@ describe('UsersManagement Component', () => {
                 email: 'amine.k@transmex.com',
                 firstName: 'Amine',
                 lastName: 'Kadri',
-                role: 'agent',
+                role: 'employe',
                 department: 'Services Généraux',
                 phone: '+213 555 12 34 56',
                 isActive: true,

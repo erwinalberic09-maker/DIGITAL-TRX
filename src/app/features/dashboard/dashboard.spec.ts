@@ -66,6 +66,20 @@ describe('Dashboard Component', () => {
     expect(component.dashboardView()).toBe('manager');
   });
 
+  it('devrait orienter vers la vue manager si le rôle est tresorier', () => {
+    currentUserMock.set({
+      id: 'tresorier-id',
+      email: 'tresorier@transimex.cm',
+      firstName: 'Trésorier',
+      lastName: 'Finance',
+      role: 'tresorier',
+      isActive: true,
+      createdAt: new Date().toISOString(),
+    });
+
+    expect(component.dashboardView()).toBe('manager');
+  });
+
   it('devrait orienter vers la vue employee pour un collaborateur employe', () => {
     currentUserMock.set({
       id: 'employe-id',

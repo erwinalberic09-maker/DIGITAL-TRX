@@ -25,7 +25,7 @@ export class Dashboard {
       return 'admin';
     }
 
-    if (role === 'manager') {
+    if (role === 'manager' || role === 'tresorier') {
       return 'manager';
     }
 

@@ -2,7 +2,6 @@ import { Injectable, computed, inject, signal, PLATFORM_ID } from '@angular/core
 import { isPlatformBrowser } from '@angular/common';
 import { CreateUserPayload, UpdateUserPayload, UserProfile } from '../models/auth.model';
 import { SupabaseService } from './supabase.service';
-import { generateSecureUUID } from '../utils/crypto.utils';
 import { normalizeUserRole } from '../utils/role.utils';
 
 const USERS_STORAGE_KEY = 'transmex_users_store';
@@ -30,6 +29,39 @@ export class UserService {
     return Boolean(configured);
   }
 
+  private async getAuthToken(): Promise<string> {
+    if (!this.isBrowser) return '';
+
+    try {
+      if (this.checkSupabaseConfigured() && this.supabaseService.supabase) {
+        const { data: sessionData } = await this.supabaseService.supabase.auth.getSession();
+        if (sessionData.session?.access_token) {
+          return sessionData.session.access_token;
+        }
+      }
+
+      const cachedToken = localStorage.getItem('transmex_auth_token');
+      if (cachedToken) return cachedToken;
+
+      // Chercher aussi les tokens sb-*-auth-token stockés automatiquement par Supabase
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('sb-') && key.endsWith('-auth-token'))) {
+          try {
+            const val = JSON.parse(localStorage.getItem(key) || '{}');
+            if (val?.access_token) return val.access_token;
+          } catch {
+            // Ignorer
+          }
+        }
+      }
+    } catch {
+      // Ignorer
+    }
+
+    return '';
+  }
+
   private readonly _users = signal<UserProfile[]>([]);
   private readonly _isLoading = signal<boolean>(false);
   private readonly _error = signal<string | null>(null);
@@ -43,6 +75,7 @@ export class UserService {
   public readonly activeUsersCount = computed(() => this._users().filter((u) => u.isActive).length);
   public readonly adminCount = computed(() => this._users().filter((u) => u.role === 'admin').length);
   public readonly managerCount = computed(() => this._users().filter((u) => u.role === 'manager').length);
+  public readonly tresorierCount = computed(() => this._users().filter((u) => u.role === 'tresorier').length);
   public readonly caissiereCount = computed(() => this._users().filter((u) => u.role === 'caissiere').length);
   public readonly employeCount = computed(() => this._users().filter((u) => u.role === 'employe').length);
 
@@ -78,12 +111,7 @@ export class UserService {
       // 1. Tenter l'appel à l'API sécurisée /api/system/collaborators avec le Bearer token admin
       if (this.isBrowser) {
         try {
-          let authToken = '';
-          if (this.checkSupabaseConfigured() && this.supabaseService.supabase) {
-            const { data: sessionData } = await this.supabaseService.supabase.auth.getSession();
-            authToken = sessionData.session?.access_token || '';
-          }
-
+          const authToken = await this.getAuthToken();
           const headers: Record<string, string> = {};
           if (authToken) {
             headers['Authorization'] = `Bearer ${authToken}`;
@@ -195,100 +223,59 @@ export class UserService {
 
       const password = payload.tempPassword?.trim() || 'Transmex@' + Math.floor(1000 + Math.random() * 9000);
 
-      // 1. Tenter la création via l'API sécurisée d'administration (/api/system/collaborators)
-      if (this.isBrowser) {
-        try {
-          let authToken = '';
-          if (this.checkSupabaseConfigured() && this.supabaseService.supabase) {
-            const { data: sessionData } = await this.supabaseService.supabase.auth.getSession();
-            authToken = sessionData.session?.access_token || '';
-          }
-
-          const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-          };
-          if (authToken) {
-            headers['Authorization'] = `Bearer ${authToken}`;
-          }
-
-          const displayName = `${payload.firstName.trim()} ${payload.lastName.trim()}`.trim();
-
-          const res = await fetch('/api/system/collaborators', {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              email,
-              password,
-              firstName: payload.firstName.trim(),
-              lastName: payload.lastName.trim(),
-              displayName,
-              role: payload.role,
-              department: payload.department?.trim() || 'Services Généraux',
-              phone: payload.phone?.trim() || '',
-              isActive: true,
-            }),
-          });
-
-          const data = await res.json();
-          if (!res.ok) {
-            throw new Error(data?.error || 'Erreur lors de la création du compte');
-          }
-
-          if (data?.user) {
-            const newUser: UserProfile = {
-              id: data.user.id,
-              email: data.user.email,
-              firstName: data.user.firstName,
-              lastName: data.user.lastName,
-              role: data.user.role,
-              roles: [data.user.role],
-              department: data.user.department,
-              phone: data.user.phone,
-              isActive: data.user.isActive ?? true,
-              createdAt: data.user.createdAt || new Date().toISOString(),
-            };
-
-            const updatedList = [newUser, ...this._users()];
-            this._users.set(updatedList);
-            this.saveToStorage(updatedList);
-            this._isLoading.set(false);
-
-            return { success: true, user: newUser };
-          }
-          } catch {
-            // En cas de test unitaire (jsdom/vitest) ou d'indisponibilité de l'endpoint SSR, basculer proprement sur le mode client direct
-          }
+      // Création impérative via l'API sécurisée d'administration (/api/system/collaborators)
+      if (!this.isBrowser) {
+        throw new Error('La création d’utilisateur ne peut être exécutée que depuis le navigateur.');
       }
 
-      // 2. Fallback mode client direct
-      const newId = generateSecureUUID();
-      const newUser: UserProfile = {
-        id: newId,
-        email,
-        firstName: payload.firstName.trim(),
-        lastName: payload.lastName.trim(),
-        role: payload.role,
-        roles: [payload.role],
-        department: payload.department?.trim() || 'Services Généraux',
-        phone: payload.phone?.trim(),
-        isActive: true,
-        createdAt: new Date().toISOString(),
+      const authToken = await this.getAuthToken();
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
       };
-
-      // Si Supabase est actif côté client, insérer dans la table profiles
-      if (this.checkSupabaseConfigured() && this.supabaseService.supabase) {
-        await this.supabaseService.supabase.from('profiles').insert({
-          id: newId,
-          email: newUser.email,
-          first_name: newUser.firstName,
-          last_name: newUser.lastName,
-          role: newUser.role,
-          department: newUser.department,
-          phone: newUser.phone,
-          is_active: true,
-          created_at: newUser.createdAt,
-        });
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
       }
+
+      const displayName = `${payload.firstName.trim()} ${payload.lastName.trim()}`.trim();
+
+      const res = await fetch('/api/system/collaborators', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          email,
+          password,
+          firstName: payload.firstName.trim(),
+          lastName: payload.lastName.trim(),
+          displayName,
+          role: payload.role,
+          department: payload.department?.trim() || 'Services Généraux',
+          phone: payload.phone?.trim() || '',
+          isActive: true,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || `Erreur serveur (${res.status}) lors de la création de l'utilisateur.`);
+      }
+
+      if (!data?.user) {
+        throw new Error('Réponse invalide du serveur de synchronisation.');
+      }
+
+      const newUser: UserProfile = {
+        id: data.user.id,
+        email: data.user.email,
+        firstName: data.user.firstName,
+        lastName: data.user.lastName,
+        role: data.user.role,
+        roles: [data.user.role],
+        department: data.user.department,
+        phone: data.user.phone,
+        isActive: data.user.isActive ?? true,
+        createdAt: data.user.createdAt || new Date().toISOString(),
+      };
 
       const updatedList = [newUser, ...this._users()];
       this._users.set(updatedList);
@@ -314,12 +301,7 @@ export class UserService {
     try {
       if (this.isBrowser) {
         try {
-          let authToken = '';
-          if (this.checkSupabaseConfigured() && this.supabaseService.supabase) {
-            const { data: sessionData } = await this.supabaseService.supabase.auth.getSession();
-            authToken = sessionData.session?.access_token || '';
-          }
-
+          const authToken = await this.getAuthToken();
           const headers: Record<string, string> = { 'Content-Type': 'application/json' };
           if (authToken) {
             headers['Authorization'] = `Bearer ${authToken}`;
@@ -395,12 +377,7 @@ export class UserService {
     try {
       if (this.isBrowser) {
         try {
-          let authToken = '';
-          if (this.checkSupabaseConfigured() && this.supabaseService.supabase) {
-            const { data: sessionData } = await this.supabaseService.supabase.auth.getSession();
-            authToken = sessionData.session?.access_token || '';
-          }
-
+          const authToken = await this.getAuthToken();
           const headers: Record<string, string> = {};
           if (authToken) {
             headers['Authorization'] = `Bearer ${authToken}`;

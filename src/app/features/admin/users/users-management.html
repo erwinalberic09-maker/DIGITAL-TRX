@@ -189,6 +189,12 @@
           </button>
         </div>
 
+        @if (modalErrorMessage()) {
+          <div class="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 rounded-xl text-rose-800 dark:text-rose-300 text-xs font-medium" id="modal-error-banner">
+            <span class="font-bold">Attention :</span> {{ modalErrorMessage() }}
+          </div>
+        }
+
         <form [formGroup]="userForm" (ngSubmit)="saveUser()" class="space-y-4" id="user-admin-form" novalidate>
           
           <div class="grid grid-cols-2 gap-3">

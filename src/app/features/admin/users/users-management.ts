@@ -24,6 +24,7 @@ export class UsersManagement {
   public readonly isModalOpen = signal<boolean>(false);
   public readonly editingUserId = signal<string | null>(null);
   public readonly successMessage = signal<string | null>(null);
+  public readonly modalErrorMessage = signal<string | null>(null);
 
   public readonly roleList = Object.values(ROLE_DEFINITIONS);
 
@@ -77,6 +78,7 @@ export class UsersManagement {
 
   public openCreateModal(): void {
     this.editingUserId.set(null);
+    this.modalErrorMessage.set(null);
     this.userForm.reset({
       email: '',
       firstName: '',
@@ -92,6 +94,7 @@ export class UsersManagement {
 
   public openEditModal(user: UserProfile): void {
     this.editingUserId.set(user.id);
+    this.modalErrorMessage.set(null);
     this.userForm.reset({
       email: user.email,
       firstName: user.firstName,
@@ -108,6 +111,7 @@ export class UsersManagement {
   public closeModal(): void {
     this.isModalOpen.set(false);
     this.editingUserId.set(null);
+    this.modalErrorMessage.set(null);
   }
 
   public async saveUser(): Promise<void> {
@@ -116,6 +120,7 @@ export class UsersManagement {
       return;
     }
 
+    this.modalErrorMessage.set(null);
     const formValues = this.userForm.getRawValue();
     const editingId = this.editingUserId();
 
@@ -132,10 +137,13 @@ export class UsersManagement {
       if (res.success) {
         this.showFeedback('Compte utilisateur mis à jour avec succès.');
         this.closeModal();
+      } else {
+        this.modalErrorMessage.set(res.error || 'Erreur lors de la mise à jour du compte.');
       }
     } else {
       // Mode Création
       if (!formValues.role) {
+        this.modalErrorMessage.set('Veuillez sélectionner un rôle pour l’utilisateur.');
         return;
       }
 
@@ -153,6 +161,8 @@ export class UsersManagement {
       if (res.success) {
         this.showFeedback(`Utilisateur ${formValues.email} créé et rôle assigné.`);
         this.closeModal();
+      } else {
+        this.modalErrorMessage.set(res.error || 'Échec de la création du compte.');
       }
     }
   }
