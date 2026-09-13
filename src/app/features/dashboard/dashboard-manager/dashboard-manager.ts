@@ -39,6 +39,23 @@ Chart.register(
   Filler
 );
 
+// Fonction utilitaire de parsing sécurisé de dates (DD/MM/YYYY, YYYY-MM-DD, ISO) inspirée des composants Odoo Owl
+function parseTransactionDate(rawDate: string | undefined | null): Date {
+  if (!rawDate) return new Date(0);
+  const str = String(rawDate).trim();
+  if (str.includes('/')) {
+    const parts = str.split('/');
+    if (parts.length === 3) {
+      const day = parseInt(parts[0], 10) || 1;
+      const month = parseInt(parts[1], 10) - 1 || 0;
+      const year = parseInt(parts[2], 10) || 2026;
+      return new Date(year, month, day);
+    }
+  }
+  const parsed = new Date(str);
+  return isNaN(parsed.getTime()) ? new Date(0) : parsed;
+}
+
 export interface CaisseTimelineData {
   labels: string[];
   balances: number[];
@@ -69,9 +86,21 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
   // Préparation réactive des données chronologiques pour Chart.js
   public readonly chartData = computed<CaisseTimelineData>(() => {
     const list = [...this.allTransactions()].sort((a, b) => {
-      const dateA = new Date(a.date).getTime() || 0;
-      const dateB = new Date(b.date).getTime() || 0;
-      return dateA - dateB;
+      const dateA = parseTransactionDate(a.date).getTime();
+      const dateB = parseTransactionDate(b.date).getTime();
+      if (dateA !== dateB) {
+        return dateA - dateB;
+      }
+      // Si même date : privilégier l'heure de création
+      const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      if (createdA !== createdB && createdA > 0 && createdB > 0) {
+        return createdA - createdB;
+      }
+      // Règle comptable : à date/heure égale, traiter l'approvisionnement (montant > 0) avant la dépense (montant < 0)
+      const isEntreeA = a.category === 'entree' || a.montant > 0 ? 1 : 0;
+      const isEntreeB = b.category === 'entree' || b.montant > 0 ? 1 : 0;
+      return isEntreeB - isEntreeA;
     });
 
     if (list.length === 0) {
@@ -89,8 +118,8 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
 
     for (const tx of list) {
       runningBalance += tx.montant;
-      const parsedDate = new Date(tx.date);
-      const formattedDate = !isNaN(parsedDate.getTime())
+      const parsedDate = parseTransactionDate(tx.date);
+      const formattedDate = parsedDate.getTime() > 0
         ? parsedDate.toLocaleDateString('fr-FR', {
             day: '2-digit',
             month: 'short',

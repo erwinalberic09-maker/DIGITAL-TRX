@@ -105,6 +105,76 @@ describe('DashboardManager', () => {
     transactionsSignal.set(mockTransactions);
   });
 
+  it('should handle dates formatted as DD/MM/YYYY in transaction sorting', () => {
+    transactionsSignal.set([
+      {
+        id: 'tx-old',
+        date: '05/03/2026',
+        libelle: 'Opération 2',
+        typeTransaction: 'Espèces',
+        typeDescription: 'Test',
+        category: 'sortie',
+        firstName: 'Jean',
+        quantity: 1,
+        montant: -20000,
+      },
+      {
+        id: 'tx-first',
+        date: '01/03/2026',
+        libelle: 'Opération 1',
+        typeTransaction: 'Espèces',
+        typeDescription: 'Test',
+        category: 'entree',
+        firstName: 'Jean',
+        quantity: 1,
+        montant: 100000,
+      },
+    ]);
+    fixture.detectChanges();
+
+    const data = component.chartData();
+    expect(data.balances[0]).toBe(100000);
+    expect(data.balances[1]).toBe(80000);
+
+    // Restore
+    transactionsSignal.set(mockTransactions);
+  });
+
+  it('should process same-day transactions with entree before sortie so chart starts positive', () => {
+    transactionsSignal.set([
+      {
+        id: 'tx-depense',
+        date: '13/09/2026',
+        libelle: 'Carburant et frais',
+        typeTransaction: 'Espèces',
+        typeDescription: 'Dépense',
+        category: 'sortie',
+        firstName: 'Paul',
+        quantity: 1,
+        montant: -457892,
+      },
+      {
+        id: 'tx-dotation',
+        date: '13/09/2026',
+        libelle: 'Dotation initiale',
+        typeTransaction: 'Espèces',
+        typeDescription: 'Approvisionnement',
+        category: 'entree',
+        firstName: 'Paul',
+        quantity: 1,
+        montant: 500000,
+      },
+    ]);
+    fixture.detectChanges();
+
+    const data = component.chartData();
+    expect(data.balances[0]).toBe(500000);
+    expect(data.balances[1]).toBe(42108);
+
+    // Restore
+    transactionsSignal.set(mockTransactions);
+  });
+
   it('should clean up chart instance on destroy without throwing', () => {
     expect(() => component.ngOnDestroy()).not.toThrow();
   });

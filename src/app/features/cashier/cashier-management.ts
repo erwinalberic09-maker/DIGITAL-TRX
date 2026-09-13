@@ -132,7 +132,12 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       if (dateA !== dateB) return dateA - dateB;
       const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return createdA - createdB;
+      if (createdA !== createdB && createdA > 0 && createdB > 0) {
+        return createdA - createdB;
+      }
+      const isEntreeA = a.category === 'entree' || a.montant > 0 ? 1 : 0;
+      const isEntreeB = b.category === 'entree' || b.montant > 0 ? 1 : 0;
+      return isEntreeB - isEntreeA;
     });
 
     if (list.length === 0) {
@@ -150,9 +155,9 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
     for (const tx of list) {
       runningBalance += tx.montant;
-      const parsedDate = new Date(tx.date);
-      const formattedDate = !isNaN(parsedDate.getTime())
-        ? parsedDate.toLocaleDateString('fr-FR', {
+      const parsedMs = parseDateToMs(tx.date);
+      const formattedDate = parsedMs > 0
+        ? new Date(parsedMs).toLocaleDateString('fr-FR', {
             day: '2-digit',
             month: 'short',
           })
