@@ -70,19 +70,12 @@ function getSupabaseAdmin() {
 }
 
 // Configuration des administrateurs système permanents (inviolables et extensibles via variable d'environnement ADMIN_EMAILS)
-const DEFAULT_ADMIN_EMAILS = [
-  'erwinalberic99@gmail.com',
-  'admin@transmex.cm',
-  'admin@transimex.cm',
-  'admin@transmex.com',
-];
 
-const envAdminEmails = (process.env['ADMIN_EMAILS'] || '')
+
+const PERMANENT_ADMIN_EMAILS = (process.env['ADMIN_EMAILS'] || '')
   .split(',')
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
-
-const PERMANENT_ADMIN_EMAILS = Array.from(new Set([...DEFAULT_ADMIN_EMAILS, ...envAdminEmails]));
 
 /**
  * Fonction centrale et sécurisée de résolution de rôle serveur (RBAC).

@@ -1,4 +1,4 @@
-import { Injectable, PLATFORM_ID, inject, signal, computed, makeStateKey, TransferState, REQUEST, RESPONSE_INIT } from '@angular/core';
+import { Injectable, PLATFORM_ID, Injector, inject, signal, computed, makeStateKey, TransferState, REQUEST, RESPONSE_INIT } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { createBrowserClient, createServerClient, parseCookieHeader, serializeCookieHeader } from '@supabase/ssr';
 import { SupabaseClient } from '@supabase/supabase-js';
@@ -17,10 +17,24 @@ export class SupabaseService {
   private readonly platformId = inject(PLATFORM_ID);
   private readonly isBrowser = isPlatformBrowser(this.platformId);
   private readonly transferState = inject(TransferState);
+  private readonly injector = inject(Injector);
 
   // Uniquement peuplés pendant un rendu SSR ; null/undefined en CSR/navigateur
-  private readonly serverRequest = inject(REQUEST, { optional: true }) as Request | null;
-  private readonly responseInit = inject(RESPONSE_INIT, { optional: true }) as { headers?: HeadersInit } | null;
+  private get serverRequest(): Request | null {
+    try {
+      return this.injector.get(REQUEST, null, { optional: true }) as Request | null;
+    } catch {
+      return null;
+    }
+  }
+
+  private get responseInit(): { headers?: HeadersInit } | null {
+    try {
+      return this.injector.get(RESPONSE_INIT, null, { optional: true }) as { headers?: HeadersInit } | null;
+    } catch {
+      return null;
+    }
+  }
 
   private client: SupabaseClient | null = null;
   private readonly _isConfigured = signal<boolean>(false);
@@ -210,12 +224,13 @@ export class SupabaseService {
           cookies: {
             getAll: () => parseCookieHeader(cookieHeader),
             setAll: (cookiesToSet) => {
-              if (!this.responseInit) return;
-              const headers = new Headers(this.responseInit.headers ?? undefined);
+              const resInit = this.responseInit;
+              if (!resInit) return;
+              const headers = new Headers(resInit.headers ?? undefined);
               for (const { name, value, options } of cookiesToSet) {
                 headers.append('Set-Cookie', serializeCookieHeader(name, value, options));
               }
-              this.responseInit.headers = headers;
+              resInit.headers = headers;
             },
           },
         });
