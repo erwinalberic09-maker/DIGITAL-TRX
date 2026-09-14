@@ -47,7 +47,22 @@ export class CashierService implements OnDestroy {
   private readonly _transactions = signal<CashierTransaction[]>([]);
   private readonly _isLoading = signal<boolean>(false);
   private readonly _error = signal<string | null>(null);
+  private errorTimeout: ReturnType<typeof setTimeout> | null = null;
   private realtimeChannel: ReturnType<NonNullable<SupabaseService['supabase']>['channel']> | null = null;
+
+  public setError(message: string | null): void {
+    if (this.errorTimeout) {
+      clearTimeout(this.errorTimeout);
+      this.errorTimeout = null;
+    }
+    this._error.set(message);
+    if (message) {
+      this.errorTimeout = setTimeout(() => {
+        this._error.set(null);
+        this.errorTimeout = null;
+      }, 5000);
+    }
+  }
 
   constructor() {
     // Réactivité automatique : recharger les transactions et initialiser Realtime dès qu'un utilisateur est authentifié
@@ -499,16 +514,21 @@ export class CashierService implements OnDestroy {
         updatedViaApi = true;
       } else {
         const errJson = await response.json().catch(() => null);
-        apiErrorMessage = errJson?.error || `Erreur serveur (${response.status})`;
+        if (response.status === 403) {
+          apiErrorMessage = errJson?.error || 'Action refusée : vous ne pouvez modifier que les opérations que vous avez vous-même enregistrées.';
+        } else {
+          apiErrorMessage = errJson?.error || errJson?.message || `Erreur serveur (${response.status})`;
+        }
       }
     } catch (apiErr) {
       console.warn('Appel API update /api/cahier/operations échoué, tentative via client Supabase direct:', apiErr);
       apiErrorMessage = apiErr instanceof Error ? apiErr.message : 'Erreur réseau';
     }
 
-    // 3. Repli direct Supabase si l'API Express n'a pas répondu
+    // 3. Repli direct Supabase si l'API Express n'a pas répondu (sauf en cas de refus explicite 403)
     let updatedViaSupabase = false;
-    if (!updatedViaApi) {
+    const isPermissionError = apiErrorMessage.includes('Action refusée') || apiErrorMessage.includes('403');
+    if (!updatedViaApi && !isPermissionError) {
       try {
         await this.supabaseService.ensureInitialized();
         const client = this.supabaseService.supabase;
@@ -546,8 +566,17 @@ export class CashierService implements OnDestroy {
     }
 
     if (!updatedViaApi && !updatedViaSupabase) {
-      const finalMsg = apiErrorMessage || 'Échec de la sauvegarde en base de données';
-      this._error.set(finalMsg);
+      let finalMsg = apiErrorMessage || 'Échec de la sauvegarde en base de données';
+      if (
+        finalMsg.includes('403') ||
+        finalMsg.includes('Forbidden') ||
+        finalMsg.includes('row-level security') ||
+        finalMsg.includes('policy') ||
+        finalMsg.includes('Privilèges insuffisants')
+      ) {
+        finalMsg = 'Action refusée : vous ne pouvez modifier que les opérations que vous avez vous-même enregistrées.';
+      }
+      this.setError(finalMsg);
       return { success: false, message: finalMsg };
     }
 
@@ -630,24 +659,37 @@ export class CashierService implements OnDestroy {
         headers['Authorization'] = `Bearer ${activeToken}`;
       }
 
-      const response = await fetch('/api/cahier/operations', {
+      let response = await fetch('/api/cahier/operations', {
         method: 'DELETE',
         headers,
         body: JSON.stringify({ ids: targetIds }),
       });
 
+      if (!response.ok && response.status === 404) {
+        response = await fetch('/api/cashier/transactions', {
+          method: 'DELETE',
+          headers,
+          body: JSON.stringify({ ids: targetIds }),
+        });
+      }
+
       if (response.ok) {
         deletedSuccessfully = true;
       } else {
         const errJson = await response.json().catch(() => null);
-        failureReason = errJson?.error || `Erreur serveur HTTP ${response.status}`;
+        if (response.status === 403) {
+          failureReason = errJson?.error || 'Action refusée : vous ne pouvez modifier que les opérations que vous avez vous-même enregistrées.';
+        } else {
+          failureReason = errJson?.error || errJson?.message || `Erreur serveur HTTP ${response.status}`;
+        }
       }
     } catch (networkErr) {
       console.warn('Erreur réseau appel API Express DELETE, tentative repli Supabase:', networkErr);
     }
 
-    // Étape 2 : Repli direct Supabase si l'API Express a rencontré une erreur réseau
-    if (!deletedSuccessfully && !failureReason) {
+    // Étape 2 : Repli direct Supabase si l'API Express a rencontré une erreur réseau (sauf en cas de 403)
+    const isDeleteForbidden = failureReason && (failureReason.includes('Action refusée') || failureReason.includes('403'));
+    if (!deletedSuccessfully && !failureReason && !isDeleteForbidden) {
       try {
         await this.supabaseService.ensureInitialized();
         const client = this.supabaseService.supabase;
@@ -670,8 +712,17 @@ export class CashierService implements OnDestroy {
 
     // Si la suppression a échoué en base de données, on refuse la suppression dans l'UI et on alerte l'utilisateur
     if (!deletedSuccessfully) {
-      const errorMsg = failureReason || 'Impossible de supprimer cette opération dans la base de données.';
-      this._error.set(errorMsg);
+      let errorMsg = failureReason || 'Impossible de supprimer cette opération dans la base de données.';
+      if (
+        errorMsg.includes('403') ||
+        errorMsg.includes('Forbidden') ||
+        errorMsg.includes('row-level security') ||
+        errorMsg.includes('policy') ||
+        errorMsg.includes('Privilèges insuffisants')
+      ) {
+        errorMsg = 'Action refusée : vous ne pouvez modifier que les opérations que vous avez vous-même enregistrées.';
+      }
+      this.setError(errorMsg);
       console.error('[CashierService] Échec suppression DB:', errorMsg);
       return false;
     }
@@ -1310,6 +1361,14 @@ export class CashierService implements OnDestroy {
       }
       this.realtimeChannel = null;
     }
+  }
+
+  public clearError(): void {
+    if (this.errorTimeout) {
+      clearTimeout(this.errorTimeout);
+      this.errorTimeout = null;
+    }
+    this._error.set(null);
   }
 
   private formatDate(dateStr: string): string {

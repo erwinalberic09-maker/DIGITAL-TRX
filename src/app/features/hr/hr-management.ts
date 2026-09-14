@@ -12,6 +12,9 @@ import { generateSecurePassword } from '../../core/utils/crypto.utils';
   templateUrl: './hr-management.html',
   styleUrl: './hr-management.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: {
+    '(document:click)': 'onDocumentClick($event)',
+  },
 })
 export class HrManagement {
   private readonly userService = inject(UserService);
@@ -188,6 +191,20 @@ export class HrManagement {
       this.errorMessage.set(msg);
     } finally {
       this.isSubmitting.set(false);
+    }
+  }
+
+  /**
+   * Fermer le message d'erreur dès que l'utilisateur clique n'importe où
+   */
+  public onDocumentClick(event: MouseEvent): void {
+    if (this.errorMessage()) {
+      const target = event.target as HTMLElement | null;
+      // Ne pas fermer immédiatement au même clic qui soumet le formulaire
+      if (target?.closest('#btn-submit-hr-user') || target?.closest('button[type="submit"]')) {
+        return;
+      }
+      this.errorMessage.set(null);
     }
   }
 }

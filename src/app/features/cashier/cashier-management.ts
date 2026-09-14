@@ -74,7 +74,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('caisseChartCanvas')
   private readonly caisseChartCanvas?: ElementRef<HTMLCanvasElement>;
 
-  private readonly cashierService = inject(CashierService);
+  public readonly cashierService = inject(CashierService);
   private readonly authService = inject(AuthService);
   private readonly elementRef = inject(ElementRef);
   protected readonly Math = Math;
@@ -544,8 +544,12 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     if (!confirmed) return;
 
     this.isDeleting.set(true);
-    await this.cashierService.deleteSelected();
-    this.isDeleting.set(false);
+    try {
+      await this.cashierService.deleteSelected();
+    } finally {
+      this.isDeleting.set(false);
+      this.cashierService.toggleSelectAll(false);
+    }
   }
 
   public async startAddInline(): Promise<void> {
@@ -749,6 +753,11 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     const target = event.target as HTMLElement | null;
     if (!target) return;
 
+    // Fermer l'erreur de caisse au clic n'importe où
+    if (this.error()) {
+      this.cashierService.clearError();
+    }
+
     // Ignorer si l'élément n'est plus dans le DOM ou fait partie d'un composant flottant (popover, datepicker, dropdown)
     if (
       !document.body.contains(target) ||
@@ -895,7 +904,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         }
       }
 
-      const result = await this.cashierService.updateTransaction(activeId, {
+      await this.cashierService.updateTransaction(activeId, {
         date: formattedDate,
         libelle: libelle,
         service: (formValues.service as 'Opérations' | 'Administration') || '',
@@ -908,9 +917,8 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         montant: finalMontant,
       });
 
-      if (result.success) {
-        this.cancelInlineEdit();
-      }
+      // Fermer l'édition et rétablir la ligne dans tous les cas pour ne pas bloquer l'UI
+      this.cancelInlineEdit();
     } finally {
       this.isEditingSubmitting.set(false);
     }

@@ -6,10 +6,16 @@
       <!-- Message d'alerte / Erreur éventuelle -->
       <div>
         @if (error()) {
-          <div class="inline-flex items-center gap-2 px-2.5 py-1 text-xs rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+          <button
+            type="button"
+            (click)="cashierService.clearError()"
+            class="inline-flex items-center gap-2 px-2.5 py-1 text-xs rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 cursor-pointer hover:bg-rose-500/20 transition-colors select-none text-left"
+            title="Cliquer pour fermer"
+          >
             <mat-icon class="text-sm !w-4 !h-4 leading-none">error_outline</mat-icon>
             <span>{{ error() }}</span>
-          </div>
+            <span class="text-[10px] opacity-60 ml-1">✕</span>
+          </button>
         }
       </div>
 
