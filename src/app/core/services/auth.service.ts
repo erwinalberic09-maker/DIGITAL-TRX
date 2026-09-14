@@ -8,12 +8,6 @@ import { normalizeUserRole } from '../utils/role.utils';
 const CACHED_PROFILE_KEY = 'transmex_user_profile';
 const CACHED_TOKEN_KEY = 'transmex_auth_token';
 
-// Liste blanche des administrateurs système inaltérables
-const PERMANENT_ADMIN_EMAILS = [
-  'erwinalberic@gmail.com',
-  'erwinalberic99@gmail.com',
-];
-
 @Injectable({
   providedIn: 'root',
 })
@@ -99,12 +93,6 @@ export class AuthService {
         if (cached) {
           const profile = JSON.parse(cached) as UserProfile;
           if (profile && profile.id && profile.isActive) {
-            const email = (profile.email || '').toLowerCase().trim();
-            if (PERMANENT_ADMIN_EMAILS.includes(email) && profile.role !== 'admin') {
-              profile.role = 'admin';
-              profile.roles = ['admin'];
-              this.saveCachedProfile(profile);
-            }
             this._currentUser.set(profile);
           }
         }
@@ -221,14 +209,12 @@ export class AuthService {
       const appRole = authUser?.app_metadata?.['role'] as UserRole | undefined;
       const profileRole = profile?.role as UserRole | undefined;
       const userMetaRole = authUser?.user_metadata?.['role'] as UserRole | undefined;
-      const normalizedEmail = (email || profile?.email || '').toLowerCase().trim();
 
       // Résolution sécurisée du rôle :
-      // 1. Si email permanent admin => systématiquement 'admin'
-      // 2. Si app_metadata (scellé serveur) ou profile (protégé RLS) spécifie 'admin' => 'admin'
-      // 3. user_metadata n'est jamais utilisé pour élever les privilèges admin (modifiable côté client)
+      // 1. Si app_metadata (scellé serveur par Supabase Admin) ou profile (table SQL sécurisée) spécifie 'admin' => 'admin'
+      // 2. user_metadata n'est jamais utilisé pour élever les privilèges admin (modifiable côté client)
       let targetRole: UserRole = 'employe';
-      if (PERMANENT_ADMIN_EMAILS.includes(normalizedEmail) || appRole === 'admin' || profileRole === 'admin') {
+      if (appRole === 'admin' || profileRole === 'admin') {
         targetRole = 'admin';
       } else {
         targetRole = normalizeUserRole(appRole || profileRole || userMetaRole || 'employe');
@@ -254,7 +240,7 @@ export class AuthService {
       this.setLocalSession(userProfile, accessToken);
 
       // Auto-réconciliation avec le serveur d'administration
-      if (accessToken && (resolvedRole === 'admin' || PERMANENT_ADMIN_EMAILS.includes(normalizedEmail))) {
+      if (accessToken && resolvedRole === 'admin') {
         this.triggerServerRoleSync(accessToken);
       }
 

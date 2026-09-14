@@ -6,11 +6,6 @@ import { normalizeUserRole } from '../utils/role.utils';
 
 const USERS_STORAGE_KEY = 'transmex_users_store';
 
-const PERMANENT_ADMIN_EMAILS = [
-  'erwinalberic@gmail.com',
-  'erwinalberic99@gmail.com',
-];
-
 @Injectable({
   providedIn: 'root',
 })
@@ -120,8 +115,7 @@ export class UserService {
             const data = await res.json();
             if (data?.users && Array.isArray(data.users)) {
               const mapped: UserProfile[] = data.users.map((row: UserProfile) => {
-                const rowEmail = (row.email || '').toLowerCase().trim();
-                const resolvedRole = PERMANENT_ADMIN_EMAILS.includes(rowEmail) ? 'admin' : normalizeUserRole(row.role);
+                const resolvedRole = normalizeUserRole(row.role);
                 return {
                   id: row.id,
                   email: row.email,
@@ -160,8 +154,7 @@ export class UserService {
 
         if (data) {
           const mapped: UserProfile[] = data.map((row) => {
-            const rowEmail = (row.email || '').toLowerCase().trim();
-            const resolvedRole = PERMANENT_ADMIN_EMAILS.includes(rowEmail) ? 'admin' : normalizeUserRole(row.role);
+            const resolvedRole = normalizeUserRole(row.role);
             return {
               id: row.id,
               email: row.email,
@@ -325,21 +318,42 @@ export class UserService {
         }
       }
 
-      // Repli direct Supabase si l'API Express n'a pas pu être atteinte
+      // Repli direct Supabase si l'API Express n'a pas pu être atteinte.
+      // IMPORTANT : jamais pour un changement de rôle. Seule l'API serveur (clé service_role)
+      // met à jour auth.users.app_metadata.role, qui est la source de vérité prioritaire côté
+      // serveur (resolveServerRole) et dans la liste des collaborateurs. Un repli qui ne touche
+      // que public.profiles.role laisserait l'ancien rôle "scellé" dans app_metadata reprendre
+      // le dessus, et donnerait l'impression trompeuse que le changement n'a pas été enregistré.
+      if (!updateSucceeded && payload.role !== undefined) {
+        throw new Error(
+          lastErrorMessage ||
+            "Le changement de rôle nécessite le service d'administration serveur, actuellement injoignable. Réessayez."
+        );
+      }
+
       if (!updateSucceeded && this.checkSupabaseConfigured() && this.supabaseService.supabase) {
         const updateData: Record<string, unknown> = {};
         if (payload.firstName !== undefined) updateData['first_name'] = payload.firstName;
         if (payload.lastName !== undefined) updateData['last_name'] = payload.lastName;
-        if (payload.role !== undefined) updateData['role'] = payload.role;
         if (payload.department !== undefined) updateData['department'] = payload.department;
         if (payload.phone !== undefined) updateData['phone'] = payload.phone;
         if (payload.isActive !== undefined) updateData['is_active'] = payload.isActive;
         if (payload.avatarUrl !== undefined) updateData['avatar_url'] = payload.avatarUrl;
 
-        const { error: directErr } = await this.supabaseService.supabase.from('profiles').update(updateData).eq('id', id);
-        if (!directErr) {
+        // .select('id') est indispensable ici : sans lui, un UPDATE bloqué par une policy RLS
+        // (0 ligne affectée) renvoie quand même error === null, et le code affichait alors
+        // un succès trompeur alors que rien n'avait été écrit en base.
+        const { data: directData, error: directErr } = await this.supabaseService.supabase
+          .from('profiles')
+          .update(updateData)
+          .eq('id', id)
+          .select('id');
+
+        if (!directErr && directData && directData.length > 0) {
           updateSucceeded = true;
-        } else if (!lastErrorMessage) {
+        } else if (!directErr && (!directData || directData.length === 0)) {
+          lastErrorMessage = lastErrorMessage || 'Aucune ligne modifiée (droits insuffisants ou compte introuvable).';
+        } else if (directErr && !lastErrorMessage) {
           lastErrorMessage = directErr.message;
         }
       }
