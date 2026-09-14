@@ -917,7 +917,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         montant: finalMontant,
       });
 
-      // Fermer l'édition et rétablir la ligne dans tous les cas pour ne pas bloquer l'UI
+      // Fermeture automatique du formulaire d'édition pour ne pas bloquer l'UI
       this.cancelInlineEdit();
     } finally {
       this.isEditingSubmitting.set(false);
