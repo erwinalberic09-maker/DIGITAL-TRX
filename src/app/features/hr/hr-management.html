@@ -189,6 +189,24 @@
           </button>
         </div>
 
+        <!-- Alerte d'erreur interne à la modale (jamais masquée par l'overlay) -->
+        @if (errorMessage()) {
+          <div class="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-start gap-2.5 animate-in fade-in" id="hr-modal-error-alert">
+            <span class="w-2 h-2 rounded-full bg-rose-500 mt-1 shrink-0"></span>
+            <div class="flex-1">
+              <p class="font-bold">Échec de l'opération :</p>
+              <p class="mt-0.5">{{ errorMessage() }}</p>
+            </div>
+            <button
+              type="button"
+              (click)="errorMessage.set(null)"
+              class="text-rose-500 hover:text-rose-800 font-bold px-1.5 py-0.5"
+              aria-label="Fermer l'erreur">
+              &times;
+            </button>
+          </div>
+        }
+
         <!-- Formulaire réactif -->
         <form [formGroup]="userForm" (ngSubmit)="onSubmit()" class="space-y-4" id="hr-collaborator-form">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">

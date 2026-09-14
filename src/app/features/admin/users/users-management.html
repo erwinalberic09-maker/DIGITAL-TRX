@@ -173,7 +173,7 @@
     <div class="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs" id="user-modal-overlay">
       <div class="bg-white dark:bg-[#2b2f33] rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 dark:border-white/10 relative animate-in fade-in duration-200" id="user-modal">
         
-        <div class="flex items-center justify-between border-b border-slate-100 dark:border-white/10 pb-4 mb-5">
+        <div class="flex items-center justify-between border-b border-slate-100 dark:border-white/10 pb-4 mb-5 shrink-0">
           <div>
             <h2 class="text-base font-bold text-slate-900 dark:text-slate-50">
               {{ editingUserId() ? 'Modifier l\'utilisateur' : 'Créer un nouvel utilisateur' }}
@@ -190,8 +190,8 @@
         </div>
 
         @if (modalErrorMessage()) {
-          <div class="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 rounded-xl text-rose-800 dark:text-rose-300 text-xs font-medium" id="modal-error-banner">
-            <span class="font-bold">Attention :</span> {{ modalErrorMessage() }}
+          <div class="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 rounded-xl text-rose-800 dark:text-rose-300 text-xs font-medium shrink-0" id="modal-error-banner">
+            <span class="font-bold">Erreur :</span> {{ modalErrorMessage() }}
           </div>
         }
 
