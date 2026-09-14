@@ -70,9 +70,10 @@ function getSupabaseAdmin() {
   });
 }
 
-// Configuration de l'administrateur système permanent unique
+// Configuration des administrateurs système permanents
 const PERMANENT_ADMIN_EMAILS = [
-  'erwinalberic09@gmail.com',
+  'erwinalberic@gmail.com',
+  'erwinalberic99@gmail.com',
   ...(process.env['ADMIN_EMAILS'] || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
 ];
 
@@ -208,7 +209,7 @@ export async function requireAdmin(req: express.Request, res: express.Response, 
     const resolvedRole = await resolveServerRole(supabaseAdmin, user);
     if (resolvedRole !== 'admin') {
       res.status(403).json({
-        error: `Accès refusé. Cette opération exige les privilèges de l'administrateur principal (connecté en tant que: ${user.email || 'anonyme'}). Seul l'administrateur erwinalberic09@gmail.com peut gérer les comptes utilisateurs.`,
+        error: `Accès refusé. Cette opération exige les privilèges administrateur (connecté en tant que: ${user.email || 'anonyme'}).`,
       });
       return;
     }
@@ -549,9 +550,18 @@ const updateCollaboratorHandler = async (req: express.Request, res: express.Resp
   }
 
   try {
+    // 1. Récupération préalable de l'utilisateur auth pour garantir la présence de l'email si besoin d'upsert
+    let userEmail: string | undefined;
+    const { data: authUserData } = await adminClient.auth.admin.getUserById(userId);
+    if (authUserData?.user?.email) {
+      userEmail = authUserData.user.email;
+    }
+
     const profileUpdates: Record<string, unknown> = {
+      id: userId,
       updated_at: new Date().toISOString(),
     };
+    if (userEmail) profileUpdates['email'] = userEmail;
     if (firstName !== undefined) profileUpdates['first_name'] = firstName;
     if (lastName !== undefined) profileUpdates['last_name'] = lastName;
     if (role !== undefined) profileUpdates['role'] = normalizeUserRole(role);
@@ -561,8 +571,7 @@ const updateCollaboratorHandler = async (req: express.Request, res: express.Resp
 
     const { error: profileUpdateError } = await adminClient
       .from('profiles')
-      .update(profileUpdates)
-      .eq('id', userId);
+      .upsert(profileUpdates, { onConflict: 'id' });
 
     if (profileUpdateError) {
       console.error('Échec de la mise à jour public.profiles:', profileUpdateError.message);
@@ -1034,7 +1043,9 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
 
 /**
  * Suppression d'opérations de caisse (DELETE /api/cahier/operations & /api/cashier/transactions)
- * SÉCURITÉ CRITIQUE : Réservé strictement aux administrateurs ('admin') en accord avec les policies RLS.
+ * RÈGLE MÉTIER STRICTE :
+ * - Les administrateurs ('admin') peuvent tout supprimer.
+ * - Les autres rôles autorisés ('caissiere', 'manager') ne peuvent supprimer UNIQUEMENT que les opérations qu'ils ont eux-mêmes créées.
  */
 const deleteOperationsHandler = async (req: express.Request, res: express.Response): Promise<void> => {
   const adminClient = getSupabaseAdmin();
@@ -1045,6 +1056,10 @@ const deleteOperationsHandler = async (req: express.Request, res: express.Respon
 
   try {
     const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string; role?: string } | undefined;
+    const callerId = authenticatedUser?.id;
+    const userRole = authenticatedUser?.role;
+    const isAdmin = userRole === 'admin';
+
     const paramId = req.params['id'];
     const singleId = Array.isArray(paramId) ? paramId[0] : paramId;
     const bodyIds = Array.isArray(req.body?.ids) ? req.body.ids : [];
@@ -1060,7 +1075,40 @@ const deleteOperationsHandler = async (req: express.Request, res: express.Respon
       return;
     }
 
-    console.warn(`[AUDIT CASHIER] Suppression de ${targetIds.length} opération(s) [${targetIds.join(', ')}] initiée par [${authenticatedUser?.email || authenticatedUser?.id || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'})`);
+    // Si l'utilisateur n'est pas admin, vérifier les autorisations
+    if (!isAdmin) {
+      if (!callerId) {
+        res.status(403).json({ error: 'Utilisateur non identifié. Suppression refusée.' });
+        return;
+      }
+
+      const { data: rowsToCheck, error: fetchErr } = await adminClient
+        .from('cashier_transactions')
+        .select('id, created_by, employee_id, libelle')
+        .in('id', targetIds);
+
+      if (fetchErr || !rowsToCheck) {
+        res.status(500).json({ error: 'Impossible de vérifier la propriété des opérations' });
+        return;
+      }
+
+      // Pour les caissières ou managers : ne bloquer que si la ligne a un created_by ou employee_id défini et différent de l'utilisateur courant
+      const unauthorizedRows = rowsToCheck.filter((r) => {
+        const creator = r.created_by || r.employee_id;
+        // Si aucun créateur n'était renseigné sur la ligne historique, autoriser la suppression par le personnel de caisse
+        if (!creator) return false;
+        return creator !== callerId;
+      });
+
+      if (unauthorizedRows.length > 0) {
+        res.status(403).json({
+          error: `Vous ne pouvez supprimer que les opérations créées par vous-même (${unauthorizedRows.length} opération(s) non autorisée(s)).`,
+        });
+        return;
+      }
+    }
+
+    console.warn(`[AUDIT CASHIER] Suppression de ${targetIds.length} opération(s) [${targetIds.join(', ')}] initiée par [${authenticatedUser?.email || authenticatedUser?.id || 'inconnu'}] (rôle: ${userRole || 'non-défini'})`);
 
     const { error, count } = await adminClient
       .from('cashier_transactions')
@@ -1073,6 +1121,7 @@ const deleteOperationsHandler = async (req: express.Request, res: express.Respon
       return;
     }
 
+    // Nettoyage éventuel des pièces justificatives associées dans storage ou liens
     res.json({
       success: true,
       deletedCount: count ?? targetIds.length,
@@ -1084,10 +1133,132 @@ const deleteOperationsHandler = async (req: express.Request, res: express.Respon
   }
 };
 
+/**
+ * Duplication en masse d'opérations de caisse (POST /api/cahier/operations/duplicate)
+ */
+const duplicateOperationsHandler = async (req: express.Request, res: express.Response): Promise<void> => {
+  const adminClient = getSupabaseAdmin();
+  if (!adminClient) {
+    res.status(503).json({ error: 'Service d’administration indisponible : SUPABASE_SERVICE_ROLE_KEY manquante' });
+    return;
+  }
+
+  try {
+    const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string; role?: string } | undefined;
+    const callerId = authenticatedUser?.id || null;
+
+    const bodyIds = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    if (bodyIds.length === 0) {
+      res.status(400).json({ error: 'Aucun identifiant fourni pour la duplication' });
+      return;
+    }
+
+    // Récupération des transactions originales
+    const { data: originalRows, error: fetchErr } = await adminClient
+      .from('cashier_transactions')
+      .select('*')
+      .in('id', bodyIds);
+
+    if (fetchErr || !originalRows || originalRows.length === 0) {
+      res.status(404).json({ error: 'Aucune opération trouvée pour duplication' });
+      return;
+    }
+
+    const todayIso = new Date().toISOString();
+    const rowsToInsert = originalRows.map((orig) => ({
+      libelle: orig.libelle ? `${orig.libelle} (Copie)` : 'Copie opération',
+      service: orig.service,
+      type_description: orig.type_description,
+      category: orig.category,
+      status: 'draft',
+      no_dossier: orig.no_dossier,
+      dossier_id: orig.dossier_id,
+      first_name: orig.first_name,
+      partenaire: orig.partenaire,
+      employee: orig.employee,
+      employee_id: callerId,
+      created_by: callerId,
+      quantity: orig.quantity,
+      montant: orig.montant,
+      date: todayIso,
+    }));
+
+    const { data: insertedRows, error: insertErr } = await adminClient
+      .from('cashier_transactions')
+      .insert(rowsToInsert)
+      .select();
+
+    if (insertErr) {
+      console.error('Erreur SQL lors de la duplication:', insertErr.message);
+      res.status(500).json({ error: insertErr.message });
+      return;
+    }
+
+    const enriched = await attachPiecesComptables(adminClient, insertedRows || []);
+    res.json({
+      success: true,
+      count: insertedRows?.length || 0,
+      data: enriched,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur interne lors de la duplication';
+    res.status(500).json({ error: message });
+  }
+};
+
+/**
+ * Modification de statut en masse (PATCH /api/cahier/operations/status)
+ */
+const updateOperationsStatusHandler = async (req: express.Request, res: express.Response): Promise<void> => {
+  const adminClient = getSupabaseAdmin();
+  if (!adminClient) {
+    res.status(503).json({ error: 'Service d’administration indisponible : SUPABASE_SERVICE_ROLE_KEY manquante' });
+    return;
+  }
+
+  try {
+    const bodyIds = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const newStatus = req.body?.status === 'posted' ? 'posted' : (req.body?.status === 'cancelled' ? 'cancelled' : 'draft');
+
+    if (bodyIds.length === 0) {
+      res.status(400).json({ error: 'Aucun identifiant fourni' });
+      return;
+    }
+
+    const { data: updatedRows, error: updateErr } = await adminClient
+      .from('cashier_transactions')
+      .update({ status: newStatus })
+      .in('id', bodyIds)
+      .select();
+
+    if (updateErr) {
+      console.error('Erreur SQL mise à jour statut:', updateErr.message);
+      res.status(500).json({ error: updateErr.message });
+      return;
+    }
+
+    const enriched = await attachPiecesComptables(adminClient, updatedRows || []);
+    res.json({
+      success: true,
+      count: updatedRows?.length || 0,
+      data: enriched,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erreur interne modification de statut';
+    res.status(500).json({ error: message });
+  }
+};
+
 // Déclaration des routes de caisse sécurisées par RBAC strict
 app.get('/api/cahier/operations', requireAuth, getOperationsHandler);
 app.get('/api/cashier/transactions', requireAuth, getOperationsHandler);
 app.get('/api/system/operations', requireAuth, getOperationsHandler);
+
+// Actions en masse (Duplication & Changement de statut)
+app.post('/api/cahier/operations/duplicate', requireAuth, requireRole(['admin', 'caissiere', 'manager']), duplicateOperationsHandler);
+app.post('/api/cashier/transactions/duplicate', requireAuth, requireRole(['admin', 'caissiere', 'manager']), duplicateOperationsHandler);
+app.patch('/api/cahier/operations/status', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationsStatusHandler);
+app.patch('/api/cashier/transactions/status', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationsStatusHandler);
 
 // Écriture : réservée aux Administrateurs et Caissières
 app.post('/api/cahier/operations', requireAuth, requireRole(['admin', 'caissiere', 'manager']), saveOperationHandler);
@@ -1098,11 +1269,11 @@ app.put('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'cai
 app.patch('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationHandler);
 app.patch('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationHandler);
 
-// Suppression : réservée strictement aux Administrateurs
-app.delete('/api/cahier/operations/:id', requireAuth, requireRole(['admin']), deleteOperationsHandler);
-app.delete('/api/cashier/transactions/:id', requireAuth, requireRole(['admin']), deleteOperationsHandler);
-app.delete('/api/cahier/operations', requireAuth, requireRole(['admin']), deleteOperationsHandler);
-app.delete('/api/cashier/transactions', requireAuth, requireRole(['admin']), deleteOperationsHandler);
+// Suppression : autorisée pour admin, caissiere et manager (avec vérification de propriété stricte pour les non-admin)
+app.delete('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager']), deleteOperationsHandler);
+app.delete('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager']), deleteOperationsHandler);
+app.delete('/api/cahier/operations', requireAuth, requireRole(['admin', 'caissiere', 'manager']), deleteOperationsHandler);
+app.delete('/api/cashier/transactions', requireAuth, requireRole(['admin', 'caissiere', 'manager']), deleteOperationsHandler);
 
 /**
  * Example Express Rest API endpoints can be defined here.

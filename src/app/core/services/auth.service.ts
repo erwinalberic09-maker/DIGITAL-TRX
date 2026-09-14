@@ -10,7 +10,8 @@ const CACHED_TOKEN_KEY = 'transmex_auth_token';
 
 // Liste blanche des administrateurs système inaltérables
 const PERMANENT_ADMIN_EMAILS = [
-  'erwinalberic09@gmail.com',
+  'erwinalberic@gmail.com',
+  'erwinalberic99@gmail.com',
 ];
 
 @Injectable({

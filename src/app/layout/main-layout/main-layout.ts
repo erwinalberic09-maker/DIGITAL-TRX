@@ -36,8 +36,14 @@ export class MainLayout {
   public readonly currentUser = this.authService.currentUser;
   public readonly isMenuOpen = signal<boolean>(false);
   public readonly isUserDropdownOpen = signal<boolean>(false);
+  public readonly isActionsMenuOpen = signal<boolean>(false);
+  public readonly isDeleting = signal<boolean>(false);
   public readonly searchQuery = signal<string>('');
   public readonly activeView = signal<'graph' | 'list'>('list');
+
+  public readonly selectedTransactionsCount = computed(() => {
+    return this.cashierService.allTransactions().filter((t) => t.selected).length;
+  });
 
   // Thème actuel
   public readonly currentTheme = this.themeService.currentTheme;
@@ -165,11 +171,81 @@ export class MainLayout {
     if (!target.closest('#user-dropdown-container')) {
       this.closeUserDropdown();
     }
+    // Si le clic s'est produit en dehors du menu d'actions de caisse, on le ferme
+    if (!target.closest('#cp-actions-dropdown-container')) {
+      this.closeActionsMenu();
+    }
   }
 
   public onEscape(): void {
     this.closeUserDropdown();
+    this.closeActionsMenu();
     this.closeMenu();
+  }
+
+  public toggleActionsMenu(event?: Event): void {
+    if (event) {
+      event.stopPropagation();
+    }
+    this.isActionsMenuOpen.update((open) => !open);
+  }
+
+  public closeActionsMenu(): void {
+    this.isActionsMenuOpen.set(false);
+  }
+
+  public async onDeleteSelectedAction(): Promise<void> {
+    const count = this.selectedTransactionsCount();
+    if (count === 0 || this.isDeleting()) return;
+
+    this.isDeleting.set(true);
+    this.closeActionsMenu();
+
+    try {
+      const success = await this.cashierService.deleteSelected();
+      if (!success) {
+        const err = this.cashierService.error();
+        if (err) {
+          // Affichage non intrusif de l'erreur
+          console.warn('Avertissement suppression:', err);
+        }
+      }
+    } finally {
+      this.isDeleting.set(false);
+    }
+  }
+
+  public onExportAction(): void {
+    const hasSelection = this.selectedTransactionsCount() > 0;
+    this.cashierService.exportTransactions(hasSelection);
+    this.closeActionsMenu();
+  }
+
+  public clearSelection(): void {
+    this.cashierService.toggleSelectAll(false);
+    this.closeActionsMenu();
+  }
+
+  public async onDuplicateAction(): Promise<void> {
+    if (this.selectedTransactionsCount() === 0) return;
+    this.closeActionsMenu();
+    await this.cashierService.duplicateSelected();
+  }
+
+  public async onResetToDraftAction(): Promise<void> {
+    if (this.selectedTransactionsCount() === 0) return;
+    this.closeActionsMenu();
+    await this.cashierService.resetSelectedToDraft();
+  }
+
+  public onExportSpreadsheetAction(): void {
+    this.cashierService.exportSpreadsheet();
+    this.closeActionsMenu();
+  }
+
+  public onDownloadAttachmentsAction(): void {
+    this.cashierService.downloadAttachments();
+    this.closeActionsMenu();
   }
 
   public onSearchInput(event: Event): void {

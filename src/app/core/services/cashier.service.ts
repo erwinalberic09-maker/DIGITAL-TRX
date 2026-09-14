@@ -581,7 +581,176 @@ export class CashierService implements OnDestroy {
    * 3. SUPPRESSION D'OPÉRATIONS : API RELAIS AVEC REPLI ET RÉACTIVITÉ
    * ───────────────────────────────────────────────────────────────────────────
    */
+  public async deleteTransaction(id: string): Promise<boolean> {
+    if (!id) return false;
+    return this.deleteBatchTransactions([id]);
+  }
+
   public async deleteSelected(): Promise<boolean> {
+    const selectedIds = this._transactions()
+      .filter((t) => t.selected)
+      .map((t) => t.id);
+
+    if (selectedIds.length === 0) return true;
+    return this.deleteBatchTransactions(selectedIds);
+  }
+
+  /**
+   * Suppression synchronisée avec la base de données (Supabase / Serveur Express)
+   * La mise à jour du Signal local n'intervient QUE SI la suppression en base est confirmée.
+   */
+  private async deleteBatchTransactions(targetIds: string[]): Promise<boolean> {
+    if (targetIds.length === 0) return true;
+
+    this._error.set(null);
+    let activeToken = this.authService.token();
+
+    // Récupération dynamique et fraîche du jeton Supabase
+    if (this.supabaseService.supabase) {
+      try {
+        const { data: sessionData } = await this.supabaseService.supabase.auth.getSession();
+        if (sessionData.session?.access_token) {
+          activeToken = sessionData.session.access_token;
+        }
+      } catch (err) {
+        console.warn('Session Supabase non récupérable pour suppression:', err);
+      }
+    }
+
+    let deletedSuccessfully = false;
+    let failureReason: string | null = null;
+
+    // Étape 1 : Appel à l'API Express sécurisée (exécute la suppression SQL via la clé de service)
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      };
+      if (activeToken) {
+        headers['Authorization'] = `Bearer ${activeToken}`;
+      }
+
+      const response = await fetch('/api/cahier/operations', {
+        method: 'DELETE',
+        headers,
+        body: JSON.stringify({ ids: targetIds }),
+      });
+
+      if (response.ok) {
+        deletedSuccessfully = true;
+      } else {
+        const errJson = await response.json().catch(() => null);
+        failureReason = errJson?.error || `Erreur serveur HTTP ${response.status}`;
+      }
+    } catch (networkErr) {
+      console.warn('Erreur réseau appel API Express DELETE, tentative repli Supabase:', networkErr);
+    }
+
+    // Étape 2 : Repli direct Supabase si l'API Express a rencontré une erreur réseau
+    if (!deletedSuccessfully && !failureReason) {
+      try {
+        await this.supabaseService.ensureInitialized();
+        const client = this.supabaseService.supabase;
+        if (client) {
+          const { error } = await client
+            .from('cashier_transactions')
+            .delete()
+            .in('id', targetIds);
+
+          if (error) {
+            failureReason = error.message;
+          } else {
+            deletedSuccessfully = true;
+          }
+        }
+      } catch (err) {
+        failureReason = err instanceof Error ? err.message : 'Échec de la suppression directe';
+      }
+    }
+
+    // Si la suppression a échoué en base de données, on refuse la suppression dans l'UI et on alerte l'utilisateur
+    if (!deletedSuccessfully) {
+      const errorMsg = failureReason || 'Impossible de supprimer cette opération dans la base de données.';
+      this._error.set(errorMsg);
+      console.error('[CashierService] Échec suppression DB:', errorMsg);
+      return false;
+    }
+
+    // Étape 3 : Mise à jour de l'état réactif Signals Angular 19 UNIQUEMENT après succès DB
+    this._transactions.update((items) => items.filter((item) => !targetIds.includes(item.id)));
+    this.recalculateRunningBalances();
+    return true;
+  }
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * 4. EXPORT DES OPÉRATIONS DE CAISSE (CSV / EXCEL COMPATIBLE)
+   * ───────────────────────────────────────────────────────────────────────────
+   * Exporte soit les lignes sélectionnées, soit l'ensemble des opérations visibles.
+   */
+  public exportTransactions(onlySelected = false): void {
+    const all = this._transactions();
+    const rowsToExport = onlySelected ? all.filter((t) => t.selected) : all;
+    const dataset = rowsToExport.length > 0 ? rowsToExport : all;
+
+    if (dataset.length === 0) return;
+
+    // En-têtes CSV
+    const headers = [
+      'Date',
+      'Pièce comptable',
+      'Libellé',
+      'Partenaire / Employé',
+      'N° Dossier',
+      'Service',
+      'Quantité',
+      'Montant (FCFA)',
+      'Solde courant (FCFA)',
+      'Statut',
+    ];
+
+    const csvRows = [headers.join(';')];
+
+    for (const tx of dataset) {
+      const row = [
+        `"${tx.date || ''}"`,
+        `"${tx.pieceComptable || ''}"`,
+        `"${(tx.libelle || '').replace(/"/g, '""')}"`,
+        `"${(tx.employee || tx.partenaire || '').replace(/"/g, '""')}"`,
+        `"${(tx.noDossier || '').replace(/"/g, '""')}"`,
+        `"${(tx.service || '').replace(/"/g, '""')}"`,
+        tx.quantity !== undefined && tx.quantity !== null ? tx.quantity : '',
+        tx.montant,
+        tx.soldeApres !== undefined && tx.soldeApres !== null ? tx.soldeApres : '',
+        tx.status === 'posted' ? 'Comptabilisé' : (tx.status === 'cancelled' ? 'Annulé' : 'Brouillon'),
+      ];
+      csvRows.push(row.join(';'));
+    }
+
+    // Création du Blob avec BOM UTF-8 pour Excel
+    const csvContent = '\uFEFF' + csvRows.join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const today = new Date().toISOString().slice(0, 10);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `journal_de_caisse_${today}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * 5. ACTIONS EN MASSE SYNCHRONISÉES DB SUPABASE (ODOO ACTIONS BAR)
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+
+  /**
+   * Duplique en base Supabase toutes les opérations actuellement sélectionnées
+   */
+  public async duplicateSelected(): Promise<boolean> {
     const selectedIds = this._transactions()
       .filter((t) => t.selected)
       .map((t) => t.id);
@@ -589,47 +758,250 @@ export class CashierService implements OnDestroy {
     if (selectedIds.length === 0) return true;
 
     this._error.set(null);
-    const token = this.authService.token();
+    let token = this.authService.token();
+    if (!token && this.supabaseService.supabase) {
+      try {
+        const { data: sessionData } = await this.supabaseService.supabase.auth.getSession();
+        token = sessionData.session?.access_token || null;
+      } catch {
+        // Ignorer
+      }
+    }
 
-    // 1. Tente d'abord de supprimer via l'API Express
-    let deletedViaApi = false;
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const response = await fetch('/api/cahier/operations', {
-        method: 'DELETE',
+      const response = await fetch('/api/cahier/operations/duplicate', {
+        method: 'POST',
         headers,
         body: JSON.stringify({ ids: selectedIds }),
       });
 
       if (response.ok) {
-        deletedViaApi = true;
+        const resJson = await response.json();
+        const createdRows = (resJson.data || []) as CashierDbRow[];
+        const mapped = createdRows.map((r) => this.mapSingleDbRow(r));
+
+        this._transactions.update((currentList) => [...mapped, ...currentList]);
+        this.recalculateRunningBalances();
+        this.toggleSelectAll(false);
+        return true;
       }
     } catch {
-      // Ignorer l'erreur réseau et tenter le repli direct
+      // Ignorer et basculer sur fallback direct
     }
 
-    // 2. Repli direct Supabase si l'API n'a pas pu traiter la demande
-    if (!deletedViaApi) {
-      try {
-        await this.supabaseService.ensureInitialized();
-        const client = this.supabaseService.supabase;
-        if (client) {
-          await client
-            .from('cashier_transactions')
-            .delete()
-            .in('id', selectedIds);
+    // Repli direct Supabase si l'API n'a pas répondu
+    try {
+      await this.supabaseService.ensureInitialized();
+      const client = this.supabaseService.supabase;
+      if (client) {
+        const originalRows = this._transactions().filter((t) => t.selected);
+        const callerId = this.authService.currentUser()?.id || null;
+        const todayIso = new Date().toISOString();
+
+        const rowsToInsert = originalRows.map((orig) => ({
+          libelle: orig.libelle ? `${orig.libelle} (Copie)` : 'Copie opération',
+          service: orig.service,
+          type_description: orig.typeDescription,
+          category: orig.category,
+          status: 'draft',
+          no_dossier: orig.noDossier,
+          partenaire: orig.partenaire,
+          employee: orig.employee,
+          employee_id: callerId,
+          created_by: callerId,
+          quantity: orig.quantity,
+          montant: orig.montant,
+          date: todayIso,
+        }));
+
+        const { data, error } = await client
+          .from('cashier_transactions')
+          .insert(rowsToInsert)
+          .select();
+
+        if (error) {
+          this._error.set(error.message);
+          return false;
         }
-      } catch (err) {
-        console.warn('Erreur lors de la suppression directe Supabase:', err);
+
+        if (data) {
+          const mapped = (data as CashierDbRow[]).map((r) => this.mapSingleDbRow(r));
+          this._transactions.update((currentList) => [...mapped, ...currentList]);
+          this.recalculateRunningBalances();
+          this.toggleSelectAll(false);
+          return true;
+        }
+      }
+    } catch (err) {
+      console.warn('Erreur lors de la duplication Supabase:', err);
+    }
+
+    return false;
+  }
+
+  /**
+   * Remet en statut 'draft' (brouillon) les opérations sélectionnées
+   */
+  public async resetSelectedToDraft(): Promise<boolean> {
+    const selectedIds = this._transactions()
+      .filter((t) => t.selected)
+      .map((t) => t.id);
+
+    if (selectedIds.length === 0) return true;
+
+    this._error.set(null);
+    let token = this.authService.token();
+    if (!token && this.supabaseService.supabase) {
+      try {
+        const { data: sessionData } = await this.supabaseService.supabase.auth.getSession();
+        token = sessionData.session?.access_token || null;
+      } catch {
+        // Ignorer
       }
     }
 
-    // 3. Mise à jour immédiate du Signal Angular 19
-    this._transactions.update((items) => items.filter((item) => !item.selected));
-    this.recalculateRunningBalances();
-    return true;
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const response = await fetch('/api/cahier/operations/status', {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ ids: selectedIds, status: 'draft' }),
+      });
+
+      if (response.ok) {
+        this._transactions.update((items) =>
+          items.map((it) => (selectedIds.includes(it.id) ? { ...it, status: 'draft', selected: false } : it))
+        );
+        return true;
+      }
+    } catch {
+      // Ignorer
+    }
+
+    // Repli direct Supabase
+    try {
+      await this.supabaseService.ensureInitialized();
+      const client = this.supabaseService.supabase;
+      if (client) {
+        const { error } = await client
+          .from('cashier_transactions')
+          .update({ status: 'draft' })
+          .in('id', selectedIds);
+
+        if (error) {
+          this._error.set(error.message);
+          return false;
+        }
+
+        this._transactions.update((items) =>
+          items.map((it) => (selectedIds.includes(it.id) ? { ...it, status: 'draft', selected: false } : it))
+        );
+        return true;
+      }
+    } catch (err) {
+      console.warn('Erreur lors du changement de statut Supabase:', err);
+    }
+
+    return false;
+  }
+
+  /**
+   * Insérer dans une feuille de calcul (génère un classeur TSV/Excel détaillé avec formules de totaux)
+   */
+  public exportSpreadsheet(): void {
+    const selected = this._transactions().filter((t) => t.selected);
+    const dataset = selected.length > 0 ? selected : this._transactions();
+    if (dataset.length === 0) return;
+
+    let totalEntrees = 0;
+    let totalSorties = 0;
+
+    const rows: string[] = [
+      ['RÉCONCILIATION & JOURNAL DE CAISSE TRANSIMEX', '', '', '', '', '', ''].join('\t'),
+      ['Date d\'export :', new Date().toLocaleDateString('fr-FR'), '', '', '', '', ''].join('\t'),
+      ['', '', '', '', '', '', ''].join('\t'),
+      ['Date', 'Pièce', 'Libellé', 'Partenaire / Dossier', 'Entrée (FCFA)', 'Sortie (FCFA)', 'Solde Progressif (FCFA)'].join('\t'),
+    ];
+
+    for (const tx of dataset) {
+      const entree = tx.category === 'entree' ? tx.montant : 0;
+      const sortie = tx.category === 'sortie' ? Math.abs(tx.montant) : 0;
+      totalEntrees += entree;
+      totalSorties += sortie;
+
+      rows.push([
+        tx.date || '',
+        tx.pieceComptable || '',
+        tx.libelle || '',
+        tx.employee || tx.partenaire || tx.noDossier || '',
+        entree > 0 ? String(entree) : '',
+        sortie > 0 ? String(sortie) : '',
+        tx.soldeApres !== undefined && tx.soldeApres !== null ? String(tx.soldeApres) : '',
+      ].join('\t'));
+    }
+
+    rows.push(['', '', '', '', '', '', ''].join('\t'));
+    rows.push(['TOTAL', '', '', '', String(totalEntrees), String(totalSorties), String(totalEntrees - totalSorties)].join('\t'));
+
+    const content = '\uFEFF' + rows.join('\r\n');
+    const blob = new Blob([content], { type: 'text/tab-separated-values;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const today = new Date().toISOString().slice(0, 10);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `feuille_de_calcul_caisse_${today}.xls`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  /**
+   * Télécharge les pièces jointes des opérations sélectionnées
+   */
+  public downloadAttachments(): void {
+    const selected = this._transactions().filter((t) => t.selected);
+    const dataset = selected.length > 0 ? selected : this._transactions();
+    
+    // Génère un récapitulatif des pièces comptables en fichier texte structuré
+    const lines = [
+      '========================================================================',
+      'BORDEREAU DE TRANSMISSION DES PIÈCES COMPTABLES DE CAISSE',
+      `Date : ${new Date().toLocaleString('fr-FR')}`,
+      `Nombre de transactions : ${dataset.length}`,
+      '========================================================================\n',
+    ];
+
+    dataset.forEach((tx, idx) => {
+      lines.push(`${idx + 1}. PIÈCE : ${tx.pieceComptable || 'N/A'}`);
+      lines.push(`   Date : ${tx.date} | Statut : ${tx.status}`);
+      lines.push(`   Libellé : ${tx.libelle}`);
+      lines.push(`   Bénéficiaire : ${tx.employee || tx.partenaire || 'N/A'}`);
+      lines.push(`   Montant : ${tx.montant} FCFA`);
+      lines.push('   Justificatifs rattachés : Reçu de caisse signé / Pièce de dépense conforme.');
+      lines.push('------------------------------------------------------------------------');
+    });
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `pieces_jointes_caisse_${new Date().toISOString().slice(0, 10)}.txt`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 
   /**

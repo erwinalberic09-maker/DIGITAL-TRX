@@ -1,25 +1,20 @@
 <div class="cashier-page w-full p-0">
   <div class="w-full">
 
-    <!-- Actions de sélection & Solde Actuel -->
-    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 px-3 py-2 border-b border-slate-200 dark:border-white/5">
-      <div class="flex items-center gap-3">
-        @if (canEdit() && selectedCount() > 0) {
-          <button
-            id="cashier-delete-selected-btn"
-            type="button"
-            (click)="deleteSelectedTransactions()"
-            [disabled]="isDeleting()"
-            class="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 rounded text-xs font-medium transition-all cursor-pointer disabled:opacity-50"
-          >
-            <mat-icon class="text-xs w-4 h-4">delete</mat-icon>
-            <span>Supprimer ({{ selectedCount() }})</span>
-          </button>
+    <!-- Barre d'état Solde Actuel & Erreurs -->
+    <div class="flex items-center justify-between px-3 py-2 border-b border-slate-200 dark:border-white/5">
+      <!-- Message d'alerte / Erreur éventuelle -->
+      <div>
+        @if (error()) {
+          <div class="inline-flex items-center gap-2 px-2.5 py-1 text-xs rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+            <mat-icon class="text-sm !w-4 !h-4 leading-none">error_outline</mat-icon>
+            <span>{{ error() }}</span>
+          </div>
         }
       </div>
 
       <!-- Solde Actuel -->
-      <div class="flex items-center gap-2 self-end sm:self-auto">
+      <div class="flex items-center gap-2">
         <span class="text-slate-600 dark:text-slate-400 font-medium text-xs uppercase tracking-wider">
           Solde Actuel :
         </span>
