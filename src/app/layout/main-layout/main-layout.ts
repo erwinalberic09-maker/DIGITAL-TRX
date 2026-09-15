@@ -7,6 +7,8 @@ import { ROLE_DEFINITIONS, UserRole } from '../../core/models/auth.model';
 import { AuthService } from '../../core/services/auth.service';
 import { CashierService } from '../../core/services/cashier.service';
 import { ThemeService } from '../../core/services/theme.service';
+import { CashierImportModal } from '../../features/cashier/import-modal/cashier-import-modal.component';
+import { ParsedImportRow } from '../../core/services/import.service';
 
 export interface NavOption {
   id: string;
@@ -18,7 +20,7 @@ export interface NavOption {
 
 @Component({
   selector: 'app-main-layout',
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, MatIconModule],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, MatIconModule, CashierImportModal],
   templateUrl: './main-layout.html',
   styleUrl: './main-layout.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -261,6 +263,21 @@ export class MainLayout {
       void this.router.navigate(['/caisse']);
     }
     this.cashierService.startAddTransaction();
+  }
+
+  public onOpenImportModal(): void {
+    if (!this.router.url.includes('/caisse')) {
+      void this.router.navigate(['/caisse']);
+    }
+    this.cashierService.openImportModal();
+  }
+
+  public async onImportConfirmed(rows: ParsedImportRow[]): Promise<void> {
+    this.cashierService.closeImportModal();
+    const result = await this.cashierService.importTransactions(rows);
+    if (result.errors.length > 0) {
+      console.warn('Importation partielle avec alertes:', result.errors);
+    }
   }
 
   public prevPage(): void {

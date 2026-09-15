@@ -93,6 +93,22 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     return role === 'admin' || role === 'caissiere';
   });
 
+  /**
+   * Vérifie si l'utilisateur actuel a le droit d'éditer une transaction spécifique.
+   * - Admin : peut éditer toutes les lignes
+   * - Caissière : ne peut éditer que les lignes qu'elle a elle-même enregistrées ou importées (createdBy === currentUser.id)
+   * - Autres rôles : lecture seule
+   */
+  public canEditTransaction(tx: CashierTransaction): boolean {
+    const user = this.authService.currentUser();
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    if (user.role !== 'caissiere') return false;
+    // Si la ligne n'a pas encore de créateur spécifié (rétrocompatibilité), autoriser
+    if (!tx.createdBy) return true;
+    return tx.createdBy === user.id;
+  }
+
   // Sélection de lignes : autorisé pour admin, caissiere et comptable (pour l'exportation et consultation)
   public readonly canSelect = computed(() => {
     const role = this.authService.currentUser()?.role;
@@ -634,7 +650,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   }
 
   public async startInlineEdit(tx: CashierTransaction): Promise<void> {
-    if (!this.canEdit()) return;
+    if (!this.canEdit() || !this.canEditTransaction(tx)) return;
     if (this.editingTxId() === tx.id) return;
 
     // Règle d'or : une seule ligne ouverte à la fois.

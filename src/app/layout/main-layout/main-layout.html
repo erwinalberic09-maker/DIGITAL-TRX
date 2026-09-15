@@ -296,6 +296,7 @@
             <!-- Bouton Secondaire Uploader -->
             <button
               type="button"
+              (click)="onOpenImportModal()"
               class="btn-secondary flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded transition-all cursor-pointer bg-white dark:bg-white/10 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-transparent hover:bg-slate-50 dark:hover:bg-white/15"
               id="cp-btn-uploader">
               <span>Uploader</span>
@@ -520,6 +521,14 @@
   <main class="flex-1 w-full p-0" id="app-main-content">
     <router-outlet></router-outlet>
   </main>
+
+  <!-- Modale d'importation Excel / CSV de caisse -->
+  @if (cashierService.isImportModalOpen()) {
+    <app-cashier-import-modal
+      (dismissModal)="cashierService.closeImportModal()"
+      (importConfirmed)="onImportConfirmed($event)"
+    ></app-cashier-import-modal>
+  }
 
 </div>
 

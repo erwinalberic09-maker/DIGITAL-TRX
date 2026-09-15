@@ -378,7 +378,7 @@
                 <tr
                   class="odoo-data-row select-none"
                   [class.odoo-row-selected]="tx.selected"
-                  [class.cursor-pointer]="canEdit()"
+                  [class.cursor-pointer]="canEditTransaction(tx)"
                   (dblclick)="startInlineEdit(tx)"
                 >
                   <!-- Checkbox fine Odoo -->

@@ -27,6 +27,8 @@ export interface CashierTransaction {
   montant: number; // Valeur numérique signée (positif ou négatif)
   soldeApres?: number; // Solde cumulé calculé
   selected?: boolean; // Case à cocher de sélection
+  createdBy?: string; // UUID du créateur (auth.uid() / profiles.id)
+  employeeId?: string; // Référence forte vers profiles.id
   createdAt?: string; // Date de création ISO
   updatedAt?: string; // Date de modification ISO
 }

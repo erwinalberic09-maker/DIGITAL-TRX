@@ -7,6 +7,7 @@ import {
 import { SupabaseService } from './supabase.service';
 import { AuthService } from './auth.service';
 import { ExportService } from './export.service';
+import { ParsedImportRow } from './import.service';
 
 export interface CashierDbRow {
   id: string;
@@ -27,13 +28,15 @@ export interface CashierDbRow {
   montant: number;
   solde_apres?: number | null;
   selected?: boolean;
+  created_by?: string | null;
+  employee_id?: string | null;
   created_at?: string;
   updated_at?: string;
 }
 
 // Colonnes sélectionnées selon le principe du moindre privilège alignées sur le schéma Supabase
 const CASHIER_SELECTED_COLUMNS =
-  'id, date, libelle, service, type_description, category, status, no_dossier, first_name, partenaire, employee, quantity, montant, solde_apres, selected, created_at, updated_at';
+  'id, date, libelle, service, type_description, category, status, no_dossier, first_name, partenaire, employee, employee_id, created_by, quantity, montant, solde_apres, selected, created_at, updated_at';
 
 @Injectable({
   providedIn: 'root',
@@ -110,6 +113,17 @@ export class CashierService implements OnDestroy {
 
   // Signal pour piloter l'ouverture de la ligne d'ajout inline depuis le Layout
   public readonly isAddingRow = signal<boolean>(false);
+
+  // Signal pour piloter l'ouverture de la boîte modale d'importation Excel / CSV
+  public readonly isImportModalOpen = signal<boolean>(false);
+
+  public openImportModal(): void {
+    this.isImportModalOpen.set(true);
+  }
+
+  public closeImportModal(): void {
+    this.isImportModalOpen.set(false);
+  }
 
   // Signal calculé pour la prochaine référence de pièce comptable prévisionnelle (ex: CSH1/2026/00004)
   public readonly nextPieceComptable = computed<string>(() => {
@@ -379,6 +393,8 @@ export class CashierService implements OnDestroy {
                 first_name: op.firstName || null,
                 partenaire: op.partenaire || op.employee || null,
                 employee: op.employee || op.partenaire || null,
+                employee_id: this.authService.currentUser()?.id || null,
+                created_by: this.authService.currentUser()?.id || null,
                 quantity: op.quantity || 1,
                 montant: op.montant,
                 date: op.date || new Date().toISOString(),
@@ -397,6 +413,7 @@ export class CashierService implements OnDestroy {
     }
 
     // Étape 3 : Création de l'objet transaction unifié
+    const currentUserId = this.authService.currentUser()?.id;
     const operationToStore: CashierTransaction = savedRow
       ? {
           id: savedRow.id,
@@ -415,6 +432,8 @@ export class CashierService implements OnDestroy {
           montant: Number(savedRow.montant),
           soldeApres: savedRow.solde_apres !== undefined && savedRow.solde_apres !== null ? Number(savedRow.solde_apres) : estimatedNewSolde,
           selected: false,
+          createdBy: savedRow.created_by || currentUserId || undefined,
+          employeeId: savedRow.employee_id || currentUserId || undefined,
           createdAt: savedRow.created_at || new Date().toISOString(),
           updatedAt: savedRow.updated_at,
         }
@@ -435,6 +454,8 @@ export class CashierService implements OnDestroy {
           montant,
           soldeApres: estimatedNewSolde,
           selected: false,
+          createdBy: currentUserId || undefined,
+          employeeId: currentUserId || undefined,
           createdAt: new Date().toISOString(),
         };
 
@@ -452,6 +473,52 @@ export class CashierService implements OnDestroy {
     newTx: Omit<CashierTransaction, 'id' | 'soldeApres' | 'selected'>
   ): Promise<{ success: boolean; operation?: CashierTransaction }> {
     return this.saveOperationViaApi(newTx);
+  }
+
+  /**
+   * Importation par lot d'écritures de caisse (issues d'Excel ou CSV)
+   */
+  public async importTransactions(
+    rows: ParsedImportRow[]
+  ): Promise<{ success: boolean; insertedCount: number; errors: string[] }> {
+    if (!rows || rows.length === 0) {
+      return { success: true, insertedCount: 0, errors: [] };
+    }
+
+    let insertedCount = 0;
+    const errors: string[] = [];
+
+    for (const row of rows) {
+      try {
+        const res = await this.addTransaction({
+          date: row.date,
+          libelle: row.libelle,
+          service: row.service,
+          category: row.category,
+          status: row.status || 'draft',
+          noDossier: row.noDossier,
+          partenaire: row.partenaire || row.employee,
+          employee: row.employee || row.partenaire,
+          quantity: row.quantity,
+          montant: row.montant,
+        });
+
+        if (res.success) {
+          insertedCount++;
+        } else {
+          errors.push(`Écriture "${row.libelle}" : échec de sauvegarde.`);
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Erreur inconnue';
+        errors.push(`Écriture "${row.libelle}" : ${msg}`);
+      }
+    }
+
+    return {
+      success: insertedCount > 0,
+      insertedCount,
+      errors,
+    };
   }
 
   /**
@@ -1093,6 +1160,8 @@ export class CashierService implements OnDestroy {
       montant: numMontant,
       soldeApres: row.solde_apres !== undefined && row.solde_apres !== null ? Number(row.solde_apres) : 0,
       selected: !!row.selected,
+      createdBy: row.created_by || undefined,
+      employeeId: row.employee_id || undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
