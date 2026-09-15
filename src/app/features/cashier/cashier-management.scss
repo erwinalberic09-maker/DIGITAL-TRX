@@ -8,6 +8,18 @@
   padding: 0;
   width: 100%;
 
+  // Désactivation globale des flèches montante/descendante (spinners)
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none !important;
+    margin: 0 !important;
+  }
+
+  input[type="number"] {
+    -moz-appearance: textfield !important;
+    appearance: textfield !important;
+  }
+
   // Tableau Odoo Tree View 100% plat sans box/card
   .odoo-table {
     border-collapse: collapse;
@@ -100,6 +112,18 @@
 
     &::placeholder {
       color: var(--app-text-subtle, #94a3b8) !important;
+    }
+
+    // Masquage complet des flèches montante/descendante sur les inputs numériques
+    &[type="number"]::-webkit-outer-spin-button,
+    &[type="number"]::-webkit-inner-spin-button {
+      -webkit-appearance: none !important;
+      margin: 0 !important;
+    }
+
+    &[type="number"] {
+      -moz-appearance: textfield !important;
+      appearance: textfield !important;
     }
   }
 
