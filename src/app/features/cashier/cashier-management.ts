@@ -93,6 +93,12 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     return role === 'admin' || role === 'caissiere';
   });
 
+  // Sélection de lignes : autorisé pour admin, caissiere et comptable (pour l'exportation et consultation)
+  public readonly canSelect = computed(() => {
+    const role = this.authService.currentUser()?.role;
+    return role === 'admin' || role === 'caissiere' || role === 'comptable';
+  });
+
   // Visibilité du solde de caisse en temps réel : masqué pour le rôle comptable
   public readonly canViewBalance = computed(() => {
     const role = this.authService.currentUser()?.role;

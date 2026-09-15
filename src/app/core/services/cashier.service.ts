@@ -740,52 +740,77 @@ export class CashierService implements OnDestroy {
    * Exporte soit les lignes sélectionnées, soit l'ensemble des opérations visibles.
    */
   public exportTransactions(onlySelected = false): void {
-    const all = this._transactions();
-    const rowsToExport = onlySelected ? all.filter((t) => t.selected) : all;
-    const dataset = rowsToExport.length > 0 ? rowsToExport : all;
+    const isComptable = this.authService.currentUser()?.role === 'comptable';
+    const allFiltered = this.filteredTransactions();
+    const selectedRows = this._transactions().filter((t) => t.selected);
+    const dataset = onlySelected && selectedRows.length > 0 ? selectedRows : allFiltered;
 
     if (dataset.length === 0) return;
 
-    // En-têtes CSV
-    const headers = [
-      'Date',
-      'Pièce comptable',
-      'Libellé',
-      'Partenaire / Employé',
-      'N° Dossier',
-      'Service',
-      'Quantité',
-      'Montant (FCFA)',
-      'Solde courant (FCFA)',
-      'Statut',
-    ];
+    // En-têtes CSV (sans Solde si rôle comptable pour respect strict de confidentialité)
+    const headers = isComptable
+      ? [
+          'Date',
+          'Pièce comptable',
+          'Libellé',
+          'Partenaire / Employé',
+          'N° Dossier',
+          'Service',
+          'Quantité',
+          'Montant (FCFA)',
+          'Statut',
+        ]
+      : [
+          'Date',
+          'Pièce comptable',
+          'Libellé',
+          'Partenaire / Employé',
+          'N° Dossier',
+          'Service',
+          'Quantité',
+          'Montant (FCFA)',
+          'Solde courant (FCFA)',
+          'Statut',
+        ];
 
     const csvRows = [headers.join(';')];
 
     for (const tx of dataset) {
-      const row = [
-        `"${tx.date || ''}"`,
-        `"${tx.pieceComptable || ''}"`,
-        `"${(tx.libelle || '').replace(/"/g, '""')}"`,
-        `"${(tx.employee || tx.partenaire || '').replace(/"/g, '""')}"`,
-        `"${(tx.noDossier || '').replace(/"/g, '""')}"`,
-        `"${(tx.service || '').replace(/"/g, '""')}"`,
-        tx.quantity !== undefined && tx.quantity !== null ? tx.quantity : '',
-        tx.montant,
-        tx.soldeApres !== undefined && tx.soldeApres !== null ? tx.soldeApres : '',
-        tx.status === 'posted' ? 'Comptabilisé' : (tx.status === 'cancelled' ? 'Annulé' : 'Brouillon'),
-      ];
+      const row = isComptable
+        ? [
+            `"${tx.date || ''}"`,
+            `"${tx.pieceComptable || ''}"`,
+            `"${(tx.libelle || '').replace(/"/g, '""')}"`,
+            `"${(tx.employee || tx.partenaire || '').replace(/"/g, '""')}"`,
+            `"${(tx.noDossier || '').replace(/"/g, '""')}"`,
+            `"${(tx.service || '').replace(/"/g, '""')}"`,
+            tx.quantity !== undefined && tx.quantity !== null ? tx.quantity : '',
+            tx.montant,
+            tx.status === 'posted' ? 'Comptabilisé' : (tx.status === 'cancelled' ? 'Annulé' : 'Brouillon'),
+          ]
+        : [
+            `"${tx.date || ''}"`,
+            `"${tx.pieceComptable || ''}"`,
+            `"${(tx.libelle || '').replace(/"/g, '""')}"`,
+            `"${(tx.employee || tx.partenaire || '').replace(/"/g, '""')}"`,
+            `"${(tx.noDossier || '').replace(/"/g, '""')}"`,
+            `"${(tx.service || '').replace(/"/g, '""')}"`,
+            tx.quantity !== undefined && tx.quantity !== null ? tx.quantity : '',
+            tx.montant,
+            tx.soldeApres !== undefined && tx.soldeApres !== null ? tx.soldeApres : '',
+            tx.status === 'posted' ? 'Comptabilisé' : (tx.status === 'cancelled' ? 'Annulé' : 'Brouillon'),
+          ];
       csvRows.push(row.join(';'));
     }
 
-    // Création du Blob avec BOM UTF-8 pour Excel
+    // Création du Blob avec BOM UTF-8 pour ouverture immédiate et propre dans Microsoft Excel
     const csvContent = '\uFEFF' + csvRows.join('\r\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     const today = new Date().toISOString().slice(0, 10);
     link.setAttribute('href', url);
-    link.setAttribute('download', `journal_de_caisse_${today}.csv`);
+    link.setAttribute('download', `ecritures_caisse_${today}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
