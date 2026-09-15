@@ -93,6 +93,12 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     return role === 'admin' || role === 'caissiere';
   });
 
+  // Visibilité du solde de caisse en temps réel : masqué pour le rôle comptable
+  public readonly canViewBalance = computed(() => {
+    const role = this.authService.currentUser()?.role;
+    return role !== 'comptable';
+  });
+
   // Données réactives issues du service
   public readonly pagedTransactions = this.cashierService.pagedTransactions;
   public readonly allTransactions = this.cashierService.allTransactions;
