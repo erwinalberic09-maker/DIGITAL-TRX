@@ -85,14 +85,14 @@ export class MainLayout {
       label: 'Tableau de bord',
       route: '/dashboard',
       icon: 'dashboard',
-      allowedRoles: ['admin', 'manager', 'caissiere', 'employe', 'tresorier'],
+      allowedRoles: ['admin', 'manager', 'caissiere', 'employe', 'tresorier', 'comptable'],
     },
     {
       id: 'caisse',
       label: 'Caisse',
       route: '/caisse',
       icon: 'point_of_sale',
-      allowedRoles: ['admin', 'caissiere'],
+      allowedRoles: ['admin', 'caissiere', 'comptable'],
     },
     {
       id: 'personnel',

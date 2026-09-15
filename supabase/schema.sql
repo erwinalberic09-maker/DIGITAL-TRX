@@ -17,7 +17,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto"; -- pour gen_random_uuid()
 -- 2. ENUMÉRATIONS & TYPES
 DO $$ BEGIN
     CREATE TYPE public.user_role_enum AS ENUM (
-        'admin', 'rh', 'manager_stock', 'caissier', 'agent', 'manager', 'caissiere', 'employe'
+        'admin', 'rh', 'manager_stock', 'caissier', 'agent', 'manager', 'caissiere', 'employe', 'tresorier', 'comptable'
     );
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
@@ -340,7 +340,7 @@ CREATE POLICY "cashier_transactions_insert_by_role"
         EXISTS (
             SELECT 1 FROM public.profiles
             WHERE profiles.id = auth.uid()
-              AND profiles.role IN ('admin', 'caissier', 'caissiere', 'manager')
+              AND profiles.role IN ('admin', 'caissier', 'caissiere', 'manager', 'comptable', 'tresorier')
         )
     );
 

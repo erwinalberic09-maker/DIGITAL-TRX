@@ -443,9 +443,9 @@ const createCollaboratorHandler = async (req: express.Request, res: express.Resp
     return;
   }
 
-  const validRoles: UserRole[] = ['admin', 'manager', 'tresorier', 'caissiere', 'employe'];
+  const validRoles: UserRole[] = ['admin', 'manager', 'tresorier', 'caissiere', 'comptable', 'employe'];
   if (!role || !validRoles.includes(role)) {
-    res.status(400).json({ error: 'Le rôle Transmex est obligatoire et doit être défini explicitement (admin, manager, tresorier, caissiere, employe)' });
+    res.status(400).json({ error: 'Le rôle Transmex est obligatoire et doit être défini explicitement (admin, manager, tresorier, caissiere, comptable, employe)' });
     return;
   }
 
@@ -1335,19 +1335,19 @@ app.get('/api/cashier/transactions', requireAuth, getOperationsHandler);
 app.get('/api/system/operations', requireAuth, getOperationsHandler);
 
 // Actions en masse (Duplication & Changement de statut)
-app.post('/api/cahier/operations/duplicate', requireAuth, requireRole(['admin', 'caissiere', 'manager']), duplicateOperationsHandler);
-app.post('/api/cashier/transactions/duplicate', requireAuth, requireRole(['admin', 'caissiere', 'manager']), duplicateOperationsHandler);
-app.patch('/api/cahier/operations/status', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationsStatusHandler);
-app.patch('/api/cashier/transactions/status', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationsStatusHandler);
+app.post('/api/cahier/operations/duplicate', requireAuth, requireRole(['admin', 'caissiere', 'manager', 'comptable']), duplicateOperationsHandler);
+app.post('/api/cashier/transactions/duplicate', requireAuth, requireRole(['admin', 'caissiere', 'manager', 'comptable']), duplicateOperationsHandler);
+app.patch('/api/cahier/operations/status', requireAuth, requireRole(['admin', 'caissiere', 'manager', 'comptable']), updateOperationsStatusHandler);
+app.patch('/api/cashier/transactions/status', requireAuth, requireRole(['admin', 'caissiere', 'manager', 'comptable']), updateOperationsStatusHandler);
 
-// Écriture : réservée aux Administrateurs et Caissières
-app.post('/api/cahier/operations', requireAuth, requireRole(['admin', 'caissiere', 'manager']), saveOperationHandler);
-app.post('/api/cashier/transactions', requireAuth, requireRole(['admin', 'caissiere', 'manager']), saveOperationHandler);
+// Écriture : réservée aux Administrateurs, Caissières, Managers et Comptables
+app.post('/api/cahier/operations', requireAuth, requireRole(['admin', 'caissiere', 'manager', 'comptable']), saveOperationHandler);
+app.post('/api/cashier/transactions', requireAuth, requireRole(['admin', 'caissiere', 'manager', 'comptable']), saveOperationHandler);
 
-app.put('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationHandler);
-app.put('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationHandler);
-app.patch('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationHandler);
-app.patch('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager']), updateOperationHandler);
+app.put('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager', 'comptable']), updateOperationHandler);
+app.put('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager', 'comptable']), updateOperationHandler);
+app.patch('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager', 'comptable']), updateOperationHandler);
+app.patch('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager', 'comptable']), updateOperationHandler);
 
 // Suppression : autorisée pour tout utilisateur authentifié (vérification stricte de propriété dans deleteOperationsHandler)
 app.delete('/api/cahier/operations/:id', requireAuth, deleteOperationsHandler);

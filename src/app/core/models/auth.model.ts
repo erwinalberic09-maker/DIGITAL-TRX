@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'manager' | 'caissiere' | 'employe' | 'tresorier';
+export type UserRole = 'admin' | 'manager' | 'caissiere' | 'employe' | 'tresorier' | 'comptable';
 
 export interface RoleDefinition {
   id: UserRole;
@@ -85,16 +85,22 @@ export const ROLE_DEFINITIONS: Record<UserRole, RoleDefinition> = {
     description: 'Opérations de caisse, encaissements et distribution analytique',
     badgeClass: 'bg-sky-50 text-sky-700 border-sky-200',
   },
-  employe: {
-    id: 'employe',
-    label: 'Employé',
-    description: 'Consultation et suivi des activités opérationnelles',
-    badgeClass: 'bg-slate-100 text-slate-700 border-slate-200',
+  comptable: {
+    id: 'comptable',
+    label: 'Comptable',
+    description: 'Tenue comptable, validation des écritures, export et audits financiers',
+    badgeClass: 'bg-purple-50 text-purple-700 border-purple-200',
   },
   tresorier: {
     id: 'tresorier',
     label: 'Trésorier',
     description: 'Gestion de la trésorerie, validation financière et supervision analytique',
     badgeClass: 'bg-amber-50 text-amber-700 border-amber-200',
+  },
+  employe: {
+    id: 'employe',
+    label: 'Employé',
+    description: 'Consultation et suivi des activités opérationnelles',
+    badgeClass: 'bg-slate-100 text-slate-700 border-slate-200',
   },
 };

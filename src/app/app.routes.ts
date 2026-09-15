@@ -96,7 +96,7 @@ export const routes: Routes = [
             (m) => m.CashierManagement
           ),
         canActivate: [roleGuard],
-        data: { roles: ['admin', 'manager', 'caissiere'] },
+        data: { roles: ['admin', 'manager', 'caissiere', 'comptable'] },
         title: 'Transmex - Caisse',
       },
       {
