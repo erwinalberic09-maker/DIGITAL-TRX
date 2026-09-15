@@ -34,7 +34,9 @@ import {
 import { CashierService } from '../../core/services/cashier.service';
 import { AuthService } from '../../core/services/auth.service';
 import {
+  CASHIER_SERVICES,
   CashierTransaction,
+  Service,
   TransactionStatus,
   TransactionTypeCategory,
 } from '../../core/models/cashier-transaction.model';
@@ -194,6 +196,8 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     return (pageIndex + 1) * pageSize < this.totalCount();
   });
 
+  public readonly cashierServices = CASHIER_SERVICES;
+
   // Formulaire de transaction réactif
   public readonly transactionForm = new FormGroup({
     date: new FormControl<string>(new Date().toISOString().split('T')[0], {
@@ -204,7 +208,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       nonNullable: true,
       validators: [Validators.required, Validators.minLength(2)],
     }),
-    service: new FormControl<'Opérations' | 'Administration' | ''>('Administration', {
+    service: new FormControl<Service | ''>('', {
       nonNullable: true,
       validators: [Validators.required],
     }),
@@ -245,7 +249,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       nonNullable: true,
       validators: [Validators.required, Validators.minLength(2)],
     }),
-    service: new FormControl<'Opérations' | 'Administration' | ''>('', {
+    service: new FormControl<Service | ''>('', {
       nonNullable: true,
       validators: [Validators.required],
     }),
@@ -273,7 +277,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         this.transactionForm.reset({
           date: this.todayIsoDate() || new Date().toISOString().split('T')[0],
           libelle: '',
-          service: 'Administration',
+          service: '',
           typeDescription: '',
           category: 'sortie',
           status: 'draft',
@@ -283,7 +287,6 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
           montant: null,
         });
         this.isOperationsType.set(false);
-        this.updateConditionalValidators(false);
       }
     });
 
@@ -299,17 +302,13 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       this.cashierService.setSearchQuery(val);
     });
 
-    // Écoute dynamique du type de service pour activer la distribution analytique
+    // Écoute dynamique du type de service
     this.transactionForm.get('service')?.valueChanges.subscribe((type) => {
-      const isOps = type === 'Opérations';
-      this.isOperationsType.set(isOps);
-      this.updateConditionalValidators(isOps);
+      this.isOperationsType.set(Boolean(type));
     });
 
     this.editTransactionForm.get('service')?.valueChanges.subscribe((type) => {
-      const isOps = type === 'Opérations';
-      this.isEditOperationsType.set(isOps);
-      this.updateEditConditionalValidators(isOps);
+      this.isEditOperationsType.set(Boolean(type));
     });
 
     // Conversion automatique si saisie directe d'un montant négatif (ex: -5000 -> catégorie sortie + 5000)
@@ -336,36 +335,6 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         );
       }
     });
-  }
-
-  private updateConditionalValidators(isOps: boolean): void {
-    const noDossierCtrl = this.transactionForm.get('noDossier');
-    const quantityCtrl = this.transactionForm.get('quantity');
-
-    if (isOps) {
-      noDossierCtrl?.setValidators([Validators.required, Validators.minLength(2)]);
-      quantityCtrl?.setValidators([Validators.required, Validators.min(1)]);
-    } else {
-      noDossierCtrl?.clearValidators();
-      quantityCtrl?.clearValidators();
-    }
-    noDossierCtrl?.updateValueAndValidity();
-    quantityCtrl?.updateValueAndValidity();
-  }
-
-  private updateEditConditionalValidators(isOps: boolean): void {
-    const noDossierCtrl = this.editTransactionForm.get('noDossier');
-    const quantityCtrl = this.editTransactionForm.get('quantity');
-
-    if (isOps) {
-      noDossierCtrl?.setValidators([Validators.required, Validators.minLength(2)]);
-      quantityCtrl?.setValidators([Validators.required, Validators.min(1)]);
-    } else {
-      noDossierCtrl?.clearValidators();
-      quantityCtrl?.clearValidators();
-    }
-    noDossierCtrl?.updateValueAndValidity();
-    quantityCtrl?.updateValueAndValidity();
   }
 
   public readonly todayFormatted = signal<string>('');
@@ -573,7 +542,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     this.transactionForm.reset({
       date: this.todayIsoDate() || new Date().toISOString().split('T')[0],
       libelle: '',
-      service: 'Administration',
+      service: '',
       typeDescription: '',
       category: 'sortie',
       status: 'draft',
@@ -583,7 +552,6 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       montant: null,
     });
     this.isOperationsType.set(false);
-    this.updateConditionalValidators(false);
     this.cashierService.startAddTransaction();
   }
 
@@ -592,7 +560,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     this.transactionForm.reset({
       date: this.todayIsoDate() || new Date().toISOString().split('T')[0],
       libelle: '',
-      service: 'Administration',
+      service: '',
       typeDescription: '',
       category: 'sortie',
       status: 'draft',
@@ -635,7 +603,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       const result = await this.cashierService.addTransaction({
         date: formattedDate,
         libelle: formValues.libelle,
-        service: (formValues.service as 'Opérations' | 'Administration') || 'Administration',
+        service: (formValues.service as Service) || undefined,
         typeDescription: formValues.typeDescription || undefined,
         category: resolvedCategory,
         status: (formValues.status as TransactionStatus) || 'draft',
@@ -698,13 +666,12 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       }
     }
 
-    const isOps = tx.service === 'Opérations';
-    this.isEditOperationsType.set(isOps);
+    this.isEditOperationsType.set(Boolean(tx.service));
 
     this.editTransactionForm.patchValue({
       date: isoDate,
       libelle: tx.libelle || '',
-      service: (tx.service as 'Opérations' | 'Administration') || '',
+      service: (tx.service as Service) || '',
       typeDescription: tx.typeDescription || '',
       category: tx.category || 'sortie',
       status: tx.status || 'draft',
@@ -714,7 +681,6 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       montant: tx.montant !== undefined && tx.montant !== null ? Math.abs(tx.montant) : null,
     });
 
-    this.updateEditConditionalValidators(isOps);
     this.editingTxId.set(tx.id);
   }
 
@@ -907,7 +873,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       await this.cashierService.updateTransaction(activeId, {
         date: formattedDate,
         libelle: libelle,
-        service: (formValues.service as 'Opérations' | 'Administration') || '',
+        service: (formValues.service as Service) || '',
         typeDescription: formValues.typeDescription || undefined,
         category: resolvedCategory,
         status: (formValues.status as TransactionStatus) || 'draft',

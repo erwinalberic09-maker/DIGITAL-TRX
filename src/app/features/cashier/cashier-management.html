@@ -58,7 +58,7 @@
             <th scope="col" class="py-2 px-3 font-semibold whitespace-nowrap w-44">Partenaire</th>
             <th scope="col" class="py-2 px-3 font-semibold whitespace-nowrap w-28">
               <span class="inline-flex items-center gap-1">
-                N°Dossier <span class="text-[10px] opacity-80">▲</span>
+                N°Dossier
               </span>
             </th>
             <th scope="col" class="py-2 px-3 font-semibold whitespace-nowrap w-36">Service</th>
@@ -147,8 +147,10 @@
                     formControlName="service"
                     class="odoo-field-input w-full pr-4 bg-transparent cursor-pointer appearance-none text-xs text-slate-700 dark:text-slate-200"
                   >
-                    <option value="Administration" class="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">Administration</option>
-                    <option value="Opérations" class="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">Opérations</option>
+                    <option value="" disabled class="bg-white dark:bg-slate-900 text-slate-400">Sélectionner un service</option>
+                    @for (srv of cashierServices; track srv) {
+                      <option [value]="srv" class="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">{{ srv }}</option>
+                    }
                   </select>
                   <span class="absolute right-0 text-slate-400 text-xs pointer-events-none">▾</span>
                 </div>
@@ -300,8 +302,10 @@
                         formControlName="service"
                         class="odoo-field-input w-full pr-4 bg-transparent cursor-pointer appearance-none text-xs text-slate-700 dark:text-slate-200"
                       >
-                        <option value="Administration" class="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">Administration</option>
-                        <option value="Opérations" class="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">Opérations</option>
+                        <option value="" disabled class="bg-white dark:bg-slate-900 text-slate-400">Sélectionner un service</option>
+                        @for (srv of cashierServices; track srv) {
+                          <option [value]="srv" class="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">{{ srv }}</option>
+                        }
                       </select>
                       <span class="absolute right-0 text-slate-400 text-xs pointer-events-none">▾</span>
                     </div>
