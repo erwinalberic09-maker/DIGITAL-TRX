@@ -6,6 +6,7 @@ import {
   TransactionStatus,
   TransactionTypeCategory,
 } from '../models/cashier-transaction.model';
+import { generateTransactionFingerprint } from '../utils/cashier-duplicate.util';
 
 export interface ImportError {
   row: number;
@@ -24,6 +25,8 @@ export interface ParsedImportRow {
   montant: number;
   category: TransactionTypeCategory;
   status: TransactionStatus;
+  isDuplicate?: boolean;
+  duplicateReason?: string;
 }
 
 export interface ParsedImportResult {
@@ -59,6 +62,7 @@ export class ImportService {
 
     const validRows: ParsedImportRow[] = [];
     const errors: ImportError[] = [];
+    const seenFingerprints = new Map<string, number>();
 
     rawRows.forEach((row, index) => {
       const rowIndex = index + 2; // +2 en comptant la ligne d'en-tête (1-indexed)
@@ -67,7 +71,24 @@ export class ImportService {
       if (parsed.error) {
         errors.push(parsed.error);
       } else if (parsed.data) {
-        validRows.push(parsed.data);
+        const fp = generateTransactionFingerprint({
+          date: parsed.data.date,
+          montant: parsed.data.montant,
+          libelle: parsed.data.libelle,
+          noDossier: parsed.data.noDossier,
+          service: parsed.data.service,
+        });
+
+        if (seenFingerprints.has(fp)) {
+          const firstRow = seenFingerprints.get(fp);
+          errors.push({
+            row: rowIndex,
+            message: `Ligne en double dans le fichier : identique à la ligne ${firstRow} (Date: ${parsed.data.date}, Montant: ${parsed.data.montant} FCFA, Service: ${parsed.data.service || 'N/A'}, Libellé: "${parsed.data.libelle}").`,
+          });
+        } else {
+          seenFingerprints.set(fp, rowIndex);
+          validRows.push(parsed.data);
+        }
       }
     });
 

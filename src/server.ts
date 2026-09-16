@@ -783,6 +783,83 @@ const getOperationsHandler = async (req: express.Request, res: express.Response)
   }
 };
 
+interface DuplicateCandidateRow {
+  id: string;
+  date: string;
+  libelle: string;
+  montant: number;
+  service?: string | null;
+  no_dossier?: string | null;
+}
+
+/**
+ * Vérifie si une transaction de caisse identique existe déjà en base de données.
+ * Critères d'unicité stricts : Date (jour) + Montant + Libellé + N° de dossier/matricule + Service.
+ * Bloque universellement la double saisie (que l'auteur soit le même caissier ou un autre).
+ */
+const checkDuplicateCashierTransaction = async (
+  adminClient: SupabaseClient,
+  candidate: {
+    idToExclude?: string;
+    date: string;
+    montant: number;
+    libelle: string;
+    noDossier?: string | null;
+    service?: string | null;
+  }
+): Promise<{ isDuplicate: boolean; existing?: DuplicateCandidateRow }> => {
+  const normDateStr = candidate.date.includes('T') ? candidate.date.split('T')[0] : candidate.date.split(' ')[0];
+  let dayPrefix = normDateStr;
+  if (normDateStr.includes('/')) {
+    const parts = normDateStr.split('/');
+    if (parts.length === 3) {
+      dayPrefix = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+  }
+
+  const normLibelle = candidate.libelle.toLowerCase().trim().replace(/\s+/g, ' ');
+  const normNoDossier = (candidate.noDossier || '').toLowerCase().trim().replace(/\s+/g, ' ');
+  const normService = (candidate.service || '').toLowerCase().trim().replace(/\s+/g, ' ');
+
+  const { data: candidates, error } = await adminClient
+    .from('cashier_transactions')
+    .select('id, date, libelle, montant, service, no_dossier')
+    .eq('montant', candidate.montant);
+
+  if (error || !candidates || candidates.length === 0) {
+    return { isDuplicate: false };
+  }
+
+  const rows = candidates as unknown as DuplicateCandidateRow[];
+  const duplicate = rows.find((c: DuplicateCandidateRow) => {
+    if (candidate.idToExclude && c.id === candidate.idToExclude) {
+      return false;
+    }
+
+    let cDay = String(c.date || '').split('T')[0].split(' ')[0];
+    if (cDay.includes('/')) {
+      const parts = cDay.split('/');
+      if (parts.length === 3) {
+        cDay = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      }
+    }
+    if (cDay !== dayPrefix) return false;
+
+    const cLib = String(c.libelle || '').toLowerCase().trim().replace(/\s+/g, ' ');
+    if (cLib !== normLibelle) return false;
+
+    const cDos = String(c.no_dossier || '').toLowerCase().trim().replace(/\s+/g, ' ');
+    if (cDos !== normNoDossier) return false;
+
+    const cSrv = String(c.service || '').toLowerCase().trim().replace(/\s+/g, ' ');
+    if (cSrv !== normService) return false;
+
+    return true;
+  });
+
+  return { isDuplicate: !!duplicate, existing: duplicate };
+};
+
 /**
  * Sauvegarde d'une opération de caisse (POST /api/cahier/operations & /api/cashier/transactions)
  * Nettoie et valide les champs, vérifie l'autorisation de l'utilisateur, résout dossier_id et persiste dans PostgreSQL.
@@ -817,6 +894,25 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
 
     if (isNaN(montant)) {
       res.status(400).json({ error: 'Le montant de l’opération doit être un nombre valide.' });
+      return;
+    }
+
+    const dateToStore = payload.date ? (typeof payload.date === 'string' ? payload.date : new Date(payload.date).toISOString()) : new Date().toISOString();
+
+    // Contrôle d'unicité strict côté serveur : Date + Montant + Libellé + N° de dossier/matricule + Service
+    const duplicateCheck = await checkDuplicateCashierTransaction(adminClient, {
+      date: dateToStore,
+      montant,
+      libelle,
+      noDossier,
+      service,
+    });
+
+    if (duplicateCheck.isDuplicate && duplicateCheck.existing) {
+      const dup = duplicateCheck.existing;
+      res.status(409).json({
+        error: `Opération déjà enregistrée : une opération identique existe déjà en caisse (Date: ${dup.date}, Montant: ${dup.montant} FCFA, Service: ${dup.service || 'N/A'}, Libellé: "${dup.libelle}"). La double saisie est interdite.`,
+      });
       return;
     }
 
@@ -1029,6 +1125,41 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
     if (Object.keys(updateData).length === 0) {
       res.status(400).json({ error: 'Aucun champ à modifier fourni' });
       return;
+    }
+
+    // Contrôle anti-doublon si un des champs de l'empreinte change
+    if (
+      updateData['montant'] !== undefined ||
+      updateData['libelle'] !== undefined ||
+      updateData['date'] !== undefined ||
+      updateData['service'] !== undefined ||
+      updateData['no_dossier'] !== undefined
+    ) {
+      const { data: currentRecord } = await adminClient
+        .from('cashier_transactions')
+        .select('id, date, libelle, montant, service, no_dossier')
+        .eq('id', targetId)
+        .maybeSingle();
+
+      if (currentRecord) {
+        const checkCandidate = {
+          idToExclude: targetId,
+          date: (updateData['date'] as string) || currentRecord.date || new Date().toISOString(),
+          montant: updateData['montant'] !== undefined ? (updateData['montant'] as number) : Number(currentRecord.montant),
+          libelle: (updateData['libelle'] as string) || currentRecord.libelle || '',
+          noDossier: updateData['no_dossier'] !== undefined ? (updateData['no_dossier'] as string) : currentRecord.no_dossier,
+          service: updateData['service'] !== undefined ? (updateData['service'] as string) : currentRecord.service,
+        };
+
+        const updateDup = await checkDuplicateCashierTransaction(adminClient, checkCandidate);
+        if (updateDup.isDuplicate && updateDup.existing) {
+          const dup = updateDup.existing;
+          res.status(409).json({
+            error: `Modification refusée : une opération identique existe déjà en caisse (Date: ${dup.date}, Montant: ${dup.montant} FCFA, Service: ${dup.service || 'N/A'}, Libellé: "${dup.libelle}").`,
+          });
+          return;
+        }
+      }
     }
 
     updateData['updated_at'] = new Date().toISOString();

@@ -4,6 +4,7 @@ import {
   CashierFilterState,
   CashierTransaction,
 } from '../models/cashier-transaction.model';
+import { findDuplicateTransaction, generateTransactionFingerprint } from '../utils/cashier-duplicate.util';
 import { SupabaseService } from './supabase.service';
 import { AuthService } from './auth.service';
 import { ExportService } from './export.service';
@@ -330,6 +331,25 @@ export class CashierService implements OnDestroy {
     op: Partial<CashierTransaction> | Omit<CashierTransaction, 'id' | 'soldeApres' | 'selected'>
   ): Promise<{ success: boolean; operation?: CashierTransaction; error?: string }> {
     this._error.set(null);
+
+    // Contrôle d'unicité strict : Date + Montant + Libellé + N° de dossier/matricule + Service
+    const existingDuplicate = findDuplicateTransaction(
+      {
+        date: op.date,
+        montant: op.montant,
+        libelle: op.libelle,
+        noDossier: op.noDossier,
+        service: op.service,
+      },
+      this._transactions()
+    );
+
+    if (existingDuplicate) {
+      const errorMsg = `Opération déjà enregistrée : une opération identique existe déjà en caisse (Date: ${existingDuplicate.date}, Montant: ${existingDuplicate.montant} FCFA, Service: ${existingDuplicate.service || 'N/A'}, Libellé: "${existingDuplicate.libelle}"). La double saisie est interdite.`;
+      this._error.set(errorMsg);
+      return { success: false, error: errorMsg };
+    }
+
     const token = this.authService.token();
     const currentSolde = this.currentBalance();
     const montant = Number(op.montant) || 0;
@@ -471,7 +491,7 @@ export class CashierService implements OnDestroy {
    */
   public async addTransaction(
     newTx: Omit<CashierTransaction, 'id' | 'soldeApres' | 'selected'>
-  ): Promise<{ success: boolean; operation?: CashierTransaction }> {
+  ): Promise<{ success: boolean; operation?: CashierTransaction; error?: string }> {
     return this.saveOperationViaApi(newTx);
   }
 
@@ -480,15 +500,38 @@ export class CashierService implements OnDestroy {
    */
   public async importTransactions(
     rows: ParsedImportRow[]
-  ): Promise<{ success: boolean; insertedCount: number; errors: string[] }> {
+  ): Promise<{ success: boolean; insertedCount: number; duplicateCount: number; errors: string[] }> {
     if (!rows || rows.length === 0) {
-      return { success: true, insertedCount: 0, errors: [] };
+      return { success: true, insertedCount: 0, duplicateCount: 0, errors: [] };
     }
 
     let insertedCount = 0;
+    let duplicateCount = 0;
     const errors: string[] = [];
+    const seenFingerprintsInBatch = new Set<string>();
 
     for (const row of rows) {
+      const candidate = {
+        date: row.date,
+        montant: row.montant,
+        libelle: row.libelle,
+        noDossier: row.noDossier,
+        service: row.service,
+      };
+
+      const fingerprint = generateTransactionFingerprint(candidate);
+      const isDuplicateInBatch = seenFingerprintsInBatch.has(fingerprint);
+      const isDuplicateInDb = !!findDuplicateTransaction(candidate, this._transactions());
+
+      if (isDuplicateInBatch || isDuplicateInDb) {
+        duplicateCount++;
+        const origin = isDuplicateInDb ? 'déjà enregistrée en caisse' : 'en double dans le fichier';
+        errors.push(`Doublon détecté et bloqué : "${row.libelle}" (${row.date}, ${row.montant} FCFA, ${row.service || 'Sans service'}) - ${origin}.`);
+        continue;
+      }
+
+      seenFingerprintsInBatch.add(fingerprint);
+
       try {
         const res = await this.addTransaction({
           date: row.date,
@@ -506,7 +549,7 @@ export class CashierService implements OnDestroy {
         if (res.success) {
           insertedCount++;
         } else {
-          errors.push(`Écriture "${row.libelle}" : échec de sauvegarde.`);
+          errors.push(`Écriture "${row.libelle}" : ${res.error || 'échec de sauvegarde.'}`);
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Erreur inconnue';
@@ -515,8 +558,9 @@ export class CashierService implements OnDestroy {
     }
 
     return {
-      success: insertedCount > 0,
+      success: insertedCount > 0 || duplicateCount > 0,
       insertedCount,
+      duplicateCount,
       errors,
     };
   }
@@ -538,6 +582,26 @@ export class CashierService implements OnDestroy {
     updatedFields: Partial<Omit<CashierTransaction, 'id' | 'soldeApres' | 'selected'>>
   ): Promise<{ success: boolean; message?: string }> {
     this._error.set(null);
+
+    // Contrôle d'unicité strict lors de la modification
+    const currentTx = this._transactions().find((t) => t.id === id);
+    if (currentTx) {
+      const candidate = {
+        id,
+        date: updatedFields.date !== undefined ? updatedFields.date : currentTx.date,
+        montant: updatedFields.montant !== undefined ? updatedFields.montant : currentTx.montant,
+        libelle: updatedFields.libelle !== undefined ? updatedFields.libelle : currentTx.libelle,
+        noDossier: updatedFields.noDossier !== undefined ? updatedFields.noDossier : currentTx.noDossier,
+        service: updatedFields.service !== undefined ? updatedFields.service : currentTx.service,
+      };
+      const duplicate = findDuplicateTransaction(candidate, this._transactions());
+      if (duplicate) {
+        const errorMsg = `Modification refusée : une opération identique existe déjà en caisse (Date: ${duplicate.date}, Montant: ${duplicate.montant} FCFA, Service: ${duplicate.service || 'N/A'}, Libellé: "${duplicate.libelle}").`;
+        this._error.set(errorMsg);
+        return { success: false, message: errorMsg };
+      }
+    }
+
     const token = this.authService.token();
 
     // 1. Convertir la date affichée (ex: "05/09/2026") en ISO si besoin

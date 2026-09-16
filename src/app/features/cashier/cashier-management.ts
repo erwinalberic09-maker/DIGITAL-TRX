@@ -40,6 +40,7 @@ import {
   TransactionStatus,
   TransactionTypeCategory,
 } from '../../core/models/cashier-transaction.model';
+import { findDuplicateTransaction } from '../../core/utils/cashier-duplicate.util';
 import { OdooDatepicker } from '../../shared/components/odoo-datepicker/odoo-datepicker';
 
 // Enregistrement des composants nécessaires de Chart.js
@@ -628,6 +629,26 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         }
       }
 
+      // Contrôle strict anti-doublon en direct : Date + Montant + Libellé + N° de dossier + Service
+      const duplicate = findDuplicateTransaction(
+        {
+          date: formattedDate,
+          montant: finalMontant,
+          libelle: formValues.libelle,
+          noDossier: formValues.noDossier,
+          service: formValues.service,
+        },
+        this.allTransactions()
+      );
+
+      if (duplicate) {
+        const montantDisplay = Math.abs(Number(duplicate.montant)).toLocaleString('fr-FR');
+        const serviceDisplay = duplicate.service || 'Sans service';
+        const duplicateMsg = `Opération déjà enregistrée : une opération identique existe déjà en caisse (Date : ${duplicate.date}, Montant : ${montantDisplay} FCFA, Service : ${serviceDisplay}, Libellé : "${duplicate.libelle}"). La double saisie est interdite.`;
+        this.cashierService.setError(duplicateMsg);
+        return;
+      }
+
       const result = await this.cashierService.addTransaction({
         date: formattedDate,
         libelle: formValues.libelle,
@@ -898,7 +919,28 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         }
       }
 
-      await this.cashierService.updateTransaction(activeId, {
+      // Contrôle strict anti-doublon lors de l'édition
+      const duplicate = findDuplicateTransaction(
+        {
+          id: activeId,
+          date: formattedDate,
+          montant: finalMontant,
+          libelle: libelle,
+          noDossier: formValues.noDossier,
+          service: formValues.service,
+        },
+        this.allTransactions()
+      );
+
+      if (duplicate) {
+        const montantDisplay = Math.abs(Number(duplicate.montant)).toLocaleString('fr-FR');
+        const serviceDisplay = duplicate.service || 'Sans service';
+        const duplicateMsg = `Modification refusée : une opération identique existe déjà en caisse (Date : ${duplicate.date}, Montant : ${montantDisplay} FCFA, Service : ${serviceDisplay}, Libellé : "${duplicate.libelle}").`;
+        this.cashierService.setError(duplicateMsg);
+        return;
+      }
+
+      const updateResult = await this.cashierService.updateTransaction(activeId, {
         date: formattedDate,
         libelle: libelle,
         service: (formValues.service as Service) || '',
@@ -911,8 +953,9 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         montant: finalMontant,
       });
 
-      // Fermeture automatique du formulaire d'édition pour ne pas bloquer l'UI
-      this.cancelInlineEdit();
+      if (updateResult.success) {
+        this.cancelInlineEdit();
+      }
     } finally {
       this.isEditingSubmitting.set(false);
     }
