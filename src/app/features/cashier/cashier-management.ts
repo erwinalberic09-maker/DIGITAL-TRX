@@ -1,6 +1,7 @@
 import {
   AfterViewInit,
   ChangeDetectionStrategy,
+  ChangeDetectorRef,
   Component,
   ElementRef,
   OnDestroy,
@@ -80,6 +81,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   public readonly cashierService = inject(CashierService);
   private readonly authService = inject(AuthService);
   private readonly elementRef = inject(ElementRef);
+  private readonly cdr = inject(ChangeDetectorRef);
   protected readonly Math = Math;
   private readonly platformId = inject(PLATFORM_ID);
 
@@ -605,6 +607,19 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
     if (this.transactionForm.invalid) {
       this.transactionForm.markAllAsTouched();
+      const libelleControl = this.transactionForm.get('libelle');
+      const serviceControl = this.transactionForm.get('service');
+      const montantControl = this.transactionForm.get('montant');
+
+      let errorMsg = 'Veuillez renseigner tous les champs obligatoires :';
+      const missing: string[] = [];
+      if (libelleControl?.invalid) missing.push('Libellé (minimum 2 caractères)');
+      if (serviceControl?.invalid) missing.push('Service');
+      if (montantControl?.invalid) missing.push('Montant');
+      errorMsg += ' ' + missing.join(', ') + '.';
+
+      this.cashierService.setError(errorMsg);
+      this.cdr.markForCheck();
       return;
     }
 
@@ -664,6 +679,8 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
       if (result.success) {
         this.cancelAddInline();
+      } else if (result.error) {
+        this.cashierService.setError(result.error);
       }
     } finally {
       this.isSubmitting.set(false);
@@ -767,11 +784,6 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     if (this.isSubmitting() || this.isEditingSubmitting()) return;
     const target = event.target as HTMLElement | null;
     if (!target) return;
-
-    // Fermer l'erreur de caisse au clic n'importe où
-    if (this.error()) {
-      this.cashierService.clearError();
-    }
 
     // Ignorer si l'élément n'est plus dans le DOM ou fait partie d'un composant flottant (popover, datepicker, dropdown)
     if (
@@ -890,8 +902,21 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
     const formValues = this.editTransactionForm.getRawValue();
     const libelle = formValues.libelle?.trim();
-    if (!libelle) {
-      this.editTransactionForm.get('libelle')?.markAsTouched();
+    if (!libelle || this.editTransactionForm.invalid) {
+      this.editTransactionForm.markAllAsTouched();
+      const libelleControl = this.editTransactionForm.get('libelle');
+      const serviceControl = this.editTransactionForm.get('service');
+      const montantControl = this.editTransactionForm.get('montant');
+
+      let errorMsg = 'Veuillez renseigner tous les champs obligatoires pour la modification :';
+      const missing: string[] = [];
+      if (libelleControl?.invalid) missing.push('Libellé (minimum 2 caractères)');
+      if (serviceControl?.invalid) missing.push('Service');
+      if (montantControl?.invalid) missing.push('Montant');
+      errorMsg += ' ' + missing.join(', ') + '.';
+
+      this.cashierService.setError(errorMsg);
+      this.cdr.markForCheck();
       return;
     }
 
@@ -955,10 +980,17 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
       if (updateResult.success) {
         this.cancelInlineEdit();
+      } else if (updateResult.message) {
+        this.cashierService.setError(updateResult.message);
       }
     } finally {
       this.isEditingSubmitting.set(false);
     }
+  }
+
+  public dismissError(): void {
+    this.cashierService.clearError();
+    this.cdr.markForCheck();
   }
 
   public onEditKeydown(event: KeyboardEvent): void {

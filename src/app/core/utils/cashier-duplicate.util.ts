@@ -5,6 +5,91 @@
  */
 
 /**
+ * Convertit toute date ISO ou textuelle en format d'affichage JJ/MM/AAAA
+ * en neutralisant strictement les décalages de fuseaux horaires (UTC vs local).
+ */
+export function formatIsoToDisplayDate(dateStr?: string | null): string {
+  if (!dateStr) return '';
+  const trimmed = dateStr.trim();
+
+  // Si déjà au format DD/MM/YYYY
+  if (trimmed.includes('/')) {
+    const parts = trimmed.split('/');
+    if (parts.length === 3) {
+      const day = parts[0].padStart(2, '0');
+      const month = parts[1].padStart(2, '0');
+      const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+      return `${day}/${month}/${year}`;
+    }
+  }
+
+  // Format ISO ou YYYY-MM-DD : extraction textuelle directe pour immunité fuseau horaire
+  if (trimmed.includes('-')) {
+    const datePart = trimmed.split('T')[0].split(' ')[0];
+    const parts = datePart.split('-');
+    if (parts.length === 3) {
+      const year = parts[0].length === 2 ? `20${parts[0]}` : parts[0];
+      const month = parts[1].padStart(2, '0');
+      const day = parts[2].padStart(2, '0');
+      return `${day}/${month}/${year}`;
+    }
+  }
+
+  try {
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) {
+      const day = String(d.getUTCDate()).padStart(2, '0');
+      const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const year = d.getUTCFullYear();
+      return `${day}/${month}/${year}`;
+    }
+  } catch {
+    // Ignorer
+  }
+
+  return trimmed;
+}
+
+/**
+ * Convertit une date locale (JJ/MM/AAAA ou YYYY-MM-DD) en chaîne ISO standard (YYYY-MM-DDT00:00:00.000Z)
+ * sans risque de décalage de jour.
+ */
+export function toStandardIsoDateString(dateStr?: string | null): string {
+  if (!dateStr) return new Date().toISOString();
+  const trimmed = dateStr.trim();
+
+  if (trimmed.includes('/')) {
+    const parts = trimmed.split('/');
+    if (parts.length === 3) {
+      const day = parts[0].padStart(2, '0');
+      const month = parts[1].padStart(2, '0');
+      const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+      return `${year}-${month}-${day}T00:00:00.000Z`;
+    }
+  }
+
+  if (trimmed.includes('-')) {
+    const datePart = trimmed.split('T')[0].split(' ')[0];
+    const parts = datePart.split('-');
+    if (parts.length === 3) {
+      const year = parts[0].length === 2 ? `20${parts[0]}` : parts[0];
+      const month = parts[1].padStart(2, '0');
+      const day = parts[2].padStart(2, '0');
+      return `${year}-${month}-${day}T00:00:00.000Z`;
+    }
+  }
+
+  try {
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  } catch {
+    // Ignorer
+  }
+
+  return new Date().toISOString();
+}
+
+/**
  * Normalise une date pour comparaison exacte (YYYY-MM-DD)
  */
 export function normalizeDateForComparison(dateStr?: string | null): string {
@@ -22,12 +107,12 @@ export function normalizeDateForComparison(dateStr?: string | null): string {
     }
   }
 
-  // Format ISO ou YYYY-MM-DD
+  // Format ISO ou YYYY-MM-DD (extraction textuelle stricte pour éviter tout décalage UTC)
   if (trimmed.includes('-')) {
-    const datePart = trimmed.split('T')[0];
+    const datePart = trimmed.split('T')[0].split(' ')[0];
     const parts = datePart.split('-');
     if (parts.length === 3) {
-      const year = parts[0];
+      const year = parts[0].length === 2 ? `20${parts[0]}` : parts[0];
       const month = parts[1].padStart(2, '0');
       const day = parts[2].padStart(2, '0');
       return `${year}-${month}-${day}`;
@@ -76,18 +161,27 @@ export interface TransactionComparisonKey {
 export function generateTransactionFingerprint(op: {
   date?: string | null;
   montant?: number | string | null;
+  category?: string | null;
   libelle?: string | null;
   noDossier?: string | null;
   matricule?: string | null;
   service?: string | null;
 }): string {
   const normDate = normalizeDateForComparison(op.date);
-  const normMontant = normalizeMontant(op.montant);
+  let rawMontant = normalizeMontant(op.montant);
+
+  // Si la catégorie est spécifiée comme 'sortie' et que le montant est positif, normaliser en négatif
+  if (op.category === 'sortie' && rawMontant > 0) {
+    rawMontant = -rawMontant;
+  } else if (op.category === 'entree' && rawMontant < 0) {
+    rawMontant = Math.abs(rawMontant);
+  }
+
   const normLibelle = normalizeText(op.libelle);
   const normNoDossier = normalizeText(op.noDossier || op.matricule);
   const normService = normalizeText(op.service);
 
-  return `${normDate}|${normMontant}|${normLibelle}|${normNoDossier}|${normService}`;
+  return `${normDate}|${rawMontant}|${normLibelle}|${normNoDossier}|${normService}`;
 }
 
 /**
@@ -98,6 +192,7 @@ export function findDuplicateTransaction<T extends {
   id?: string;
   date?: string | null;
   montant?: number | string | null;
+  category?: string | null;
   libelle?: string | null;
   noDossier?: string | null;
   service?: string | null;
@@ -106,6 +201,7 @@ export function findDuplicateTransaction<T extends {
     id?: string;
     date?: string | null;
     montant?: number | string | null;
+    category?: string | null;
     libelle?: string | null;
     noDossier?: string | null;
     service?: string | null;
@@ -125,3 +221,4 @@ export function findDuplicateTransaction<T extends {
     return generateTransactionFingerprint(item) === candidateFingerprint;
   });
 }
+

@@ -4,7 +4,12 @@ import {
   CashierFilterState,
   CashierTransaction,
 } from '../models/cashier-transaction.model';
-import { findDuplicateTransaction, generateTransactionFingerprint } from '../utils/cashier-duplicate.util';
+import {
+  findDuplicateTransaction,
+  formatIsoToDisplayDate,
+  generateTransactionFingerprint,
+  toStandardIsoDateString,
+} from '../utils/cashier-duplicate.util';
 import { SupabaseService } from './supabase.service';
 import { AuthService } from './auth.service';
 import { ExportService } from './export.service';
@@ -62,12 +67,6 @@ export class CashierService implements OnDestroy {
       this.errorTimeout = null;
     }
     this._error.set(message);
-    if (message) {
-      this.errorTimeout = setTimeout(() => {
-        this._error.set(null);
-        this.errorTimeout = null;
-      }, 5000);
-    }
   }
 
   constructor() {
@@ -307,17 +306,7 @@ export class CashierService implements OnDestroy {
   }
 
   private toIsoDateString(dStr?: string): string {
-    if (!dStr) return new Date().toISOString();
-    if (dStr.includes('/')) {
-      const parts = dStr.split('/');
-      if (parts.length === 3) {
-        const parsed = new Date(`${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`);
-        if (!isNaN(parsed.getTime())) return parsed.toISOString();
-      }
-    }
-    const parsed = new Date(dStr);
-    if (!isNaN(parsed.getTime())) return parsed.toISOString();
-    return new Date().toISOString();
+    return toStandardIsoDateString(dStr);
   }
 
   /**
@@ -337,6 +326,7 @@ export class CashierService implements OnDestroy {
       {
         date: op.date,
         montant: op.montant,
+        category: op.category,
         libelle: op.libelle,
         noDossier: op.noDossier,
         service: op.service,
@@ -345,7 +335,8 @@ export class CashierService implements OnDestroy {
     );
 
     if (existingDuplicate) {
-      const errorMsg = `Opération déjà enregistrée : une opération identique existe déjà en caisse (Date: ${existingDuplicate.date}, Montant: ${existingDuplicate.montant} FCFA, Service: ${existingDuplicate.service || 'N/A'}, Libellé: "${existingDuplicate.libelle}"). La double saisie est interdite.`;
+      const montantFmt = Math.abs(Number(existingDuplicate.montant)).toLocaleString('fr-FR');
+      const errorMsg = `Opération déjà enregistrée : une opération identique existe déjà en caisse (Date: ${existingDuplicate.date}, Montant: ${montantFmt} FCFA, Service: ${existingDuplicate.service || 'N/A'}, Libellé: "${existingDuplicate.libelle}"). La double saisie est interdite.`;
       this._error.set(errorMsg);
       return { success: false, error: errorMsg };
     }
@@ -390,16 +381,56 @@ export class CashierService implements OnDestroy {
         savedRow = (resJson.operation || resJson.transaction) as CashierDbRow;
       } else {
         const errJson = await response.json().catch(() => ({}));
-        throw new Error(errJson.error || `Erreur serveur ${response.status}`);
+        const serverError = errJson.error || `Erreur serveur ${response.status}`;
+
+        // RÈGLE D'OR : Si le serveur signale un doublon (409 Conflict) ou un refus explicite,
+        // stoppe immédiatement : aucun repli pirate n'est toléré.
+        if (response.status === 409 || response.status === 400 || response.status === 403) {
+          this._error.set(serverError);
+          return { success: false, error: serverError };
+        }
+
+        throw new Error(serverError);
       }
     } catch (apiErr: unknown) {
-      console.warn('Appel API /api/cahier/operations échoué, tentative via client Supabase direct:', apiErr);
+      const errMsg = apiErr instanceof Error ? apiErr.message : String(apiErr);
+      if (errMsg.includes('doublon') || errMsg.includes('409') || errMsg.includes('interdite')) {
+        this._error.set(errMsg);
+        return { success: false, error: errMsg };
+      }
 
-      // Étape 2 (REPLI) : Sauvegarde directe via client Supabase si API injoignable
+      console.warn('Appel API /api/cahier/operations échoué, vérification et tentative via client Supabase direct:', apiErr);
+
+      // Étape 2 (REPLI EN CAS DE PANNE RÉSEAU EXCLUSIVEMENT) :
+      // Vérification anti-doublon en direct sur Supabase avant toute insertion
       try {
         await this.supabaseService.ensureInitialized();
         const client = this.supabaseService.supabase;
         if (client) {
+          const { data: dbCheck } = await client
+            .from('cashier_transactions')
+            .select('id, date, libelle, montant, service, no_dossier')
+            .eq('montant', op.montant);
+
+          if (dbCheck && dbCheck.length > 0) {
+            const dbDup = findDuplicateTransaction(
+              {
+                date: op.date,
+                montant: op.montant,
+                category: op.category,
+                libelle: op.libelle,
+                noDossier: op.noDossier,
+                service: op.service,
+              },
+              dbCheck
+            );
+            if (dbDup) {
+              const dupError = `Opération déjà existante en base de données (doublon détecté). Insertion refusée.`;
+              this._error.set(dupError);
+              return { success: false, error: dupError };
+            }
+          }
+
           const { data, error } = await client
             .from('cashier_transactions')
             .insert([
@@ -417,7 +448,7 @@ export class CashierService implements OnDestroy {
                 created_by: this.authService.currentUser()?.id || null,
                 quantity: op.quantity || 1,
                 montant: op.montant,
-                date: op.date || new Date().toISOString(),
+                date: this.toIsoDateString(op.date),
               },
             ])
             .select()
@@ -425,6 +456,8 @@ export class CashierService implements OnDestroy {
 
           if (!error && data) {
             savedRow = data as CashierDbRow;
+          } else if (error) {
+            this._error.set(error.message);
           }
         }
       } catch (directErr) {
@@ -432,52 +465,37 @@ export class CashierService implements OnDestroy {
       }
     }
 
+    // Si aucune sauvegarde réelle n'a pu être actée, NE JAMAIS injecter de ligne factice locale
+    if (!savedRow) {
+      const failureMsg = this._error() || 'Impossible d’enregistrer l’opération : échec de validation du serveur.';
+      this._error.set(failureMsg);
+      return { success: false, error: failureMsg };
+    }
+
     // Étape 3 : Création de l'objet transaction unifié
     const currentUserId = this.authService.currentUser()?.id;
-    const operationToStore: CashierTransaction = savedRow
-      ? {
-          id: savedRow.id,
-          pieceComptable: savedRow.piece_comptable || this.nextPieceComptable(),
-          date: this.formatDate(savedRow.date || new Date().toISOString()),
-          libelle: savedRow.libelle,
-          service: savedRow.service || savedRow.type_transaction || '',
-          typeDescription: savedRow.type_description || '',
-          category: savedRow.category as 'entree' | 'sortie',
-          status: (savedRow.status as 'draft' | 'posted' | 'cancelled') || op.status || 'draft',
-          noDossier: savedRow.no_dossier || savedRow.matricule_vehicule || '',
-          firstName: savedRow.first_name || '',
-          employee: savedRow.employee || '',
-          partenaire: savedRow.partenaire || savedRow.employee || '',
-          quantity: savedRow.quantity ? Number(savedRow.quantity) : undefined,
-          montant: Number(savedRow.montant),
-          soldeApres: savedRow.solde_apres !== undefined && savedRow.solde_apres !== null ? Number(savedRow.solde_apres) : estimatedNewSolde,
-          selected: false,
-          createdBy: savedRow.created_by || currentUserId || undefined,
-          employeeId: savedRow.employee_id || currentUserId || undefined,
-          createdAt: savedRow.created_at || new Date().toISOString(),
-          updatedAt: savedRow.updated_at,
-        }
-      : {
-          id: `tx-${Date.now()}`,
-          pieceComptable: this.nextPieceComptable(),
-          date: this.formatDate(op.date || new Date().toISOString()),
-          libelle: op.libelle || 'Opération',
-          service: op.service || '',
-          typeDescription: op.typeDescription || '',
-          category: (op.category || (montant >= 0 ? 'entree' : 'sortie')) as 'entree' | 'sortie',
-          status: op.status || 'draft',
-          noDossier: op.noDossier || '',
-          firstName: op.firstName || '',
-          employee: op.employee || op.partenaire || '',
-          partenaire: op.partenaire || op.employee || '',
-          quantity: op.quantity,
-          montant,
-          soldeApres: estimatedNewSolde,
-          selected: false,
-          createdBy: currentUserId || undefined,
-          employeeId: currentUserId || undefined,
-          createdAt: new Date().toISOString(),
-        };
+    const operationToStore: CashierTransaction = {
+      id: savedRow.id,
+      pieceComptable: savedRow.piece_comptable || this.nextPieceComptable(),
+      date: this.formatDate(savedRow.date || new Date().toISOString()),
+      libelle: savedRow.libelle,
+      service: savedRow.service || savedRow.type_transaction || '',
+      typeDescription: savedRow.type_description || '',
+      category: savedRow.category as 'entree' | 'sortie',
+      status: (savedRow.status as 'draft' | 'posted' | 'cancelled') || op.status || 'draft',
+      noDossier: savedRow.no_dossier || savedRow.matricule_vehicule || '',
+      firstName: savedRow.first_name || '',
+      employee: savedRow.employee || '',
+      partenaire: savedRow.partenaire || savedRow.employee || '',
+      quantity: savedRow.quantity ? Number(savedRow.quantity) : undefined,
+      montant: Number(savedRow.montant),
+      soldeApres: savedRow.solde_apres !== undefined && savedRow.solde_apres !== null ? Number(savedRow.solde_apres) : estimatedNewSolde,
+      selected: false,
+      createdBy: savedRow.created_by || currentUserId || undefined,
+      employeeId: savedRow.employee_id || currentUserId || undefined,
+      createdAt: savedRow.created_at || new Date().toISOString(),
+      updatedAt: savedRow.updated_at,
+    };
 
     // Étape 4 (RÉACTIVITÉ INSTANTANÉE) : Mise à jour immédiate du Signal Angular 19
     this._transactions.update((currentOps) => [operationToStore, ...currentOps]);
@@ -590,6 +608,7 @@ export class CashierService implements OnDestroy {
         id,
         date: updatedFields.date !== undefined ? updatedFields.date : currentTx.date,
         montant: updatedFields.montant !== undefined ? updatedFields.montant : currentTx.montant,
+        category: updatedFields.category !== undefined ? updatedFields.category : currentTx.category,
         libelle: updatedFields.libelle !== undefined ? updatedFields.libelle : currentTx.libelle,
         noDossier: updatedFields.noDossier !== undefined ? updatedFields.noDossier : currentTx.noDossier,
         service: updatedFields.service !== undefined ? updatedFields.service : currentTx.service,
@@ -604,16 +623,8 @@ export class CashierService implements OnDestroy {
 
     const token = this.authService.token();
 
-    // 1. Convertir la date affichée (ex: "05/09/2026") en ISO si besoin
-    let isoDate: string | undefined;
-    if (updatedFields.date) {
-      const parts = updatedFields.date.split('/');
-      if (parts.length === 3) {
-        isoDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).toISOString();
-      } else {
-        isoDate = new Date(updatedFields.date).toISOString();
-      }
-    }
+    // 1. Convertir la date affichée en ISO standard sans décalage de fuseau horaire
+    const isoDate = updatedFields.date ? toStandardIsoDateString(updatedFields.date) : undefined;
 
     // 2. Appel vers l'API serveur-relais
     let updatedViaApi = false;
@@ -658,10 +669,10 @@ export class CashierService implements OnDestroy {
       apiErrorMessage = apiErr instanceof Error ? apiErr.message : 'Erreur réseau';
     }
 
-    // 3. Repli direct Supabase si l'API Express n'a pas répondu (sauf en cas de refus explicite 403)
+    // 3. Repli direct Supabase si l'API Express n'a pas répondu (interdit en cas de refus explicite ou doublon 409)
     let updatedViaSupabase = false;
-    const isPermissionError = apiErrorMessage.includes('Action refusée') || apiErrorMessage.includes('403');
-    if (!updatedViaApi && !isPermissionError) {
+    const isBlockedError = apiErrorMessage.includes('Action refusée') || apiErrorMessage.includes('403') || apiErrorMessage.includes('doublon') || apiErrorMessage.includes('409');
+    if (!updatedViaApi && !isBlockedError) {
       try {
         await this.supabaseService.ensureInitialized();
         const client = this.supabaseService.supabase;
@@ -929,9 +940,14 @@ export class CashierService implements OnDestroy {
         this.recalculateRunningBalances();
         this.toggleSelectAll(false);
         return true;
+      } else {
+        const errJson = await response.json().catch(() => ({}));
+        const serverError = errJson.error || `Erreur lors de la duplication (${response.status})`;
+        this._error.set(serverError);
+        return false;
       }
-    } catch {
-      // Ignorer et basculer sur fallback direct
+    } catch (netErr) {
+      console.warn('Erreur réseau lors de la duplication API:', netErr);
     }
 
     // Repli direct Supabase si l'API n'a pas répondu
@@ -1462,15 +1478,6 @@ export class CashierService implements OnDestroy {
   }
 
   private formatDate(dateStr: string): string {
-    try {
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return dateStr;
-      const day = String(d.getDate()).padStart(2, '0');
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const year = d.getFullYear();
-      return `${day}/${month}/${year}`;
-    } catch {
-      return dateStr;
-    }
+    return formatIsoToDisplayDate(dateStr);
   }
 }

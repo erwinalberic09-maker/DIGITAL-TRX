@@ -793,6 +793,35 @@ interface DuplicateCandidateRow {
 }
 
 /**
+ * Normalise une date textuellement en format YYYY-MM-DD
+ * Immunisé contre tout décalage horaire UTC/local.
+ */
+const normalizeDateToDay = (rawDate?: string | null): string => {
+  if (!rawDate) return '';
+  const trimmed = String(rawDate).trim();
+  if (trimmed.includes('/')) {
+    const parts = trimmed.split('/');
+    if (parts.length === 3) {
+      const day = parts[0].padStart(2, '0');
+      const month = parts[1].padStart(2, '0');
+      const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+      return `${year}-${month}-${day}`;
+    }
+  }
+  if (trimmed.includes('-')) {
+    const datePart = trimmed.split('T')[0].split(' ')[0];
+    const parts = datePart.split('-');
+    if (parts.length === 3) {
+      const year = parts[0].length === 2 ? `20${parts[0]}` : parts[0];
+      const month = parts[1].padStart(2, '0');
+      const day = parts[2].padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+  }
+  return trimmed;
+};
+
+/**
  * Vérifie si une transaction de caisse identique existe déjà en base de données.
  * Critères d'unicité stricts : Date (jour) + Montant + Libellé + N° de dossier/matricule + Service.
  * Bloque universellement la double saisie (que l'auteur soit le même caissier ou un autre).
@@ -808,23 +837,18 @@ const checkDuplicateCashierTransaction = async (
     service?: string | null;
   }
 ): Promise<{ isDuplicate: boolean; existing?: DuplicateCandidateRow }> => {
-  const normDateStr = candidate.date.includes('T') ? candidate.date.split('T')[0] : candidate.date.split(' ')[0];
-  let dayPrefix = normDateStr;
-  if (normDateStr.includes('/')) {
-    const parts = normDateStr.split('/');
-    if (parts.length === 3) {
-      dayPrefix = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-    }
-  }
-
+  const normDay = normalizeDateToDay(candidate.date);
   const normLibelle = candidate.libelle.toLowerCase().trim().replace(/\s+/g, ' ');
   const normNoDossier = (candidate.noDossier || '').toLowerCase().trim().replace(/\s+/g, ' ');
   const normService = (candidate.service || '').toLowerCase().trim().replace(/\s+/g, ' ');
 
+  const absMontant = Math.abs(Number(candidate.montant));
+
+  // Requête large sur le montant (positif ou négatif) pour neutraliser toute incohérence de signe
   const { data: candidates, error } = await adminClient
     .from('cashier_transactions')
     .select('id, date, libelle, montant, service, no_dossier')
-    .eq('montant', candidate.montant);
+    .or(`montant.eq.${candidate.montant},montant.eq.${-candidate.montant},montant.eq.${absMontant},montant.eq.${-absMontant}`);
 
   if (error || !candidates || candidates.length === 0) {
     return { isDuplicate: false };
@@ -836,14 +860,12 @@ const checkDuplicateCashierTransaction = async (
       return false;
     }
 
-    let cDay = String(c.date || '').split('T')[0].split(' ')[0];
-    if (cDay.includes('/')) {
-      const parts = cDay.split('/');
-      if (parts.length === 3) {
-        cDay = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-      }
-    }
-    if (cDay !== dayPrefix) return false;
+    const cDay = normalizeDateToDay(c.date);
+    if (cDay !== normDay) return false;
+
+    // Comparaison du montant en valeur absolue arrondie
+    const cAbs = Math.abs(Number(c.montant));
+    if (Math.round(cAbs * 100) !== Math.round(absMontant * 100)) return false;
 
     const cLib = String(c.libelle || '').toLowerCase().trim().replace(/\s+/g, ' ');
     if (cLib !== normLibelle) return false;
@@ -885,7 +907,7 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
     const partenaire = payload.partenaire !== undefined ? payload.partenaire : null;
     const employee = payload.employee !== undefined ? payload.employee : null;
     const quantity = payload.quantity !== undefined && payload.quantity !== null ? Number(payload.quantity) : (service === 'Opérations' ? 1 : null);
-    const montant = Number(payload.montant);
+    let montant = Number(payload.montant);
 
     if (!libelle) {
       res.status(400).json({ error: 'Le libellé de l’opération est obligatoire.' });
@@ -895,6 +917,13 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
     if (isNaN(montant)) {
       res.status(400).json({ error: 'Le montant de l’opération doit être un nombre valide.' });
       return;
+    }
+
+    // Normalisation absolue du signe du montant selon la catégorie
+    if (category === 'sortie' && montant > 0) {
+      montant = -montant;
+    } else if (category === 'entree' && montant < 0) {
+      montant = Math.abs(montant);
     }
 
     const dateToStore = payload.date ? (typeof payload.date === 'string' ? payload.date : new Date(payload.date).toISOString()) : new Date().toISOString();
@@ -910,8 +939,9 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
 
     if (duplicateCheck.isDuplicate && duplicateCheck.existing) {
       const dup = duplicateCheck.existing;
+      const dupMontantFmt = Math.abs(Number(dup.montant)).toLocaleString('fr-FR');
       res.status(409).json({
-        error: `Opération déjà enregistrée : une opération identique existe déjà en caisse (Date: ${dup.date}, Montant: ${dup.montant} FCFA, Service: ${dup.service || 'N/A'}, Libellé: "${dup.libelle}"). La double saisie est interdite.`,
+        error: `Opération déjà enregistrée : une opération identique existe déjà en caisse (Date: ${dup.date}, Montant: ${dupMontantFmt} FCFA, Service: ${dup.service || 'N/A'}, Libellé: "${dup.libelle}"). La double saisie est interdite.`,
       });
       return;
     }
