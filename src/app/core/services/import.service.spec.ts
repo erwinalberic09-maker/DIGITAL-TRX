@@ -34,11 +34,14 @@ describe('ImportService', () => {
       expect(result.data?.category).toBe('sortie');
       expect(result.data?.service).toBe('TRANSIT');
       expect(result.data?.quantity).toBe(2);
+      expect(result.data?.date).toBe('15/09/2026');
     });
 
-    it('should validate a nominal row with separate Entrée column', () => {
+    it('should validate a nominal row with separate Entrée column and native Date object', () => {
+      // Simulation d'une cellule Excel parsée en Date UTC à minuit
+      const nativeUtcDate = new Date(Date.UTC(2026, 8, 15, 0, 0, 0));
       const row = {
-        'Date': '15/09/2026',
+        'Date': nativeUtcDate,
         'Libellé': 'Approvisionnement caisse principale',
         'Entrée (FCFA)': '500 000',
         'Sortie (FCFA)': '',
@@ -53,6 +56,22 @@ describe('ImportService', () => {
       expect(result.data?.category).toBe('entree');
       expect(result.data?.montant).toBe(500000);
       expect(result.data?.service).toBe('DG');
+      expect(result.data?.date).toBe('15/09/2026');
+    });
+
+    it('should validate an imported row with Excel serial date number (e.g. 45549)', () => {
+      const row = {
+        'Date': 45549, // 14 septembre 2024
+        'Libellé': 'Achat cartouches imprimante',
+        'Sortie': '45000',
+        'Service': 'TRANSIT',
+      };
+
+      const result = service.validateAndTransformRow(row, 4);
+
+      expect(result.error).toBeUndefined();
+      expect(result.data).toBeDefined();
+      expect(result.data?.date).toBe('14/09/2024');
     });
 
     it('should reject row when both Entrée and Sortie are filled simultaneously', () => {
@@ -63,7 +82,7 @@ describe('ImportService', () => {
         'Sortie': '10000',
       };
 
-      const result = service.validateAndTransformRow(row, 4);
+      const result = service.validateAndTransformRow(row, 5);
 
       expect(result.data).toBeUndefined();
       expect(result.error).toBeDefined();
@@ -78,7 +97,7 @@ describe('ImportService', () => {
         'Sortie': '0',
       };
 
-      const result = service.validateAndTransformRow(row, 5);
+      const result = service.validateAndTransformRow(row, 6);
 
       expect(result.data).toBeUndefined();
       expect(result.error).toBeDefined();
@@ -92,7 +111,7 @@ describe('ImportService', () => {
         'Sortie': '5000',
       };
 
-      const result = service.validateAndTransformRow(row, 6);
+      const result = service.validateAndTransformRow(row, 7);
       expect(result.data).toBeUndefined();
       expect(result.error).toBeDefined();
       expect(result.error?.column).toBe('Libellé');
@@ -106,7 +125,7 @@ describe('ImportService', () => {
         'Montant': '75000',
       };
 
-      const result = service.validateAndTransformRow(legacyRow, 7);
+      const result = service.validateAndTransformRow(legacyRow, 8);
       expect(result.error).toBeUndefined();
       expect(result.data?.category).toBe('entree');
       expect(result.data?.montant).toBe(75000);
@@ -120,6 +139,43 @@ describe('ImportService', () => {
 
     it('should keep valid DD/MM/YYYY dates intact', () => {
       expect(service.normalizeDate('15/09/2026')).toBe('15/09/2026');
+    });
+
+    it('should handle dates with dash separator DD-MM-YYYY', () => {
+      expect(service.normalizeDate('15-09-2026')).toBe('15/09/2026');
+    });
+
+    it('should convert two-digit years DD/MM/YY into DD/MM/20YY', () => {
+      expect(service.normalizeDate('15/09/26')).toBe('15/09/2026');
+      expect(service.normalizeDate('02-03-25')).toBe('02/03/2025');
+    });
+
+    it('should convert French text month names (e.g. 15 sept. 2026)', () => {
+      expect(service.normalizeDate('15 sept. 2026')).toBe('15/09/2026');
+      expect(service.normalizeDate('02 janvier 2026')).toBe('02/01/2026');
+      expect(service.normalizeDate('10 décembre 2025')).toBe('10/12/2025');
+    });
+
+    it('should convert Excel numerical serial dates without day shift', () => {
+      // 45549 correspond au 14/09/2024
+      expect(service.normalizeDate(45549)).toBe('14/09/2024');
+      // En chaîne de caractères aussi
+      expect(service.normalizeDate('45549')).toBe('14/09/2024');
+    });
+
+    it('should handle Date instances without shifting one day before UTC', () => {
+      const utcMidnight = new Date(Date.UTC(2026, 8, 15, 0, 0, 0));
+      expect(service.normalizeDate(utcMidnight)).toBe('15/09/2026');
+    });
+
+    it('should return current date when rawDate is empty or null', () => {
+      const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+      const now = new Date();
+      const expected = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
+
+      expect(service.normalizeDate('')).toBe(expected);
+      expect(service.normalizeDate(null)).toBe(expected);
+      expect(service.normalizeDate(undefined)).toBe(expected);
     });
   });
 });

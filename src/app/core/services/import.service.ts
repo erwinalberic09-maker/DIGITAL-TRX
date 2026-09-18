@@ -58,7 +58,7 @@ export class ImportService {
     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
     const rawRows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(firstSheet, {
       defval: '',
-      raw: false,
+      raw: true,
     });
 
     const validRows: ParsedImportRow[] = [];
@@ -107,16 +107,24 @@ export class ImportService {
     row: Record<string, unknown>,
     rowIndex: number
   ): { data?: ParsedImportRow; error?: ImportError } {
-    // Recherche tolérante des colonnes (insensible à la casse et aux espaces)
-    const findValue = (keys: string[]): string => {
+    // Recherche tolérante des valeurs brutes de colonnes
+    const findRawValue = (keys: string[]): unknown => {
       for (const key of Object.keys(row)) {
         const cleanKey = key.trim().toLowerCase();
         if (keys.some((k) => cleanKey.includes(k.toLowerCase()))) {
           const val = row[key];
-          return val !== null && val !== undefined ? String(val).trim() : '';
+          if (val !== null && val !== undefined && val !== '') {
+            return val;
+          }
         }
       }
-      return '';
+      return undefined;
+    };
+
+    // Recherche tolérante des colonnes sous forme de chaîne nettoyée
+    const findValue = (keys: string[]): string => {
+      const val = findRawValue(keys);
+      return val !== null && val !== undefined ? String(val).trim() : '';
     };
 
     // 1. Libellé (Obligatoire)
@@ -191,9 +199,9 @@ export class ImportService {
       }
     }
 
-    // 4. Date (Normalisation JJ/MM/AAAA)
-    const rawDate = findValue(['date', 'jour']);
-    const dateFormatted = this.normalizeDate(rawDate);
+    // 4. Date (Normalisation tolérante et sans décalage de fuseau horaire)
+    const rawDateValue = findRawValue(['date', 'jour', 'période', 'periode']);
+    const dateFormatted = this.normalizeDate(rawDateValue);
 
     // 5. Service
     const rawService = findValue(['service', 'departement', 'département']).toUpperCase();
@@ -233,31 +241,119 @@ export class ImportService {
   }
 
   /**
-   * Normalise une chaîne de date en format JJ/MM/AAAA
+   * Normalise une valeur de date (Date, nombre sériel Excel, chaîne) en format standard JJ/MM/AAAA.
+   * Empêche strictement les décalages de fuseau horaire (UTC vs local).
    */
-  public normalizeDate(dateStr: string): string {
-    if (!dateStr) {
+  public normalizeDate(rawDate: unknown): string {
+    const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+
+    if (rawDate === null || rawDate === undefined || rawDate === '') {
       const now = new Date();
-      const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
       return `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
     }
 
-    // Format JJ/MM/AAAA ou JJ-MM-AAAA
-    const slashMatch = dateStr.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-    if (slashMatch) {
-      const day = slashMatch[1].padStart(2, '0');
-      const month = slashMatch[2].padStart(2, '0');
-      const year = slashMatch[3];
+    // Cas 1 : Objet Date natif (ex. produit par XLSX avec cellDates: true)
+    if (rawDate instanceof Date) {
+      if (!isNaN(rawDate.getTime())) {
+        // Si l'heure UTC est proche de minuit (ex: 23:00 ou 00:00), privilégier la date locale ou UTC sans décalage
+        // Pour les dates pures créées par Excel, le fuseau horaire UTC est utilisé
+        const hours = rawDate.getUTCHours();
+        // Si la date a été importée à minuit UTC, on extrait les composantes UTC pour ne pas décaler au jour d'avant/d'après
+        const year = hours >= 12 ? rawDate.getFullYear() : rawDate.getUTCFullYear();
+        const month = hours >= 12 ? rawDate.getMonth() + 1 : rawDate.getUTCMonth() + 1;
+        const day = hours >= 12 ? rawDate.getDate() : rawDate.getUTCDate();
+        return `${pad(day)}/${pad(month)}/${year}`;
+      }
+    }
+
+    // Cas 2 : Numéro de série Excel (ex. 45549 pour le 15/09/2024)
+    if (typeof rawDate === 'number' && !isNaN(rawDate) && rawDate > 0) {
+      // 25569 = jours entre 1er janvier 1900 (avec le bug de l'année bissextile 1900 d'Excel) et 1er janvier 1970 UTC
+      // Pour éviter les décalages d'heure d'été/fuseau, on ajoute un offset de midi (12h = 0.5 jour)
+      const dateFromSerial = new Date(Math.round((rawDate - 25569) * 86400 * 1000) + 12 * 3600 * 1000);
+      if (!isNaN(dateFromSerial.getTime())) {
+        return `${pad(dateFromSerial.getUTCDate())}/${pad(dateFromSerial.getUTCMonth() + 1)}/${dateFromSerial.getUTCFullYear()}`;
+      }
+    }
+
+    const dateStr = String(rawDate).trim();
+    if (!dateStr) {
+      const now = new Date();
+      return `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
+    }
+
+    // Cas 2bis : Nombre représenté sous forme de chaîne numérique (ex. "45549")
+    if (/^\d{4,5}(\.\d+)?$/.test(dateStr)) {
+      const serialNum = parseFloat(dateStr);
+      if (serialNum > 20000 && serialNum < 100000) {
+        return this.normalizeDate(serialNum);
+      }
+    }
+
+    // Cas 3 : Format JJ/MM/AAAA ou JJ-MM-AAAA ou JJ.MM.AAAA (avec ou sans heure supplémentaire)
+    const dmyMatch = dateStr.match(/^(\d{1,2})[/. -](\d{1,2})[/. -](\d{2,4})/);
+    if (dmyMatch) {
+      const day = pad(parseInt(dmyMatch[1], 10));
+      const month = pad(parseInt(dmyMatch[2], 10));
+      let year = dmyMatch[3];
+      if (year.length === 2) {
+        const yNum = parseInt(year, 10);
+        year = yNum < 70 ? `20${year}` : `19${year}`;
+      }
       return `${day}/${month}/${year}`;
     }
 
-    // Format AAAA-MM-JJ (ISO)
-    const isoMatch = dateStr.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+    // Cas 4 : Format AAAA-MM-JJ ou AAAA/MM/JJ (ISO)
+    const isoMatch = dateStr.match(/^(\d{4})[/. -](\d{1,2})[/. -](\d{1,2})/);
     if (isoMatch) {
       const year = isoMatch[1];
-      const month = isoMatch[2].padStart(2, '0');
-      const day = isoMatch[3].padStart(2, '0');
+      const month = pad(parseInt(isoMatch[2], 10));
+      const day = pad(parseInt(isoMatch[3], 10));
       return `${day}/${month}/${year}`;
+    }
+
+    // Cas 5 : Format textuel français (ex: "15 sept. 2026", "15 septembre 2026", "15-Sep-2026")
+    const frenchMonthMap: Record<string, string> = {
+      janv: '01', janvier: '01', jan: '01',
+      fevr: '02', 'févr': '02', fevrier: '02', 'février': '02', feb: '02',
+      mars: '03', mar: '03',
+      avril: '04', avr: '04', apr: '04',
+      mai: '05', may: '05',
+      juin: '06', jun: '06',
+      juil: '07', juillet: '07', jul: '07',
+      aout: '08', 'août': '08', aug: '08',
+      sept: '09', septembre: '09', sep: '09',
+      oct: '10', octobre: '10',
+      nov: '11', novembre: '11',
+      dec: '12', 'déc': '12', decembre: '12', 'décembre': '12',
+    };
+
+    const textMonthMatch = dateStr.match(/^(\d{1,2})\s+([a-zA-Zàâéèêîôùûç.]+)\s+(\d{2,4})/i);
+    if (textMonthMatch) {
+      const day = pad(parseInt(textMonthMatch[1], 10));
+      const monthKey = textMonthMatch[2].toLowerCase().replace('.', '').trim();
+      let matchedMonth = '';
+      for (const [key, num] of Object.entries(frenchMonthMap)) {
+        if (monthKey.startsWith(key)) {
+          matchedMonth = num;
+          break;
+        }
+      }
+      if (matchedMonth) {
+        let year = textMonthMatch[3];
+        if (year.length === 2) {
+          const yNum = parseInt(year, 10);
+          year = yNum < 70 ? `20${year}` : `19${year}`;
+        }
+        return `${day}/${matchedMonth}/${year}`;
+      }
+    }
+
+    // Cas 6 : Tentative de parsing via Date.parse si format standard reconnu
+    const parsedTimestamp = Date.parse(dateStr);
+    if (!isNaN(parsedTimestamp)) {
+      const d = new Date(parsedTimestamp);
+      return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
     }
 
     return dateStr;
