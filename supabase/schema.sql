@@ -273,6 +273,7 @@ CREATE POLICY "dossiers_delete_admin_only"
 -- 6. TABLE DES TRANSACTIONS DE CAISSE
 CREATE TABLE IF NOT EXISTS public.cashier_transactions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    piece_comptable text UNIQUE,                                -- Numéro de pièce comptable unique (ex: CSH1/2026/00001)
     date text NOT NULL,                                        -- Format DD/MM/YYYY (texte libre, voir NOTES)
     libelle text NOT NULL,
     service text,                                              -- "Opérations", "Administration", etc.
@@ -298,9 +299,11 @@ CREATE TABLE IF NOT EXISTS public.cashier_transactions (
 );
 
 COMMENT ON TABLE public.cashier_transactions IS 'Transactions de caisse (entrées/sorties) — correspond à l''interface CashierTransaction côté app.';
+COMMENT ON COLUMN public.cashier_transactions.piece_comptable IS 'Numéro de pièce comptable unique (ex: CSH1/2026/00001) garantissant l''absence de doublon.';
 COMMENT ON COLUMN public.cashier_transactions.employee_id IS 'Référence forte vers profiles.id — employee/firstName restent en texte libre pour rétrocompatibilité.';
 COMMENT ON COLUMN public.cashier_transactions.dossier_id IS 'Référence forte vers dossiers.id — no_dossier reste en texte libre pour rétrocompatibilité.';
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cashier_transactions_piece_comptable ON public.cashier_transactions (piece_comptable) WHERE piece_comptable IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_cashier_transactions_date ON public.cashier_transactions (date);
 CREATE INDEX IF NOT EXISTS idx_cashier_transactions_category ON public.cashier_transactions (category);
 CREATE INDEX IF NOT EXISTS idx_cashier_transactions_status ON public.cashier_transactions (status);

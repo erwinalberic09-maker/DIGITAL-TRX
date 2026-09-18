@@ -5,9 +5,11 @@ import {
   CashierTransaction,
 } from '../models/cashier-transaction.model';
 import {
+  findDuplicatePieceComptable,
   findDuplicateTransaction,
   formatIsoToDisplayDate,
   generateTransactionFingerprint,
+  normalizePieceComptable,
   toStandardIsoDateString,
 } from '../utils/cashier-duplicate.util';
 import { SupabaseService } from './supabase.service';
@@ -42,7 +44,7 @@ export interface CashierDbRow {
 
 // Colonnes sélectionnées selon le principe du moindre privilège alignées sur le schéma Supabase
 const CASHIER_SELECTED_COLUMNS =
-  'id, date, libelle, service, type_description, category, status, no_dossier, first_name, partenaire, employee, employee_id, created_by, quantity, montant, solde_apres, selected, created_at, updated_at';
+  'id, piece_comptable, date, libelle, service, type_description, category, status, no_dossier, first_name, partenaire, employee, employee_id, created_by, quantity, montant, solde_apres, selected, created_at, updated_at';
 
 @Injectable({
   providedIn: 'root',
@@ -129,14 +131,22 @@ export class CashierService implements OnDestroy {
   public readonly nextPieceComptable = computed<string>(() => {
     const list = this._transactions();
     const currentYear = new Date().getFullYear() || 2026;
-    const yearTxCount = list.filter((t) => {
-      const yrMatch = t.date?.includes('/')
-        ? Number(t.date.split('/')[2])
-        : (t.date?.includes('-') ? Number(t.date.split('-')[0]) : currentYear);
-      return (isNaN(yrMatch) ? currentYear : yrMatch) === currentYear;
-    }).length;
+    const prefix = `CSH1/${currentYear}/`;
+    let maxSeq = 0;
 
-    return `CSH1/${currentYear}/${String(yearTxCount + 1).padStart(5, '0')}`;
+    for (const t of list) {
+      const piece = normalizePieceComptable(t.pieceComptable);
+      if (piece && piece.startsWith(prefix)) {
+        const seqStr = piece.substring(prefix.length);
+        const seqNum = parseInt(seqStr, 10);
+        if (!isNaN(seqNum) && seqNum > maxSeq) {
+          maxSeq = seqNum;
+        }
+      }
+    }
+
+    const nextNum = maxSeq > 0 ? maxSeq + 1 : list.length + 1;
+    return `${prefix}${String(nextNum).padStart(5, '0')}`;
   });
 
   // États exposés en lecture seule
@@ -321,7 +331,18 @@ export class CashierService implements OnDestroy {
   ): Promise<{ success: boolean; operation?: CashierTransaction; error?: string }> {
     this._error.set(null);
 
-    // Contrôle d'unicité strict : Date + Montant + Libellé + N° de dossier/matricule + Service
+    // Contrôle d'unicité strict : N° de pièce comptable en priorité absolue
+    const candidatePiece = normalizePieceComptable(op.pieceComptable || this.nextPieceComptable());
+    if (candidatePiece) {
+      const pieceDuplicate = findDuplicatePieceComptable({ pieceComptable: candidatePiece }, this._transactions());
+      if (pieceDuplicate) {
+        const errorMsg = `Le numéro de pièce comptable "${candidatePiece}" est déjà attribué à une autre opération (ID: ${pieceDuplicate.id}, Date: ${pieceDuplicate.date}, Libellé: "${pieceDuplicate.libelle}"). Les numéros de pièces comptables doivent être strictement uniques.`;
+        this._error.set(errorMsg);
+        return { success: false, error: errorMsg };
+      }
+    }
+
+    // Contrôle d'unicité par empreinte métier : Date + Montant + Libellé + N° de dossier/matricule + Service
     const existingDuplicate = findDuplicateTransaction(
       {
         date: op.date,
@@ -330,6 +351,7 @@ export class CashierService implements OnDestroy {
         libelle: op.libelle,
         noDossier: op.noDossier,
         service: op.service,
+        pieceComptable: candidatePiece,
       },
       this._transactions()
     );
@@ -361,6 +383,7 @@ export class CashierService implements OnDestroy {
         method: 'POST',
         headers,
         body: JSON.stringify({
+          pieceComptable: candidatePiece,
           libelle: op.libelle,
           service: op.service,
           typeDescription: op.typeDescription || null,
@@ -394,7 +417,7 @@ export class CashierService implements OnDestroy {
       }
     } catch (apiErr: unknown) {
       const errMsg = apiErr instanceof Error ? apiErr.message : String(apiErr);
-      if (errMsg.includes('doublon') || errMsg.includes('409') || errMsg.includes('interdite')) {
+      if (errMsg.includes('doublon') || errMsg.includes('409') || errMsg.includes('interdite') || errMsg.includes('pièce')) {
         this._error.set(errMsg);
         return { success: false, error: errMsg };
       }
@@ -407,9 +430,23 @@ export class CashierService implements OnDestroy {
         await this.supabaseService.ensureInitialized();
         const client = this.supabaseService.supabase;
         if (client) {
+          // Contrôle préalable d'unicité de pièce comptable en direct sur la base
+          if (candidatePiece) {
+            const { data: pieceCheck } = await client
+              .from('cashier_transactions')
+              .select('id, piece_comptable, date, libelle')
+              .eq('piece_comptable', candidatePiece);
+
+            if (pieceCheck && pieceCheck.length > 0) {
+              const dupError = `Erreur d'unicité : le numéro de pièce comptable "${candidatePiece}" existe déjà en base de données.`;
+              this._error.set(dupError);
+              return { success: false, error: dupError };
+            }
+          }
+
           const { data: dbCheck } = await client
             .from('cashier_transactions')
-            .select('id, date, libelle, montant, service, no_dossier')
+            .select('id, piece_comptable, date, libelle, montant, service, no_dossier')
             .eq('montant', op.montant);
 
           if (dbCheck && dbCheck.length > 0) {
@@ -421,6 +458,7 @@ export class CashierService implements OnDestroy {
                 libelle: op.libelle,
                 noDossier: op.noDossier,
                 service: op.service,
+                pieceComptable: candidatePiece,
               },
               dbCheck
             );
@@ -435,6 +473,7 @@ export class CashierService implements OnDestroy {
             .from('cashier_transactions')
             .insert([
               {
+                piece_comptable: candidatePiece,
                 libelle: op.libelle,
                 service: op.service || null,
                 type_description: op.typeDescription || null,
@@ -457,7 +496,11 @@ export class CashierService implements OnDestroy {
           if (!error && data) {
             savedRow = data as CashierDbRow;
           } else if (error) {
-            this._error.set(error.message);
+            const isUniqueViolation = error.code === '23505' || error.message?.toLowerCase().includes('unique') || error.message?.includes('duplicate key');
+            const errorMsg = isUniqueViolation
+              ? `Erreur d'unicité (SQL 23505) : le numéro de pièce comptable "${candidatePiece}" existe déjà dans la base de données.`
+              : error.message;
+            this._error.set(errorMsg);
           }
         }
       } catch (directErr) {
@@ -527,14 +570,29 @@ export class CashierService implements OnDestroy {
     let duplicateCount = 0;
     const errors: string[] = [];
     const seenFingerprintsInBatch = new Set<string>();
+    const seenPiecesInBatch = new Set<string>();
 
     for (const row of rows) {
+      const candidatePiece = normalizePieceComptable(row.pieceComptable);
+      if (candidatePiece) {
+        const isPieceInBatch = seenPiecesInBatch.has(candidatePiece);
+        const dbPieceDup = findDuplicatePieceComptable({ pieceComptable: candidatePiece }, this._transactions());
+        if (isPieceInBatch || dbPieceDup) {
+          duplicateCount++;
+          const origin = dbPieceDup ? 'déjà existant en caisse' : 'en double dans le fichier importé';
+          errors.push(`Doublon de pièce comptable bloqué : "${candidatePiece}" (${row.libelle}) - ${origin}.`);
+          continue;
+        }
+        seenPiecesInBatch.add(candidatePiece);
+      }
+
       const candidate = {
         date: row.date,
         montant: row.montant,
         libelle: row.libelle,
         noDossier: row.noDossier,
         service: row.service,
+        pieceComptable: candidatePiece,
       };
 
       const fingerprint = generateTransactionFingerprint(candidate);
@@ -552,6 +610,7 @@ export class CashierService implements OnDestroy {
 
       try {
         const res = await this.addTransaction({
+          pieceComptable: candidatePiece || undefined,
           date: row.date,
           libelle: row.libelle,
           service: row.service,
@@ -604,6 +663,19 @@ export class CashierService implements OnDestroy {
     // Contrôle d'unicité strict lors de la modification
     const currentTx = this._transactions().find((t) => t.id === id);
     if (currentTx) {
+      const targetPiece = normalizePieceComptable(
+        updatedFields.pieceComptable !== undefined ? updatedFields.pieceComptable : currentTx.pieceComptable
+      );
+
+      if (targetPiece) {
+        const pieceDuplicate = findDuplicatePieceComptable({ id, pieceComptable: targetPiece }, this._transactions());
+        if (pieceDuplicate) {
+          const errorMsg = `Modification refusée : le numéro de pièce comptable "${targetPiece}" est déjà attribué à une autre opération (ID: ${pieceDuplicate.id}, Date: ${pieceDuplicate.date}, Libellé: "${pieceDuplicate.libelle}"). Un numéro de pièce doit être strictement unique.`;
+          this._error.set(errorMsg);
+          return { success: false, message: errorMsg };
+        }
+      }
+
       const candidate = {
         id,
         date: updatedFields.date !== undefined ? updatedFields.date : currentTx.date,
@@ -612,6 +684,7 @@ export class CashierService implements OnDestroy {
         libelle: updatedFields.libelle !== undefined ? updatedFields.libelle : currentTx.libelle,
         noDossier: updatedFields.noDossier !== undefined ? updatedFields.noDossier : currentTx.noDossier,
         service: updatedFields.service !== undefined ? updatedFields.service : currentTx.service,
+        pieceComptable: targetPiece,
       };
       const duplicate = findDuplicateTransaction(candidate, this._transactions());
       if (duplicate) {

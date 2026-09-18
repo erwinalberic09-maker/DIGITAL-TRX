@@ -41,7 +41,11 @@ import {
   TransactionStatus,
   TransactionTypeCategory,
 } from '../../core/models/cashier-transaction.model';
-import { findDuplicateTransaction } from '../../core/utils/cashier-duplicate.util';
+import {
+  findDuplicatePieceComptable,
+  findDuplicateTransaction,
+  normalizePieceComptable,
+} from '../../core/utils/cashier-duplicate.util';
 import { OdooDatepicker } from '../../shared/components/odoo-datepicker/odoo-datepicker';
 
 // Enregistrement des composants nécessaires de Chart.js
@@ -644,6 +648,17 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         }
       }
 
+      // Contrôle strict d'unicité de la pièce comptable
+      const candidatePiece = normalizePieceComptable(this.nextPieceComptable());
+      if (candidatePiece) {
+        const pieceDuplicate = findDuplicatePieceComptable({ pieceComptable: candidatePiece }, this.allTransactions());
+        if (pieceDuplicate) {
+          const pieceMsg = `Le numéro de pièce comptable "${candidatePiece}" est déjà attribué à une autre opération (ID: ${pieceDuplicate.id}, Date: ${pieceDuplicate.date}, Libellé: "${pieceDuplicate.libelle}"). Les pièces comptables doivent être strictement uniques.`;
+          this.cashierService.setError(pieceMsg);
+          return;
+        }
+      }
+
       // Contrôle strict anti-doublon en direct : Date + Montant + Libellé + N° de dossier + Service
       const duplicate = findDuplicateTransaction(
         {
@@ -652,6 +667,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
           libelle: formValues.libelle,
           noDossier: formValues.noDossier,
           service: formValues.service,
+          pieceComptable: candidatePiece,
         },
         this.allTransactions()
       );
@@ -665,6 +681,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       }
 
       const result = await this.cashierService.addTransaction({
+        pieceComptable: candidatePiece,
         date: formattedDate,
         libelle: formValues.libelle,
         service: (formValues.service as Service) || undefined,
@@ -945,6 +962,17 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       }
 
       // Contrôle strict anti-doublon lors de l'édition
+      const existingTx = this.allTransactions().find((t) => t.id === activeId);
+      const pieceToValidate = normalizePieceComptable(existingTx?.pieceComptable);
+      if (pieceToValidate) {
+        const pieceDuplicate = findDuplicatePieceComptable({ id: activeId, pieceComptable: pieceToValidate }, this.allTransactions());
+        if (pieceDuplicate) {
+          const pieceMsg = `Modification refusée : le numéro de pièce comptable "${pieceToValidate}" est déjà attribué à une autre opération (ID: ${pieceDuplicate.id}, Libellé: "${pieceDuplicate.libelle}").`;
+          this.cashierService.setError(pieceMsg);
+          return;
+        }
+      }
+
       const duplicate = findDuplicateTransaction(
         {
           id: activeId,
@@ -953,6 +981,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
           libelle: libelle,
           noDossier: formValues.noDossier,
           service: formValues.service,
+          pieceComptable: pieceToValidate,
         },
         this.allTransactions()
       );
@@ -966,6 +995,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       }
 
       const updateResult = await this.cashierService.updateTransaction(activeId, {
+        pieceComptable: pieceToValidate,
         date: formattedDate,
         libelle: libelle,
         service: (formValues.service as Service) || '',

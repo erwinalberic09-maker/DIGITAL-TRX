@@ -58,7 +58,7 @@ export class NotificationService {
   /**
    * Notification de Succès
    */
-  public success(message: string, title: string = 'Succès', duration?: number): string {
+  public success(message: string, title = 'Succès', duration?: number): string {
     return this.show({
       type: 'success',
       title,
@@ -71,7 +71,7 @@ export class NotificationService {
   /**
    * Notification d'Avertissement
    */
-  public warning(message: string, title: string = 'Avertissement', duration?: number): string {
+  public warning(message: string, title = 'Avertissement', duration?: number): string {
     return this.show({
       type: 'warning',
       title,
@@ -84,7 +84,7 @@ export class NotificationService {
   /**
    * Notification d'Erreur (sticky par défaut pour garantir la lecture par l'utilisateur)
    */
-  public error(message: string, title: string = 'Erreur', sticky: boolean = true, duration?: number): string {
+  public error(message: string, title = 'Erreur', sticky = true, duration?: number): string {
     return this.show({
       type: 'error',
       title,
@@ -97,7 +97,7 @@ export class NotificationService {
   /**
    * Notification d'Information
    */
-  public info(message: string, title: string = 'Information', duration?: number): string {
+  public info(message: string, title = 'Information', duration?: number): string {
     return this.show({
       type: 'info',
       title,

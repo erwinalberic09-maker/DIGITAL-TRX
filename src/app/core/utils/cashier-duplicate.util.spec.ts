@@ -1,9 +1,11 @@
 import {
+  findDuplicatePieceComptable,
   findDuplicateTransaction,
   formatIsoToDisplayDate,
   generateTransactionFingerprint,
   normalizeDateForComparison,
   normalizeMontant,
+  normalizePieceComptable,
   toStandardIsoDateString,
 } from './cashier-duplicate.util';
 
@@ -27,6 +29,7 @@ describe('CashierDuplicateUtil', () => {
       expect(fp).toBe('2026-09-16|-78000|carburant|d1|commercial');
     });
   });
+
   describe('formatIsoToDisplayDate', () => {
     it('devrait convertir une chaîne ISO UTC en JJ/MM/AAAA sans décalage horaire (Cas nominal)', () => {
       const result = formatIsoToDisplayDate('2026-09-16T00:00:00.000Z');
@@ -67,6 +70,66 @@ describe('CashierDuplicateUtil', () => {
     });
   });
 
+  describe('normalizePieceComptable', () => {
+    it('devrait normaliser un numéro de pièce comptable en majuscules et sans espaces (Cas nominal)', () => {
+      expect(normalizePieceComptable(' csh1 / 2026 / 00001 ')).toBe('CSH1/2026/00001');
+      expect(normalizePieceComptable('CSH1/2026/00042')).toBe('CSH1/2026/00042');
+    });
+
+    it('devrait renvoyer une chaîne vide pour les valeurs nulles, indéfinies ou vides (Cas limite)', () => {
+      expect(normalizePieceComptable(null)).toBe('');
+      expect(normalizePieceComptable(undefined)).toBe('');
+      expect(normalizePieceComptable('   ')).toBe('');
+    });
+  });
+
+  describe('findDuplicatePieceComptable', () => {
+    const existingList = [
+      { id: 'tx-1', pieceComptable: 'CSH1/2026/00001' },
+      { id: 'tx-2', pieceComptable: 'CSH1/2026/00002' },
+    ];
+
+    it('devrait détecter un doublon de pièce même avec casse et espaces différents (Cas nominal)', () => {
+      const duplicate = findDuplicatePieceComptable(
+        { pieceComptable: '  csh1 / 2026 / 00001 ' },
+        existingList
+      );
+      expect(duplicate).toBeDefined();
+      expect(duplicate?.id).toBe('tx-1');
+    });
+
+    it('devrait supporter les propriétés snake_case piece_comptable (Compatibilité base)', () => {
+      const dbList = [{ id: 'tx-99', piece_comptable: 'CSH1/2026/00099' }];
+      const duplicate = findDuplicatePieceComptable(
+        { piece_comptable: 'CSH1/2026/00099' },
+        dbList
+      );
+      expect(duplicate).toBeDefined();
+      expect(duplicate?.id).toBe('tx-99');
+    });
+
+    it('ne devrait pas détecter de doublon si la pièce est différente (Cas nominal négatif)', () => {
+      const duplicate = findDuplicatePieceComptable(
+        { pieceComptable: 'CSH1/2026/00003' },
+        existingList
+      );
+      expect(duplicate).toBeUndefined();
+    });
+
+    it('devrait ignorer la ligne courante lors de la modification avec le même ID (Cas limite mise à jour)', () => {
+      const duplicate = findDuplicatePieceComptable(
+        { id: 'tx-1', pieceComptable: 'CSH1/2026/00001' },
+        existingList
+      );
+      expect(duplicate).toBeUndefined();
+    });
+
+    it('devrait retourner undefined si la pièce candidate est vide', () => {
+      expect(findDuplicatePieceComptable({ pieceComptable: '' }, existingList)).toBeUndefined();
+      expect(findDuplicatePieceComptable({ pieceComptable: null }, existingList)).toBeUndefined();
+    });
+  });
+
   describe('findDuplicateTransaction', () => {
     const existingList = [
       {
@@ -77,8 +140,25 @@ describe('CashierDuplicateUtil', () => {
         libelle: 'Carburant Véhicule',
         noDossier: 'DOS-2026-001',
         service: 'COMMERCIAL',
+        pieceComptable: 'CSH1/2026/00001',
       },
     ];
+
+    it('devrait détecter un doublon immédiatement par numéro de pièce comptable même avec libellé distinct (Priorité pièce)', () => {
+      const candidate = {
+        date: '20/09/2026',
+        montant: -10000,
+        category: 'sortie',
+        libelle: 'Fournitures de bureau',
+        noDossier: 'DOS-AUTRE',
+        service: 'ADMINISTRATION',
+        pieceComptable: 'CSH1/2026/00001',
+      };
+
+      const duplicate = findDuplicateTransaction(candidate, existingList);
+      expect(duplicate).toBeDefined();
+      expect(duplicate?.id).toBe('tx-1');
+    });
 
     it('devrait détecter un doublon identique même si le format de date ou de texte varie légèrement (Cas nominal)', () => {
       const candidate = {
@@ -118,6 +198,7 @@ describe('CashierDuplicateUtil', () => {
         libelle: 'Carburant Véhicule',
         noDossier: 'DOS-2026-001',
         service: 'COMMERCIAL',
+        pieceComptable: 'CSH1/2026/00001',
       };
 
       const duplicate = findDuplicateTransaction(candidate, existingList);

@@ -185,7 +185,51 @@ export function generateTransactionFingerprint(op: {
 }
 
 /**
- * Recherche si une opération donnée est un doublon d'une liste d'opérations existantes.
+ * Normalise un numéro de pièce comptable pour comparaison stricte (majuscules, sans espaces).
+ * Exemple : ' csh1 / 2026 / 00001 ' -> 'CSH1/2026/00001'
+ */
+export function normalizePieceComptable(piece?: string | null): string {
+  if (!piece) return '';
+  return piece
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '');
+}
+
+/**
+ * Recherche si un numéro de pièce comptable est déjà utilisé dans une liste d'opérations existantes.
+ * Ignore la ligne si candidate.id === item.id (cas d'une mise à jour de la même opération).
+ */
+export function findDuplicatePieceComptable<T extends {
+  id?: string;
+  pieceComptable?: string | null;
+  piece_comptable?: string | null;
+}>(
+  candidate: {
+    id?: string;
+    pieceComptable?: string | null;
+    piece_comptable?: string | null;
+  },
+  existingList: T[]
+): T | undefined {
+  const targetPiece = normalizePieceComptable(candidate.pieceComptable ?? candidate.piece_comptable);
+  if (!targetPiece) {
+    return undefined;
+  }
+
+  return existingList.find((item) => {
+    if (candidate.id && item.id && candidate.id === item.id) {
+      return false;
+    }
+    const itemPiece = normalizePieceComptable(item.pieceComptable ?? item.piece_comptable);
+    return itemPiece === targetPiece;
+  });
+}
+
+/**
+ * Recherche si une opération donnée est un doublon d'une liste d'opérations existantes :
+ * 1. En priorité absolue : unicité stricte du numéro de pièce comptable si renseigné.
+ * 2. En second lieu : empreinte métier (Date + Montant + Libellé + N° de dossier/matricule + Service).
  * Retourne la transaction existante correspondante si trouvée, sinon undefined.
  */
 export function findDuplicateTransaction<T extends {
@@ -196,6 +240,8 @@ export function findDuplicateTransaction<T extends {
   libelle?: string | null;
   noDossier?: string | null;
   service?: string | null;
+  pieceComptable?: string | null;
+  piece_comptable?: string | null;
 }>(
   candidate: {
     id?: string;
@@ -205,9 +251,18 @@ export function findDuplicateTransaction<T extends {
     libelle?: string | null;
     noDossier?: string | null;
     service?: string | null;
+    pieceComptable?: string | null;
+    piece_comptable?: string | null;
   },
   existingList: T[]
 ): T | undefined {
+  // 1. Vérification stricte par numéro de pièce comptable
+  const pieceDuplicate = findDuplicatePieceComptable(candidate, existingList);
+  if (pieceDuplicate) {
+    return pieceDuplicate;
+  }
+
+  // 2. Vérification par empreinte métier
   const candidateFingerprint = generateTransactionFingerprint(candidate);
   if (!candidateFingerprint || candidateFingerprint === '||||') {
     return undefined;

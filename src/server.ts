@@ -711,6 +711,15 @@ const attachPiecesComptables = async (
     }
 
     return rows.map((row) => {
+      const existingPiece = typeof row['piece_comptable'] === 'string' && row['piece_comptable'].trim()
+        ? row['piece_comptable'].trim().toUpperCase().replace(/\s+/g, '')
+        : null;
+      if (existingPiece) {
+        return {
+          ...row,
+          piece_comptable: existingPiece,
+        };
+      }
       const rowId = typeof row['id'] === 'string' ? row['id'] : String(row['id'] || '');
       const rawDate = row['date'];
       const dateVal = typeof rawDate === 'string' || typeof rawDate === 'number' ? rawDate : Date.now();
@@ -757,7 +766,7 @@ const getOperationsHandler = async (req: express.Request, res: express.Response)
 
     const { data, error, count } = await adminClient
       .from('cashier_transactions')
-      .select('id, date, libelle, service, type_description, category, status, no_dossier, dossier_id, first_name, partenaire, employee, employee_id, created_by, quantity, montant, solde_apres, selected, created_at, updated_at', { count: 'exact' })
+      .select('id, piece_comptable, date, libelle, service, type_description, category, status, no_dossier, dossier_id, first_name, partenaire, employee, employee_id, created_by, quantity, montant, solde_apres, selected, created_at, updated_at', { count: 'exact' })
       .order('date', { ascending: false })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -898,6 +907,10 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
     const callerId: string | null = authenticatedUser?.id || null;
 
     const payload = req.body || {};
+    const rawPiece = payload.pieceComptable || payload.piece_comptable;
+    const candidatePiece = typeof rawPiece === 'string' && rawPiece.trim()
+      ? rawPiece.trim().toUpperCase().replace(/\s+/g, '')
+      : null;
     const libelle = typeof payload.libelle === 'string' ? payload.libelle.trim() : '';
     const service = payload.service || payload.typeTransaction || payload.type_transaction || null;
     const typeDescription = payload.typeDescription || payload.type_description || null;
@@ -917,6 +930,22 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
     if (isNaN(montant)) {
       res.status(400).json({ error: 'Le montant de l’opération doit être un nombre valide.' });
       return;
+    }
+
+    // Contrôle d'unicité strict du numéro de pièce comptable en priorité absolue
+    if (candidatePiece) {
+      const { data: pieceDup } = await adminClient
+        .from('cashier_transactions')
+        .select('id, piece_comptable, date, libelle')
+        .eq('piece_comptable', candidatePiece)
+        .maybeSingle();
+
+      if (pieceDup) {
+        res.status(409).json({
+          error: `Erreur d'unicité : le numéro de pièce comptable "${candidatePiece}" est déjà attribué à une autre opération (ID: ${pieceDup.id}, Libellé: "${pieceDup.libelle}"). Les numéros de pièce comptable doivent être strictement uniques.`,
+        });
+        return;
+      }
     }
 
     // Normalisation absolue du signe du montant selon la catégorie
@@ -965,6 +994,7 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
     const status = payload.status === 'posted' ? 'posted' : (payload.status === 'cancelled' ? 'cancelled' : 'draft');
 
     const rowToInsert = {
+      piece_comptable: candidatePiece,
       libelle,
       service,
       type_description: typeDescription,
@@ -982,7 +1012,7 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       date: payload.date ? (typeof payload.date === 'string' ? payload.date : new Date(payload.date).toISOString()) : new Date().toISOString(),
     };
 
-    console.log(`[AUDIT CASHIER] Création opération par [${authenticatedUser?.email || callerId || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'}) : Montant=${montant}, Libellé="${libelle}"`);
+    console.log(`[AUDIT CASHIER] Création opération par [${authenticatedUser?.email || callerId || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'}) : Montant=${montant}, Libellé="${libelle}", Pièce="${candidatePiece || 'auto'}"`);
 
     const { data, error } = await adminClient
       .from('cashier_transactions')
@@ -992,6 +1022,13 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
 
     if (error) {
       console.error('Erreur SQL lors de l’insertion de l’opération:', error.message);
+      const isUniqueViolation = error.code === '23505' || error.message?.toLowerCase().includes('unique') || error.message?.includes('duplicate key');
+      if (isUniqueViolation) {
+        res.status(409).json({
+          error: `Erreur d'unicité (SQL 23505) : le numéro de pièce comptable "${candidatePiece || 'indéfini'}" existe déjà dans la base de données.`,
+        });
+        return;
+      }
       res.status(500).json({ error: error.message });
       return;
     }
@@ -1152,6 +1189,30 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       updateData['date'] = typeof payload.date === 'string' ? payload.date : new Date(payload.date).toISOString();
     }
 
+    if (payload.pieceComptable !== undefined || payload.piece_comptable !== undefined) {
+      const rawPiece = payload.pieceComptable ?? payload.piece_comptable;
+      const targetPiece = typeof rawPiece === 'string' && rawPiece.trim()
+        ? rawPiece.trim().toUpperCase().replace(/\s+/g, '')
+        : null;
+
+      if (targetPiece) {
+        const { data: pieceDup } = await adminClient
+          .from('cashier_transactions')
+          .select('id, piece_comptable, date, libelle')
+          .eq('piece_comptable', targetPiece)
+          .neq('id', targetId)
+          .maybeSingle();
+
+        if (pieceDup) {
+          res.status(409).json({
+            error: `Modification refusée : le numéro de pièce comptable "${targetPiece}" est déjà attribué à une autre opération (ID: ${pieceDup.id}, Libellé: "${pieceDup.libelle}").`,
+          });
+          return;
+        }
+      }
+      updateData['piece_comptable'] = targetPiece;
+    }
+
     if (Object.keys(updateData).length === 0) {
       res.status(400).json({ error: 'Aucun champ à modifier fourni' });
       return;
@@ -1205,6 +1266,13 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
 
     if (error) {
       console.error('Erreur SQL lors de la mise à jour de l’opération:', error.message);
+      const isUniqueViolation = error.code === '23505' || error.message?.toLowerCase().includes('unique') || error.message?.includes('duplicate key');
+      if (isUniqueViolation) {
+        res.status(409).json({
+          error: `Erreur d'unicité (SQL 23505) : le numéro de pièce comptable est déjà utilisé dans la base de données.`,
+        });
+        return;
+      }
       res.status(500).json({ error: error.message });
       return;
     }

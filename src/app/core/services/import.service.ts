@@ -15,6 +15,7 @@ export interface ImportError {
 }
 
 export interface ParsedImportRow {
+  pieceComptable?: string;
   date: string;
   libelle: string;
   partenaire?: string;

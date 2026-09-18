@@ -214,4 +214,89 @@ describe('CashierService - Architecture Hybride & Signals', () => {
     service.setSearchQuery('');
     expect(service.filteredTransactions().length).toBe(1);
   });
+
+  it('devrait calculer la prochaine pièce comptable séquentielle nextPieceComptable (Cas nominal)', async () => {
+    const currentYear = new Date().getFullYear() || 2026;
+    expect(service.nextPieceComptable()).toBe(`CSH1/${currentYear}/00001`);
+
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({
+          operations: [
+            {
+              id: 'row-1',
+              piece_comptable: `CSH1/${currentYear}/00005`,
+              date: new Date().toISOString(),
+              libelle: 'Opération avec pièce',
+              montant: 10000,
+              category: 'entree',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as typeof globalThis.fetch;
+
+    await service.loadTransactions();
+
+    expect(service.nextPieceComptable()).toBe(`CSH1/${currentYear}/00006`);
+  });
+
+  it('devrait bloquer immédiatement la création si le numéro de pièce comptable existe déjà (Cas d’erreur)', async () => {
+    const currentYear = new Date().getFullYear() || 2026;
+    const existingPiece = `CSH1/${currentYear}/00010`;
+
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({
+          operations: [
+            {
+              id: 'row-existing',
+              piece_comptable: existingPiece,
+              date: new Date().toISOString(),
+              libelle: 'Opération déjà présente',
+              montant: 50000,
+              category: 'entree',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as typeof globalThis.fetch;
+
+    await service.loadTransactions();
+
+    const result = await service.saveOperationViaApi({
+      pieceComptable: existingPiece,
+      libelle: 'Nouvelle opération avec même pièce',
+      montant: 25000,
+      category: 'entree',
+    });
+
+    expect(result.success).toBeFalse();
+    expect(result.error).toContain(existingPiece);
+    expect(service.error()).toContain('déjà attribué');
+  });
+
+  it('devrait propager le rejet HTTP 409 renvoyé par le serveur si un doublon survient côté serveur', async () => {
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({
+          error: 'Erreur d\'unicité : le numéro de pièce comptable "CSH1/2026/00099" est déjà attribué.',
+        }),
+        { status: 409, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as typeof globalThis.fetch;
+
+    const result = await service.saveOperationViaApi({
+      pieceComptable: 'CSH1/2026/00099',
+      libelle: 'Tentative avec pièce en conflit',
+      montant: 12000,
+      category: 'sortie',
+    });
+
+    expect(result.success).toBeFalse();
+    expect(result.error).toContain('Erreur d\'unicité');
+    expect(service.error()).toContain('CSH1/2026/00099');
+  });
 });
