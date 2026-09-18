@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { Injectable, computed, signal } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 
 export type NotificationType = 'success' | 'warning' | 'error' | 'info';
@@ -17,6 +17,9 @@ export interface AppNotification {
   providedIn: 'root',
 })
 export class NotificationService {
+  private readonly _notifications = signal<AppNotification[]>([]);
+  public readonly notifications = computed(() => this._notifications());
+
   private readonly notificationsSubject = new BehaviorSubject<AppNotification[]>([]);
   public readonly notifications$: Observable<AppNotification[]> = this.notificationsSubject.asObservable();
 
@@ -26,7 +29,7 @@ export class NotificationService {
    * Retourne la liste actuelle des notifications actives
    */
   public getNotifications(): AppNotification[] {
-    return this.notificationsSubject.getValue();
+    return this._notifications();
   }
 
   /**
@@ -40,8 +43,9 @@ export class NotificationService {
       timestamp: new Date(),
     };
 
-    const current = this.notificationsSubject.getValue();
-    this.notificationsSubject.next([...current, newNotif]);
+    const updated = [...this._notifications(), newNotif];
+    this._notifications.set(updated);
+    this.notificationsSubject.next(updated);
 
     const isSticky = newNotif.sticky || newNotif.duration === 0;
     const duration = newNotif.duration ?? (isSticky ? 0 : this.defaultDuration);
@@ -111,14 +115,16 @@ export class NotificationService {
    * Ferme une notification par son identifiant
    */
   public dismiss(id: string): void {
-    const current = this.notificationsSubject.getValue();
-    this.notificationsSubject.next(current.filter((notif) => notif.id !== id));
+    const updated = this._notifications().filter((notif) => notif.id !== id);
+    this._notifications.set(updated);
+    this.notificationsSubject.next(updated);
   }
 
   /**
    * Supprime toutes les notifications actives
    */
   public clear(): void {
+    this._notifications.set([]);
     this.notificationsSubject.next([]);
   }
 }

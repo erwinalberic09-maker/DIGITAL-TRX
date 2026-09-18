@@ -15,6 +15,7 @@ import {
 import { SupabaseService } from './supabase.service';
 import { AuthService } from './auth.service';
 import { ExportService } from './export.service';
+import { NotificationService } from './notification.service';
 import { ParsedImportRow } from './import.service';
 
 export interface CashierDbRow {
@@ -53,6 +54,7 @@ export class CashierService implements OnDestroy {
   private readonly supabaseService = inject(SupabaseService);
   private readonly authService = inject(AuthService);
   private readonly exportService = inject(ExportService);
+  private readonly notificationService = inject(NotificationService);
   private readonly platformId = inject(PLATFORM_ID);
   private readonly isBrowser = isPlatformBrowser(this.platformId);
 
@@ -69,6 +71,15 @@ export class CashierService implements OnDestroy {
       this.errorTimeout = null;
     }
     this._error.set(message);
+
+    if (message) {
+      const lower = message.toLowerCase();
+      if (lower.includes('doublon') || lower.includes('pièce comptable') || lower.includes('identique') || lower.includes('déjà attribué') || lower.includes('déjà enregistré')) {
+        this.notificationService.warning(message, 'Doublon détecté');
+      } else {
+        this.notificationService.error(message, 'Erreur');
+      }
+    }
   }
 
   constructor() {
@@ -337,7 +348,7 @@ export class CashierService implements OnDestroy {
       const pieceDuplicate = findDuplicatePieceComptable({ pieceComptable: candidatePiece }, this._transactions());
       if (pieceDuplicate) {
         const errorMsg = `Le numéro de pièce comptable "${candidatePiece}" est déjà attribué à une autre opération (ID: ${pieceDuplicate.id}, Date: ${pieceDuplicate.date}, Libellé: "${pieceDuplicate.libelle}"). Les numéros de pièces comptables doivent être strictement uniques.`;
-        this._error.set(errorMsg);
+        this.setError(errorMsg);
         return { success: false, error: errorMsg };
       }
     }
@@ -359,7 +370,7 @@ export class CashierService implements OnDestroy {
     if (existingDuplicate) {
       const montantFmt = Math.abs(Number(existingDuplicate.montant)).toLocaleString('fr-FR');
       const errorMsg = `Opération déjà enregistrée : une opération identique existe déjà en caisse (Date: ${existingDuplicate.date}, Montant: ${montantFmt} FCFA, Service: ${existingDuplicate.service || 'N/A'}, Libellé: "${existingDuplicate.libelle}"). La double saisie est interdite.`;
-      this._error.set(errorMsg);
+      this.setError(errorMsg);
       return { success: false, error: errorMsg };
     }
 
@@ -409,7 +420,7 @@ export class CashierService implements OnDestroy {
         // RÈGLE D'OR : Si le serveur signale un doublon (409 Conflict) ou un refus explicite,
         // stoppe immédiatement : aucun repli pirate n'est toléré.
         if (response.status === 409 || response.status === 400 || response.status === 403) {
-          this._error.set(serverError);
+          this.setError(serverError);
           return { success: false, error: serverError };
         }
 
@@ -418,7 +429,7 @@ export class CashierService implements OnDestroy {
     } catch (apiErr: unknown) {
       const errMsg = apiErr instanceof Error ? apiErr.message : String(apiErr);
       if (errMsg.includes('doublon') || errMsg.includes('409') || errMsg.includes('interdite') || errMsg.includes('pièce')) {
-        this._error.set(errMsg);
+        this.setError(errMsg);
         return { success: false, error: errMsg };
       }
 
@@ -439,7 +450,7 @@ export class CashierService implements OnDestroy {
 
             if (pieceCheck && pieceCheck.length > 0) {
               const dupError = `Erreur d'unicité : le numéro de pièce comptable "${candidatePiece}" existe déjà en base de données.`;
-              this._error.set(dupError);
+              this.setError(dupError);
               return { success: false, error: dupError };
             }
           }
@@ -464,7 +475,7 @@ export class CashierService implements OnDestroy {
             );
             if (dbDup) {
               const dupError = `Opération déjà existante en base de données (doublon détecté). Insertion refusée.`;
-              this._error.set(dupError);
+              this.setError(dupError);
               return { success: false, error: dupError };
             }
           }
@@ -500,7 +511,7 @@ export class CashierService implements OnDestroy {
             const errorMsg = isUniqueViolation
               ? `Erreur d'unicité (SQL 23505) : le numéro de pièce comptable "${candidatePiece}" existe déjà dans la base de données.`
               : error.message;
-            this._error.set(errorMsg);
+            this.setError(errorMsg);
           }
         }
       } catch (directErr) {
@@ -511,7 +522,7 @@ export class CashierService implements OnDestroy {
     // Si aucune sauvegarde réelle n'a pu être actée, NE JAMAIS injecter de ligne factice locale
     if (!savedRow) {
       const failureMsg = this._error() || 'Impossible d’enregistrer l’opération : échec de validation du serveur.';
-      this._error.set(failureMsg);
+      this.setError(failureMsg);
       return { success: false, error: failureMsg };
     }
 
@@ -671,7 +682,7 @@ export class CashierService implements OnDestroy {
         const pieceDuplicate = findDuplicatePieceComptable({ id, pieceComptable: targetPiece }, this._transactions());
         if (pieceDuplicate) {
           const errorMsg = `Modification refusée : le numéro de pièce comptable "${targetPiece}" est déjà attribué à une autre opération (ID: ${pieceDuplicate.id}, Date: ${pieceDuplicate.date}, Libellé: "${pieceDuplicate.libelle}"). Un numéro de pièce doit être strictement unique.`;
-          this._error.set(errorMsg);
+          this.setError(errorMsg);
           return { success: false, message: errorMsg };
         }
       }
@@ -689,7 +700,7 @@ export class CashierService implements OnDestroy {
       const duplicate = findDuplicateTransaction(candidate, this._transactions());
       if (duplicate) {
         const errorMsg = `Modification refusée : une opération identique existe déjà en caisse (Date: ${duplicate.date}, Montant: ${duplicate.montant} FCFA, Service: ${duplicate.service || 'N/A'}, Libellé: "${duplicate.libelle}").`;
-        this._error.set(errorMsg);
+        this.setError(errorMsg);
         return { success: false, message: errorMsg };
       }
     }
@@ -1016,7 +1027,7 @@ export class CashierService implements OnDestroy {
       } else {
         const errJson = await response.json().catch(() => ({}));
         const serverError = errJson.error || `Erreur lors de la duplication (${response.status})`;
-        this._error.set(serverError);
+        this.setError(serverError);
         return false;
       }
     } catch (netErr) {
@@ -1054,7 +1065,7 @@ export class CashierService implements OnDestroy {
           .select();
 
         if (error) {
-          this._error.set(error.message);
+          this.setError(error.message);
           return false;
         }
 
@@ -1128,7 +1139,7 @@ export class CashierService implements OnDestroy {
           .in('id', selectedIds);
 
         if (error) {
-          this._error.set(error.message);
+          this.setError(error.message);
           return false;
         }
 
