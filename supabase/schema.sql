@@ -51,6 +51,77 @@ BEGIN
 END;
 $function$;
 
+-- 3.1 GESTION DÉTERMINISTE DES PIÈCES COMPTABLES (CSH1/YYYY/00000)
+-- Séquence et trigger garantissant l'unicité et le calcul unique à l'insertion
+CREATE TABLE IF NOT EXISTS public.cashier_piece_counters (
+    year integer PRIMARY KEY,
+    last_seq integer NOT NULL DEFAULT 0,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE public.cashier_piece_counters IS 'Compteur atomique pour l''attribution déterministe des numéros de pièces comptables de caisse par année.';
+
+CREATE OR REPLACE FUNCTION public.get_next_piece_comptable(p_year integer)
+RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+DECLARE
+    v_next_val integer;
+    v_piece text;
+BEGIN
+    IF p_year IS NULL OR p_year < 2000 OR p_year > 2100 THEN
+        p_year := EXTRACT(YEAR FROM CURRENT_DATE)::integer;
+    END IF;
+
+    -- Incrémentation atomique avec verrou de ligne
+    INSERT INTO public.cashier_piece_counters (year, last_seq, updated_at)
+    VALUES (p_year, 1, now())
+    ON CONFLICT (year) DO UPDATE
+        SET last_seq = public.cashier_piece_counters.last_seq + 1,
+            updated_at = now()
+    RETURNING last_seq INTO v_next_val;
+
+    v_piece := 'CSH1/' || p_year::text || '/' || LPAD(v_next_val::text, 5, '0');
+    RETURN v_piece;
+END;
+$function$;
+
+-- Trigger BEFORE INSERT pour assigner automatiquement piece_comptable si absente
+CREATE OR REPLACE FUNCTION public.set_cashier_piece_comptable()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+DECLARE
+    v_year integer;
+    v_parts text[];
+BEGIN
+    -- Si déjà fourni et valide au format CSH1/YYYY/XXXXX, on conserve
+    IF NEW.piece_comptable IS NOT NULL AND NEW.piece_comptable ~ '^CSH1/[0-9]{4}/[0-9]{5}$' THEN
+        RETURN NEW;
+    END IF;
+
+    -- Déterminer l'année depuis la date (DD/MM/YYYY ou YYYY-MM-DD) ou now()
+    v_year := NULL;
+    IF NEW.date IS NOT NULL AND NEW.date <> '' THEN
+        IF NEW.date ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$' THEN
+            v_parts := string_to_array(NEW.date, '/');
+            v_year := v_parts[3]::integer;
+        ELSIF NEW.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN
+            v_year := SUBSTRING(NEW.date FROM 1 FOR 4)::integer;
+        END IF;
+    END IF;
+
+    IF v_year IS NULL THEN
+        v_year := EXTRACT(YEAR FROM COALESCE(NEW.created_at, now()))::integer;
+    END IF;
+
+    NEW.piece_comptable := public.get_next_piece_comptable(v_year);
+    RETURN NEW;
+END;
+$function$;
+
 -- Rôle de l'utilisateur courant (auth.uid()), utilisé par is_admin() et les policies
 CREATE OR REPLACE FUNCTION public.get_current_user_role()
 RETURNS public.user_role_enum
@@ -312,6 +383,11 @@ CREATE INDEX IF NOT EXISTS idx_cashier_transactions_employee_id ON public.cashie
 CREATE INDEX IF NOT EXISTS idx_cashier_transactions_dossier_id ON public.cashier_transactions (dossier_id);
 CREATE INDEX IF NOT EXISTS idx_cashier_transactions_created_by ON public.cashier_transactions (created_by);
 
+DROP TRIGGER IF EXISTS trg_cashier_transactions_piece_comptable ON public.cashier_transactions;
+CREATE TRIGGER trg_cashier_transactions_piece_comptable
+    BEFORE INSERT ON public.cashier_transactions
+    FOR EACH ROW EXECUTE FUNCTION public.set_cashier_piece_comptable();
+
 DROP TRIGGER IF EXISTS trg_cashier_transactions_updated_at ON public.cashier_transactions;
 CREATE TRIGGER trg_cashier_transactions_updated_at
     BEFORE UPDATE ON public.cashier_transactions
@@ -381,6 +457,57 @@ CREATE POLICY "cashier_transactions_delete_admin_only"
               AND profiles.role = 'admin'
         )
     );
+
+-- 7. SCRIPT DE RATTRAPAGE INITIAL (BACKFILL)
+-- Initialise le compteur et affecte un numéro aux transactions historiques sans piece_comptable
+DO $$
+DECLARE
+    r RECORD;
+    v_year integer;
+    v_parts text[];
+BEGIN
+    -- Synchroniser les compteurs avec les numéros existants
+    FOR r IN (
+        SELECT 
+            SUBSTRING(piece_comptable FROM 'CSH1/([0-9]{4})')::integer AS yr,
+            MAX(SUBSTRING(piece_comptable FROM 'CSH1/[0-9]{4}/([0-9]+)')::integer) AS max_seq
+        FROM public.cashier_transactions
+        WHERE piece_comptable ~ '^CSH1/[0-9]{4}/[0-9]+$'
+        GROUP BY 1
+    ) LOOP
+        INSERT INTO public.cashier_piece_counters (year, last_seq, updated_at)
+        VALUES (r.yr, r.max_seq, now())
+        ON CONFLICT (year) DO UPDATE
+            SET last_seq = GREATEST(public.cashier_piece_counters.last_seq, EXCLUDED.last_seq),
+                updated_at = now();
+    END LOOP;
+
+    -- Attribuer un numéro aux lignes orphelines
+    FOR r IN (
+        SELECT id, date, created_at
+        FROM public.cashier_transactions
+        WHERE piece_comptable IS NULL OR piece_comptable = ''
+        ORDER BY created_at ASC, id ASC
+    ) LOOP
+        v_year := NULL;
+        IF r.date IS NOT NULL AND r.date <> '' THEN
+            IF r.date ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$' THEN
+                v_parts := string_to_array(r.date, '/');
+                v_year := v_parts[3]::integer;
+            ELSIF r.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN
+                v_year := SUBSTRING(r.date FROM 1 FOR 4)::integer;
+            END IF;
+        END IF;
+
+        IF v_year IS NULL THEN
+            v_year := EXTRACT(YEAR FROM COALESCE(r.created_at, now()))::integer;
+        END IF;
+
+        UPDATE public.cashier_transactions
+        SET piece_comptable = public.get_next_piece_comptable(v_year)
+        WHERE id = r.id;
+    END LOOP;
+END $$;
 
 -- ==============================================================================
 -- NOTES (à lire avant toute modification de ce fichier)

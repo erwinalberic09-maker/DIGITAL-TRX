@@ -680,59 +680,45 @@ app.delete('/api/admin/users/:id', requireAdmin, deleteCollaboratorHandler);
  * Toutes les écritures et consultations prioritaires passent par ces routes.
  * Elles effectuent la validation des données, contrôlent les droits et interagissent
  * avec PostgreSQL via Supabase Admin avec la clé de service.
+ * Les pièces comptables au format CSH1/YYYY/00000 sont attribuées une seule fois de manière
+ * déterministe à l'insertion et directement servies sans recalcul complet de table.
  */
 
 /**
- * Enrichit les opérations de caisse avec leur numéro de pièce comptable séquentiel CSH1/AAAA/XXXXX
- * basé sur l'ordre chronologique d'enregistrement par exercice comptable.
+ * Normalise et garantit le format d'une pièce comptable déjà stockée.
+ * Aucun scan de table n'est effectué.
  */
-const attachPiecesComptables = async (
-  client: NonNullable<ReturnType<typeof getSupabaseAdmin>>,
-  rows: Record<string, unknown>[]
-): Promise<Record<string, unknown>[]> => {
-  if (!rows || rows.length === 0) return rows;
-  try {
-    const { data: allSeqRows } = await client
-      .from('cashier_transactions')
-      .select('id, date, created_at')
-      .order('date', { ascending: true })
-      .order('created_at', { ascending: true });
+const formatPersistedPieceComptable = (row: Record<string, unknown>): Record<string, unknown> => {
+  const existingPiece = typeof row['piece_comptable'] === 'string' && row['piece_comptable'].trim()
+    ? row['piece_comptable'].trim().toUpperCase().replace(/\s+/g, '')
+    : null;
 
-    const pieceMap = new Map<string, string>();
-    if (allSeqRows && Array.isArray(allSeqRows)) {
-      const yearCounters: Record<string, number> = {};
-      for (const r of allSeqRows) {
-        const rawYear = r.date ? new Date(r.date).getFullYear() : 2026;
-        const year = isNaN(rawYear) ? 2026 : rawYear;
-        yearCounters[year] = (yearCounters[year] || 0) + 1;
-        const seq = String(yearCounters[year]).padStart(5, '0');
-        pieceMap.set(r.id, `CSH1/${year}/${seq}`);
-      }
-    }
-
-    return rows.map((row) => {
-      const existingPiece = typeof row['piece_comptable'] === 'string' && row['piece_comptable'].trim()
-        ? row['piece_comptable'].trim().toUpperCase().replace(/\s+/g, '')
-        : null;
-      if (existingPiece) {
-        return {
-          ...row,
-          piece_comptable: existingPiece,
-        };
-      }
-      const rowId = typeof row['id'] === 'string' ? row['id'] : String(row['id'] || '');
-      const rawDate = row['date'];
-      const dateVal = typeof rawDate === 'string' || typeof rawDate === 'number' ? rawDate : Date.now();
-      const fallbackYear = new Date(dateVal).getFullYear() || 2026;
-      return {
-        ...row,
-        piece_comptable: pieceMap.get(rowId) || `CSH1/${fallbackYear}/00001`,
-      };
-    });
-  } catch (e) {
-    console.warn('Impossible de calculer la séquence de pièces comptables:', e);
-    return rows;
+  if (existingPiece) {
+    return {
+      ...row,
+      piece_comptable: existingPiece,
+    };
   }
+
+  const rawDate = row['date'];
+  let year = 2026;
+  if (typeof rawDate === 'string' && rawDate.trim()) {
+    if (rawDate.includes('/')) {
+      const parts = rawDate.split('/');
+      if (parts.length === 3 && parts[2]) {
+        const y = parseInt(parts[2], 10);
+        if (!isNaN(y) && y >= 2000 && y <= 2100) year = y;
+      }
+    } else {
+      const parsedYear = new Date(rawDate).getFullYear();
+      if (!isNaN(parsedYear) && parsedYear >= 2000 && parsedYear <= 2100) year = parsedYear;
+    }
+  }
+
+  return {
+    ...row,
+    piece_comptable: `CSH1/${year}/00001`,
+  };
 };
 
 /**
@@ -777,7 +763,7 @@ const getOperationsHandler = async (req: express.Request, res: express.Response)
       return;
     }
 
-    const enrichedRows = await attachPiecesComptables(adminClient, data || []);
+    const enrichedRows = (data || []).map((row) => formatPersistedPieceComptable(row));
 
     res.json({
       operations: enrichedRows,
@@ -1033,12 +1019,12 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       return;
     }
 
-    const [enrichedOperation] = await attachPiecesComptables(adminClient, [data]);
+    const enrichedOperation = formatPersistedPieceComptable(data);
 
     res.status(201).json({
       success: true,
-      operation: enrichedOperation || data,
-      transaction: enrichedOperation || data,
+      operation: enrichedOperation,
+      transaction: enrichedOperation,
       message: 'Opération enregistrée avec succès',
     });
   } catch (err: unknown) {
@@ -1277,12 +1263,12 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       return;
     }
 
-    const [enrichedOperation] = await attachPiecesComptables(adminClient, [data]);
+    const enrichedOperation = formatPersistedPieceComptable(data);
 
     res.json({
       success: true,
-      operation: enrichedOperation || data,
-      transaction: enrichedOperation || data,
+      operation: enrichedOperation,
+      transaction: enrichedOperation,
       message: 'Opération modifiée avec succès',
     });
   } catch (err: unknown) {
@@ -1468,7 +1454,7 @@ const duplicateOperationsHandler = async (req: express.Request, res: express.Res
       return;
     }
 
-    const enriched = await attachPiecesComptables(adminClient, insertedRows || []);
+    const enriched = (insertedRows || []).map((r) => formatPersistedPieceComptable(r));
     res.json({
       success: true,
       count: insertedRows?.length || 0,
@@ -1546,7 +1532,7 @@ const updateOperationsStatusHandler = async (req: express.Request, res: express.
       return;
     }
 
-    const enriched = await attachPiecesComptables(adminClient, updatedRows || []);
+    const enriched = (updatedRows || []).map((r) => formatPersistedPieceComptable(r));
     res.json({
       success: true,
       count: updatedRows?.length || 0,
