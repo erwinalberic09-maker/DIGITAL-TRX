@@ -3,11 +3,13 @@ import { CashierManagement } from './cashier-management';
 import { CashierService } from '../../core/services/cashier.service';
 import { SupabaseService } from '../../core/services/supabase.service';
 import { AuthService } from '../../core/services/auth.service';
+import { NotificationService } from '../../core/services/notification.service';
 
 describe('CashierManagement', () => {
   let component: CashierManagement;
   let fixture: ComponentFixture<CashierManagement>;
   let service: CashierService;
+  let notificationService: NotificationService;
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
@@ -15,6 +17,7 @@ describe('CashierManagement', () => {
       providers: [
         CashierService,
         SupabaseService,
+        NotificationService,
         {
           provide: AuthService,
           useValue: {
@@ -28,6 +31,7 @@ describe('CashierManagement', () => {
     fixture = TestBed.createComponent(CashierManagement);
     component = fixture.componentInstance;
     service = TestBed.inject(CashierService);
+    notificationService = TestBed.inject(NotificationService);
     fixture.detectChanges();
   });
 
@@ -189,5 +193,42 @@ describe('CashierManagement', () => {
     await component.submitInlineEdit();
     const updatedTx = service.allTransactions()[0];
     expect(updatedTx.status).toBe('draft');
+  });
+
+  it('devrait afficher une notification d’avertissement lors de la détection d’un doublon', async () => {
+    spyOn(notificationService, 'warning');
+
+    // 1. Ajouter une première transaction
+    component.startAddInline();
+    component.transactionForm.patchValue({
+      date: '18/09/2026',
+      libelle: 'Paiement fournisseur pièces',
+      category: 'sortie',
+      montant: 50000,
+      service: 'Administration',
+    });
+    await component.submitInlineTransaction();
+
+    expect(service.allTransactions().length).toBe(1);
+
+    // 2. Tenter d'ajouter exactement la même transaction (même date, montant, libellé, service)
+    component.startAddInline();
+    component.transactionForm.patchValue({
+      date: '18/09/2026',
+      libelle: 'Paiement fournisseur pièces',
+      category: 'sortie',
+      montant: 50000,
+      service: 'Administration',
+    });
+    await component.submitInlineTransaction();
+
+    // La transaction en doublon ne doit pas être insérée
+    expect(service.allTransactions().length).toBe(1);
+    // NotificationService.warning doit avoir été appelé avec un titre explicite
+    expect(notificationService.warning).toHaveBeenCalledWith(
+      jasmine.stringMatching(/Opération déjà enregistrée/),
+      'Doublon détecté'
+    );
+    expect(component.error()).toContain('Opération déjà enregistrée');
   });
 });

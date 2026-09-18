@@ -34,6 +34,7 @@ import {
 } from 'chart.js';
 import { CashierService } from '../../core/services/cashier.service';
 import { AuthService } from '../../core/services/auth.service';
+import { NotificationService } from '../../core/services/notification.service';
 import {
   CASHIER_SERVICES,
   CashierTransaction,
@@ -83,6 +84,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   private readonly caisseChartCanvas?: ElementRef<HTMLCanvasElement>;
 
   public readonly cashierService = inject(CashierService);
+  private readonly notificationService = inject(NotificationService);
   private readonly authService = inject(AuthService);
   private readonly elementRef = inject(ElementRef);
   private readonly cdr = inject(ChangeDetectorRef);
@@ -655,6 +657,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         if (pieceDuplicate) {
           const pieceMsg = `Le numéro de pièce comptable "${candidatePiece}" est déjà attribué à une autre opération (ID: ${pieceDuplicate.id}, Date: ${pieceDuplicate.date}, Libellé: "${pieceDuplicate.libelle}"). Les pièces comptables doivent être strictement uniques.`;
           this.cashierService.setError(pieceMsg);
+          this.notificationService.warning(pieceMsg, 'Pièce comptable en double');
           return;
         }
       }
@@ -677,6 +680,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         const serviceDisplay = duplicate.service || 'Sans service';
         const duplicateMsg = `Opération déjà enregistrée : une opération identique existe déjà en caisse (Date : ${duplicate.date}, Montant : ${montantDisplay} FCFA, Service : ${serviceDisplay}, Libellé : "${duplicate.libelle}"). La double saisie est interdite.`;
         this.cashierService.setError(duplicateMsg);
+        this.notificationService.warning(duplicateMsg, 'Doublon détecté');
         return;
       }
 
@@ -969,6 +973,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         if (pieceDuplicate) {
           const pieceMsg = `Modification refusée : le numéro de pièce comptable "${pieceToValidate}" est déjà attribué à une autre opération (ID: ${pieceDuplicate.id}, Libellé: "${pieceDuplicate.libelle}").`;
           this.cashierService.setError(pieceMsg);
+          this.notificationService.warning(pieceMsg, 'Pièce comptable en double');
           return;
         }
       }
@@ -991,6 +996,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         const serviceDisplay = duplicate.service || 'Sans service';
         const duplicateMsg = `Modification refusée : une opération identique existe déjà en caisse (Date : ${duplicate.date}, Montant : ${montantDisplay} FCFA, Service : ${serviceDisplay}, Libellé : "${duplicate.libelle}").`;
         this.cashierService.setError(duplicateMsg);
+        this.notificationService.warning(duplicateMsg, 'Doublon détecté');
         return;
       }
 
