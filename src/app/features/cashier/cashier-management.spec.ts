@@ -1,9 +1,17 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { BrowserTestingModule, platformBrowserTesting } from '@angular/platform-browser/testing';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { CashierManagement } from './cashier-management';
 import { CashierService } from '../../core/services/cashier.service';
 import { SupabaseService } from '../../core/services/supabase.service';
 import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
+
+try {
+  TestBed.initTestEnvironment(BrowserTestingModule, platformBrowserTesting());
+} catch {
+  // Ignorer si déjà initialisé
+}
 
 describe('CashierManagement', () => {
   let component: CashierManagement;
@@ -196,7 +204,7 @@ describe('CashierManagement', () => {
   });
 
   it('devrait afficher une notification d’avertissement lors de la détection d’un doublon', async () => {
-    spyOn(notificationService, 'warning');
+    const warningSpy = vi.spyOn(notificationService, 'warning');
 
     // 1. Ajouter une première transaction
     component.startAddInline();
@@ -225,8 +233,8 @@ describe('CashierManagement', () => {
     // La transaction en doublon ne doit pas être insérée
     expect(service.allTransactions().length).toBe(1);
     // NotificationService.warning doit avoir été appelé avec un titre explicite
-    expect(notificationService.warning).toHaveBeenCalledWith(
-      jasmine.stringMatching(/Opération déjà enregistrée/),
+    expect(warningSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/Opération déjà enregistrée/),
       'Doublon détecté'
     );
     expect(component.error()).toContain('Opération déjà enregistrée');
