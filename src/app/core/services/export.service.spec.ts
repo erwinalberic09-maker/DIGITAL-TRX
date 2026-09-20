@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { ExportService } from './export.service';
 import { AuthService } from './auth.service';
 import { CashierTransaction } from '../models/cashier-transaction.model';
 import { signal } from '@angular/core';
+import { vi } from 'vitest';
 
 describe('ExportService', () => {
   let service: ExportService;
@@ -34,6 +34,12 @@ describe('ExportService', () => {
     expect(service.escapeCsv('')).toBe('""');
   });
 
+  it('should neutralize spreadsheet formulas in CSV values', () => {
+    expect(service.escapeCsv('=HYPERLINK("https://example.com")')).toBe('"\'=HYPERLINK(""https://example.com"")"');
+    expect(service.escapeCsv('+SUM(1,2)')).toBe('"\'+SUM(1,2)"');
+    expect(service.escapeCsv('@cmd')).toBe('"\'@cmd"');
+  });
+
   it('should return false if transactions list is empty', () => {
     const result = service.exportCashierTransactionsCsv([]);
     expect(result).toBe(false);
@@ -42,7 +48,7 @@ describe('ExportService', () => {
   it('should export with balance column when user is admin', () => {
     authServiceMock.currentUser.set({ role: 'admin' });
     let wasDownloaded = false;
-    vi.spyOn(service, 'downloadCsvFile').mockImplementation(() => {
+    vi.spyOn(service as unknown as { downloadCsvFile: () => void }, 'downloadCsvFile').mockImplementation(() => {
       wasDownloaded = true;
     });
 
@@ -65,7 +71,7 @@ describe('ExportService', () => {
   it('should exclude balance column when user is comptable', () => {
     authServiceMock.currentUser.set({ role: 'comptable' });
     let capturedCsv = '';
-    vi.spyOn(service, 'downloadCsvFile').mockImplementation((csvContent: string) => {
+    vi.spyOn(service as unknown as { downloadCsvFile: (csvContent: string) => void }, 'downloadCsvFile').mockImplementation((csvContent: string) => {
       capturedCsv = csvContent;
     });
 

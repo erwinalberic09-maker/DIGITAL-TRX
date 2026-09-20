@@ -38,51 +38,9 @@ describe('CashierService - Architecture Hybride & Signals', () => {
         {
           provide: SupabaseService,
           useValue: {
-            isConfigured: () => true,
+            isConfigured: () => false,
             ensureInitialized: () => Promise.resolve(),
-            supabase: {
-              auth: {
-                getSession: () => Promise.resolve({ data: { session: null } }),
-              },
-              from: () => {
-                const queryBuilder = {
-                  select: () => {
-                    const selectChain = {
-                      eq: () => Promise.resolve({ data: null, error: null }),
-                      single: () => Promise.resolve({ data: null, error: null }),
-                    };
-                    return selectChain;
-                  },
-                  insert: () => {
-                    const insertChain = {
-                      select: () => {
-                        const selectChain2 = {
-                          single: () => Promise.resolve({
-                            data: {
-                              id: 'direct-uuid-456',
-                              piece_comptable: 'PC-123',
-                              date: new Date().toISOString(),
-                              libelle: 'Dépannage urgence',
-                              service: 'TRANSPORT',
-                              category: 'sortie',
-                              status: 'draft',
-                              montant: -20000,
-                              quantity: 1,
-                              no_dossier: '',
-                              employee: '',
-                            },
-                            error: null,
-                          }),
-                        };
-                        return selectChain2;
-                      },
-                    };
-                    return insertChain;
-                  },
-                };
-                return queryBuilder;
-              },
-            },
+            supabase: null,
           },
         },
         {
@@ -141,10 +99,10 @@ describe('CashierService - Architecture Hybride & Signals', () => {
 
     const result = await service.saveOperationViaApi({
       libelle: 'Plein carburant camion',
-      service: 'TRANSPORT',
+      typeTransaction: 'Carburant',
       typeDescription: 'Station Total',
       category: 'sortie',
-      noDossier: 'LT-5544-AA',
+      matriculeVehicule: 'LT-5544-AA',
       firstName: 'Samuel',
       employee: 'Samuel Eboa',
       quantity: 50,
@@ -165,7 +123,7 @@ describe('CashierService - Architecture Hybride & Signals', () => {
     expect(service.currentBalance()).toBe(-75000);
   });
 
-  it('devrait basculer en repli sécurisé si l’API serveur-relais renvoie une erreur', async () => {
+  it('devrait refuser l’écriture si l’API serveur-relais renvoie une erreur', async () => {
     // Simulation d'une erreur 500 sur l'API serveur
     globalThis.fetch = (async () => {
       return new Response(JSON.stringify({ error: 'Erreur serveur interne' }), {
@@ -176,16 +134,14 @@ describe('CashierService - Architecture Hybride & Signals', () => {
 
     const result = await service.saveOperationViaApi({
       libelle: 'Dépannage urgence',
-      service: 'TRANSPORT',
+      typeTransaction: 'Maintenance',
       category: 'sortie',
       montant: -20000,
     });
 
-    // Même en cas d'indisponibilité de l'API, l'état local du Signal est préservé
-    expect(result.success).toBe(true);
-    expect(service.allTransactions().length).toBe(1);
-    expect(service.allTransactions()[0].libelle).toBe('Dépannage urgence');
-    expect(service.currentBalance()).toBe(-20000);
+    expect(result.success).toBe(false);
+    expect(service.allTransactions().length).toBe(0);
+    expect(service.currentBalance()).toBe(0);
   });
 
   it('devrait récupérer les opérations via l’API rapide dans loadTransactions()', async () => {
@@ -219,31 +175,22 @@ describe('CashierService - Architecture Hybride & Signals', () => {
   });
 
   it('devrait supprimer les éléments sélectionnés et recalculer les soldes', async () => {
-    globalThis.fetch = vi.fn().mockImplementation((url, init) => {
-      if (init && init.method === 'DELETE') {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: () => Promise.resolve({ success: true, deletedCount: 1 }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
+    globalThis.fetch = (async () => {
+      return new Response(JSON.stringify({
+        success: true,
+        operation: {
+          id: 'tx-delete-1',
+          date: '2026-09-20',
+          libelle: 'Transaction à supprimer',
+          category: 'sortie',
+          montant: -10000,
+          status: 'draft',
+        },
+      }), {
         status: 200,
-        json: () => Promise.resolve({
-          operation: {
-            id: 'tx-to-delete',
-            piece_comptable: 'PC-123',
-            date: '2026-09-15',
-            libelle: 'Transaction à supprimer',
-            service: 'TRANSPORT',
-            category: 'sortie',
-            status: 'draft',
-            montant: -10000,
-          }
-        })
+        headers: { 'Content-Type': 'application/json' },
       });
-    }) as unknown as typeof globalThis.fetch;
+    }) as typeof globalThis.fetch;
 
     // Ajout d'une opération initiale
     await service.saveOperationViaApi({
@@ -283,7 +230,7 @@ describe('CashierService - Architecture Hybride & Signals', () => {
 
     await service.saveOperationViaApi({
       libelle: 'Frais de péage autoroute',
-      service: 'TRANSPORT',
+      typeTransaction: 'Péage',
       category: 'sortie',
       montant: -5000,
     });
@@ -383,50 +330,13 @@ describe('CashierService - Architecture Hybride & Signals', () => {
     expect(service.error()).toContain('CSH1/2026/00099');
   });
 
-  it('devrait basculer sur le canal de secours Supabase direct avec limitation stricte si l’API Express échoue', async () => {
-    // 1. Simuler l'échec de l'API Express
+  it('devrait refuser la lecture si l’API Express échoue sans interroger Supabase directement', async () => {
     globalThis.fetch = (async () => {
       throw new Error('API Express indisponible');
     }) as typeof globalThis.fetch;
-
-    let capturedLimit: number | null = null;
-    const mockDbRow = {
-      id: 'fallback-row-1',
-      date: new Date('2026-09-06T08:00:00Z').toISOString(),
-      libelle: 'Opération via Supabase direct bornée',
-      category: 'entree' as const,
-      montant: 150000,
-    };
-
-    const mockQueryBuilder: Record<string, unknown> = {};
-    mockQueryBuilder['select'] = () => mockQueryBuilder;
-    mockQueryBuilder['order'] = () => mockQueryBuilder;
-    mockQueryBuilder['limit'] = (lim: number) => {
-      capturedLimit = lim;
-      return Promise.resolve({ data: [mockDbRow], error: null });
-    };
-
-    const mockSupabaseClient = {
-      auth: {
-        getSession: () => Promise.resolve({ data: { session: null }, error: null }),
-      },
-      from: (table: string) => {
-        expect(table).toBe('cashier_transactions');
-        return mockQueryBuilder;
-      },
-    };
-
-    const supabaseService = TestBed.inject(SupabaseService);
-    Object.defineProperty(supabaseService, 'supabase', {
-      value: mockSupabaseClient,
-      configurable: true,
-    });
-
-    // Test avec limite personnalisée (ex. 500)
     await service.loadTransactions(500);
 
-    expect(capturedLimit).toBe(500);
-    expect(service.allTransactions().length).toBe(1);
-    expect(service.allTransactions()[0].libelle).toBe('Opération via Supabase direct bornée');
+    expect(service.allTransactions()).toEqual([]);
+    expect(service.error()).toBeNull();
   });
 });

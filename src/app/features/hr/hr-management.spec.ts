@@ -1,4 +1,3 @@
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { HrManagement } from './hr-management';
 import { UserService } from '../../core/services/user.service';
@@ -6,6 +5,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { SupabaseService } from '../../core/services/supabase.service';
 import { UserProfile } from '../../core/models/auth.model';
 import { signal } from '@angular/core';
+import { vi } from 'vitest';
 
 describe('HrManagement Component', () => {
   let component: HrManagement;
@@ -13,8 +13,8 @@ describe('HrManagement Component', () => {
     users: () => UserProfile[];
     isLoading: () => boolean;
     error: () => string | null;
-    createUser: Mock<(...args: unknown[]) => unknown>;
-    updateUser: Mock<(...args: unknown[]) => unknown>;
+    createUser: ReturnType<typeof vi.fn>;
+    updateUser: ReturnType<typeof vi.fn>;
   };
   let mockAuthService: {
     isAdmin: () => boolean;

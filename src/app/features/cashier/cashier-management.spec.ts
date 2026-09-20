@@ -1,46 +1,20 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { CashierManagement } from './cashier-management';
 import { CashierService } from '../../core/services/cashier.service';
 import { SupabaseService } from '../../core/services/supabase.service';
 import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
+import { vi } from 'vitest';
 
 describe('CashierManagement', () => {
   let component: CashierManagement;
   let fixture: ComponentFixture<CashierManagement>;
   let service: CashierService;
   let notificationService: NotificationService;
+  let originalFetch: typeof globalThis.fetch;
 
   beforeEach(async () => {
-    globalThis.fetch = vi.fn().mockImplementation((_url, init) => {
-      let bodyObj: Record<string, unknown> = {};
-      if (init && typeof init.body === 'string') {
-        bodyObj = JSON.parse(init.body) as Record<string, unknown>;
-      }
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        json: () => Promise.resolve({
-          operation: {
-            id: 'tx-mocked-' + Math.random().toString(36).substring(2, 9),
-            piece_comptable: (bodyObj['pieceComptable'] as string) || 'PC-123',
-            date: (bodyObj['date'] as string) || '2026-09-20',
-            libelle: (bodyObj['libelle'] as string) || 'Libelle',
-            service: (bodyObj['service'] as string) || 'DG',
-            category: (bodyObj['category'] as string) || 'sortie',
-            status: (bodyObj['status'] as string) || 'draft',
-            montant: (bodyObj['montant'] as number) || -100,
-            quantity: (bodyObj['quantity'] as number) || 1,
-            no_dossier: (bodyObj['noDossier'] as string) || '',
-            employee: (bodyObj['employee'] as string) || '',
-            created_by: 'usr-1',
-            created_at: new Date().toISOString(),
-          }
-        })
-      });
-    }) as unknown as typeof globalThis.fetch;
-
+    originalFetch = globalThis.fetch;
     await TestBed.configureTestingModule({
       imports: [CashierManagement],
       providers: [
@@ -57,11 +31,50 @@ describe('CashierManagement', () => {
       ],
     }).compileComponents();
 
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/supabase-config')) {
+        return new Response(JSON.stringify({ configured: false }), { status: 200 });
+      }
+
+      const method = init?.method || 'GET';
+      if (method === 'GET') {
+        return new Response(JSON.stringify({ operations: [] }), { status: 200 });
+      }
+
+      if (method === 'POST') {
+        const body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>;
+        const category = body['category'] === 'sortie' ? 'sortie' : 'entree';
+        const amount = Number(body['montant'] || 0);
+        return new Response(JSON.stringify({
+          success: true,
+          operation: {
+            id: `test-operation-${Date.now()}`,
+            date: body['date'] || '2026-09-20',
+            libelle: body['libelle'],
+            service: body['service'],
+            category,
+            status: body['status'] || 'draft',
+            no_dossier: body['noDossier'] || null,
+            employee: body['employee'] || null,
+            quantity: body['quantity'] || null,
+            montant: category === 'sortie' ? -Math.abs(amount) : Math.abs(amount),
+          },
+        }), { status: 201 });
+      }
+
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    }) as typeof globalThis.fetch;
+
     fixture = TestBed.createComponent(CashierManagement);
     component = fixture.componentInstance;
     service = TestBed.inject(CashierService);
     notificationService = TestBed.inject(NotificationService);
     fixture.detectChanges();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
   });
 
   it('devrait créer le composant', () => {
@@ -96,7 +109,7 @@ describe('CashierManagement', () => {
       libelle: 'Fournitures de bureau',
       category: 'sortie',
       montant: 25000,
-      service: 'DG',
+      service: 'Administration',
     });
 
     await component.submitInlineTransaction();
@@ -112,7 +125,7 @@ describe('CashierManagement', () => {
       libelle: 'Carburant citerne',
       category: 'sortie',
       montant: 150000,
-      service: 'TRANSPORT',
+      service: 'Opérations',
       noDossier: '',
       quantity: null,
     });
@@ -135,7 +148,7 @@ describe('CashierManagement', () => {
       id: 'tx-100',
       date: '06/09/2026',
       libelle: 'Réparation pneu',
-      service: 'DG' as const,
+      service: 'Administration' as const,
       typeDescription: '',
       category: 'sortie' as const,
       noDossier: '',
@@ -167,7 +180,7 @@ describe('CashierManagement', () => {
       libelle: 'Fournitures de bureau',
       category: 'sortie',
       montant: 20000,
-      service: 'DG',
+      service: 'Administration',
     });
     await component.submitInlineTransaction();
 
@@ -202,7 +215,7 @@ describe('CashierManagement', () => {
       libelle: 'Versement initial',
       category: 'entree',
       montant: 100000,
-      service: 'DG',
+      service: 'Administration',
       status: 'posted',
     });
 
@@ -225,7 +238,7 @@ describe('CashierManagement', () => {
   });
 
   it('devrait afficher une notification d’avertissement lors de la détection d’un doublon', async () => {
-    vi.spyOn(notificationService, 'warning').mockImplementation(() => '');
+    vi.spyOn(notificationService, 'warning');
 
     // 1. Ajouter une première transaction
     component.startAddInline();
@@ -234,7 +247,7 @@ describe('CashierManagement', () => {
       libelle: 'Paiement fournisseur pièces',
       category: 'sortie',
       montant: 50000,
-      service: 'DG',
+      service: 'Administration',
     });
     await component.submitInlineTransaction();
 
@@ -247,7 +260,7 @@ describe('CashierManagement', () => {
       libelle: 'Paiement fournisseur pièces',
       category: 'sortie',
       montant: 50000,
-      service: 'DG',
+      service: 'Administration',
     });
     await component.submitInlineTransaction();
 

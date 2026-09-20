@@ -5,6 +5,7 @@ import { signal } from '@angular/core';
 import { DashboardEmployee } from './dashboard-employee';
 import { AuthService } from '../../../core/services/auth.service';
 import { UserProfile } from '../../../core/models/auth.model';
+import { CashierService } from '../../../core/services/cashier.service';
 
 describe('DashboardEmployee', () => {
   let component: DashboardEmployee;
@@ -27,12 +28,18 @@ describe('DashboardEmployee', () => {
     waitForSession: () => Promise.resolve(),
   };
 
+  const cashierServiceMock = {
+    currentBalance: signal(0),
+    allTransactions: signal([]),
+  };
+
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [DashboardEmployee],
       providers: [
         provideRouter([]),
         { provide: AuthService, useValue: authServiceMock },
+        { provide: CashierService, useValue: cashierServiceMock },
       ],
     }).compileComponents();
 

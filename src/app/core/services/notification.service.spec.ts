@@ -1,7 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { NotificationService } from './notification.service';
-import { firstValueFrom } from 'rxjs';
+import { vi } from 'vitest';
 
 describe('NotificationService', () => {
   let service: NotificationService;
@@ -13,10 +12,11 @@ describe('NotificationService', () => {
     service = TestBed.inject(NotificationService);
   });
 
-  it('devrait être instancié avec une liste vide de notifications', async () => {
+  it('devrait être instancié avec une liste vide de notifications', () => {
     expect(service).toBeTruthy();
-    const notifs = await firstValueFrom(service.notifications$);
-    expect(notifs).toEqual([]);
+    service.notifications$.subscribe((notifs) => {
+      expect(notifs).toEqual([]);
+    });
   });
 
   it('devrait ajouter une notification de succès', () => {
