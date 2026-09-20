@@ -13,7 +13,7 @@ import helmet from 'helmet';
 import { UserRole } from './app/core/models/auth.model';
 import { getSupabaseAdmin, requireAdmin, requireAuth, requireRole } from './server/auth';
 import { getSupabaseConfigHandler } from './server/config';
-import { formatPersistedPieceComptable, normalizeDateToDay } from './server/cashier.utils';
+import { computeNextPieceComptable, formatPersistedPieceComptable, normalizeDateToDay } from './server/cashier.utils';
 import { updateCurrentUserProfileHandler } from './server/profile';
 import { createCollaboratorHandler } from './server/collaborators.create';
 import { getCollaboratorsHandler } from './server/collaborators.list';
@@ -392,8 +392,11 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
 
     const status = payload.status === 'posted' ? 'posted' : (payload.status === 'cancelled' ? 'cancelled' : 'draft');
 
+    // Si aucune pièce comptable n'est fournie, calculer et persister la prochaine séquence réelle en DB
+    const finalPieceComptable = candidatePiece || (await computeNextPieceComptable(adminClient, dateToStore));
+
     const rowToInsert = {
-      piece_comptable: candidatePiece,
+      piece_comptable: finalPieceComptable,
       libelle,
       service,
       type_description: typeDescription,
@@ -411,7 +414,7 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       date: dateToStore,
     };
 
-    console.log(`[AUDIT CASHIER] Création opération par [${authenticatedUser?.email || callerId || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'}) : Montant=${montant}, Libellé="${libelle}", Pièce="${candidatePiece || 'auto'}"`);
+    console.log(`[AUDIT CASHIER] Création opération par [${authenticatedUser?.email || callerId || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'}) : Montant=${montant}, Libellé="${libelle}", Pièce="${finalPieceComptable}"`);
 
     const { data, error } = await adminClient
       .from('cashier_transactions')
@@ -840,23 +843,29 @@ const duplicateOperationsHandler = async (req: express.Request, res: express.Res
     }
 
     const todayIso = new Date().toISOString();
-    const rowsToInsert = originalRows.map((orig) => ({
-      libelle: orig.libelle ? `${orig.libelle} (Copie)` : 'Copie opération',
-      service: orig.service,
-      type_description: orig.type_description,
-      category: orig.category,
-      status: 'draft',
-      no_dossier: orig.no_dossier,
-      dossier_id: orig.dossier_id,
-      first_name: orig.first_name,
-      partenaire: orig.partenaire,
-      employee: orig.employee,
-      employee_id: callerId,
-      created_by: callerId,
-      quantity: orig.quantity,
-      montant: orig.montant,
-      date: todayIso,
-    }));
+    const rowsToInsert = await Promise.all(
+      originalRows.map(async (orig, idx) => {
+        const piece = await computeNextPieceComptable(adminClient, todayIso, idx);
+        return {
+          piece_comptable: piece,
+          libelle: orig.libelle ? `${orig.libelle} (Copie)` : 'Copie opération',
+          service: orig.service,
+          type_description: orig.type_description,
+          category: orig.category,
+          status: 'draft',
+          no_dossier: orig.no_dossier,
+          dossier_id: orig.dossier_id,
+          first_name: orig.first_name,
+          partenaire: orig.partenaire,
+          employee: orig.employee,
+          employee_id: callerId,
+          created_by: callerId,
+          quantity: orig.quantity,
+          montant: orig.montant,
+          date: todayIso,
+        };
+      })
+    );
 
     const { data: insertedRows, error: insertErr } = await adminClient
       .from('cashier_transactions')
