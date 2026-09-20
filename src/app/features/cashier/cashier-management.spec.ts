@@ -1,17 +1,10 @@
-import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { BrowserTestingModule, platformBrowserTesting } from '@angular/platform-browser/testing';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { CashierManagement } from './cashier-management';
 import { CashierService } from '../../core/services/cashier.service';
 import { SupabaseService } from '../../core/services/supabase.service';
 import { AuthService } from '../../core/services/auth.service';
 import { NotificationService } from '../../core/services/notification.service';
-
-try {
-  TestBed.initTestEnvironment(BrowserTestingModule, platformBrowserTesting());
-} catch {
-  // Ignorer si déjà initialisé
-}
 
 describe('CashierManagement', () => {
   let component: CashierManagement;
@@ -20,6 +13,34 @@ describe('CashierManagement', () => {
   let notificationService: NotificationService;
 
   beforeEach(async () => {
+    globalThis.fetch = vi.fn().mockImplementation((_url, init) => {
+      let bodyObj: Record<string, unknown> = {};
+      if (init && typeof init.body === 'string') {
+        bodyObj = JSON.parse(init.body) as Record<string, unknown>;
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          operation: {
+            id: 'tx-mocked-' + Math.random().toString(36).substring(2, 9),
+            piece_comptable: (bodyObj['pieceComptable'] as string) || 'PC-123',
+            date: (bodyObj['date'] as string) || '2026-09-20',
+            libelle: (bodyObj['libelle'] as string) || 'Libelle',
+            service: (bodyObj['service'] as string) || 'DG',
+            category: (bodyObj['category'] as string) || 'sortie',
+            status: (bodyObj['status'] as string) || 'draft',
+            montant: (bodyObj['montant'] as number) || -100,
+            quantity: (bodyObj['quantity'] as number) || 1,
+            no_dossier: (bodyObj['noDossier'] as string) || '',
+            employee: (bodyObj['employee'] as string) || '',
+            created_by: 'usr-1',
+            created_at: new Date().toISOString(),
+          }
+        })
+      });
+    }) as unknown as typeof globalThis.fetch;
+
     await TestBed.configureTestingModule({
       imports: [CashierManagement],
       providers: [
@@ -75,7 +96,7 @@ describe('CashierManagement', () => {
       libelle: 'Fournitures de bureau',
       category: 'sortie',
       montant: 25000,
-      service: 'Administration',
+      service: 'DG',
     });
 
     await component.submitInlineTransaction();
@@ -91,7 +112,7 @@ describe('CashierManagement', () => {
       libelle: 'Carburant citerne',
       category: 'sortie',
       montant: 150000,
-      service: 'Opérations',
+      service: 'TRANSPORT',
       noDossier: '',
       quantity: null,
     });
@@ -114,7 +135,7 @@ describe('CashierManagement', () => {
       id: 'tx-100',
       date: '06/09/2026',
       libelle: 'Réparation pneu',
-      service: 'Administration' as const,
+      service: 'DG' as const,
       typeDescription: '',
       category: 'sortie' as const,
       noDossier: '',
@@ -146,7 +167,7 @@ describe('CashierManagement', () => {
       libelle: 'Fournitures de bureau',
       category: 'sortie',
       montant: 20000,
-      service: 'Administration',
+      service: 'DG',
     });
     await component.submitInlineTransaction();
 
@@ -181,7 +202,7 @@ describe('CashierManagement', () => {
       libelle: 'Versement initial',
       category: 'entree',
       montant: 100000,
-      service: 'Administration',
+      service: 'DG',
       status: 'posted',
     });
 
@@ -204,7 +225,7 @@ describe('CashierManagement', () => {
   });
 
   it('devrait afficher une notification d’avertissement lors de la détection d’un doublon', async () => {
-    const warningSpy = vi.spyOn(notificationService, 'warning');
+    vi.spyOn(notificationService, 'warning').mockImplementation(() => '');
 
     // 1. Ajouter une première transaction
     component.startAddInline();
@@ -213,7 +234,7 @@ describe('CashierManagement', () => {
       libelle: 'Paiement fournisseur pièces',
       category: 'sortie',
       montant: 50000,
-      service: 'Administration',
+      service: 'DG',
     });
     await component.submitInlineTransaction();
 
@@ -226,14 +247,14 @@ describe('CashierManagement', () => {
       libelle: 'Paiement fournisseur pièces',
       category: 'sortie',
       montant: 50000,
-      service: 'Administration',
+      service: 'DG',
     });
     await component.submitInlineTransaction();
 
     // La transaction en doublon ne doit pas être insérée
     expect(service.allTransactions().length).toBe(1);
     // NotificationService.warning doit avoir été appelé avec un titre explicite
-    expect(warningSpy).toHaveBeenCalledWith(
+    expect(notificationService.warning).toHaveBeenCalledWith(
       expect.stringMatching(/Opération déjà enregistrée/),
       'Doublon détecté'
     );

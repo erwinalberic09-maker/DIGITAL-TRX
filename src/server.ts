@@ -8,6 +8,8 @@ import express from 'express';
 import {join} from 'node:path';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+import { rateLimit } from 'express-rate-limit';
+import helmet from 'helmet';
 import { normalizeUserRole } from './app/core/utils/role.utils';
 import { UserRole } from './app/core/models/auth.model';
 
@@ -19,8 +21,105 @@ const browserDistFolder = join(import.meta.dirname, '../browser');
 const app = express();
 const angularApp = new AngularNodeAppEngine();
 
-// Parsing JSON pour les requêtes d'API avec limite explicite
+// Configuration du reverse proxy pour Cloud Run / Nginx (gestion sécurisée de l'en-tête X-Forwarded-For)
+app.set('trust proxy', 1);
+
+// En-têtes de sécurité HTTP via Helmet durcis pour Angular SSR et compatibilité iFrame AI Studio
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+        imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+        connectSrc: ["'self'", 'https:', 'wss:'],
+        frameAncestors: ["'self'", 'https://ai.studio', 'https://*.google.com', 'https://*.run.app'],
+        objectSrc: ["'none'"],
+        upgradeInsecureRequests: process.env['NODE_ENV'] === 'production' ? [] : null,
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    frameguard: false, // Délégué à CSP frameAncestors pour autoriser l'iFrame de prévisualisation AI Studio
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    strictTransportSecurity: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    },
+    xContentTypeOptions: true,
+    xXssProtection: true,
+  })
+);
+
+// Parsing JSON pour les requêtes d'API avec limite explicite de payload
 app.use(express.json({ limit: '256kb' }));
+
+/**
+ * ==============================================================================
+ * RATE LIMITING STRATIFIÉ (SÉCURITÉ & PROTECTION CONTRE LE BRUTE-FORCE / ABUS)
+ * ==============================================================================
+ */
+
+// 1. Limiteur global sur toutes les routes de l'API /api/* (200 requêtes / 15 minutes par IP)
+const apiGlobalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 200,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  statusCode: 429,
+  message: {
+    error: 'Trop de requêtes envoyées depuis cette adresse IP. Veuillez patienter avant de réessayer.',
+    retryAfterMinutes: 15,
+  },
+});
+app.use('/api', apiGlobalLimiter);
+
+// 2. Limiteur strict sur les endpoints de configuration et d'authentification (40 requêtes / 15 minutes)
+const authSyncLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 40,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  statusCode: 429,
+  message: {
+    error: 'Trop de requêtes sur les services d’authentification. Veuillez patienter quelques instants.',
+    retryAfterMinutes: 15,
+  },
+});
+app.use(['/api/auth/sync-role', '/api/supabase-config', '/api/config'], authSyncLimiter);
+
+// 3. Limiteur renforcé sur les opérations d'écriture et de mutation (POST, PUT, PATCH, DELETE)
+// Prévient l'inondation de la base de données, la création massive de comptes ou de transactions (100 mutations / 15 minutes)
+const mutationsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 100,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  statusCode: 429,
+  message: {
+    error: 'Limite de modifications ou d’enregistrements atteinte pour cette période. Veuillez patienter avant de renouveler.',
+    retryAfterMinutes: 15,
+  },
+});
+app.use(
+  [
+    '/api/system/collaborators',
+    '/api/admin/users',
+    '/api/cahier/operations',
+    '/api/cashier/transactions',
+    '/api/system/operations',
+  ],
+  (req, res, next): void => {
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      mutationsLimiter(req, res, next);
+      return;
+    }
+    next();
+  }
+);
 
 /**
  * Endpoint sécurisé fournissant l'URL et la clé anonyme publiques Supabase au client web.
@@ -153,8 +252,8 @@ export async function requireAuth(req: express.Request, res: express.Response, n
 
     next();
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Échec de la validation de session';
-    res.status(401).json({ error: message });
+    console.error('Échec de la validation de session:', err);
+    res.status(401).json({ error: 'Session invalide ou expirée.' });
   }
 }
 
@@ -265,8 +364,8 @@ const getCollaboratorsHandler = async (_req: express.Request, res: express.Respo
   }
 
   try {
-    // 1. Récupérer tous les utilisateurs depuis Supabase Auth
-    let authUsers: {
+    // 1. Récupérer TOUS les utilisateurs depuis Supabase Auth avec pagination itérative (perPage: 1000)
+    interface AuthUserRecord {
       id: string;
       email?: string;
       phone?: string;
@@ -275,22 +374,86 @@ const getCollaboratorsHandler = async (_req: express.Request, res: express.Respo
       updated_at?: string;
       user_metadata?: Record<string, unknown>;
       app_metadata?: Record<string, unknown>;
-    }[] = [];
-    try {
-      const { data: authData, error: authErr } = await adminClient.auth.admin.listUsers();
-      if (!authErr && authData?.users) {
-        authUsers = authData.users as typeof authUsers;
-      }
-    } catch {
-      // Si la liste d'auth échoue, on continue avec profiles
     }
 
-    // 2. Récupérer tous les profils de la table public.profiles
-    const { data: profiles } = await adminClient
-      .from('profiles')
-      .select('*');
+    const authUsers: AuthUserRecord[] = [];
+    const perPage = 1000;
+    let currentPage = 1;
+    let hasMoreAuth = true;
+    const MAX_AUTH_PAGES = 50; // Garde-fou sécurité : jusqu'à 50 000 collaborateurs
 
-    const profileMap = new Map((profiles || []).map((p) => [p.id, p]));
+    while (hasMoreAuth && currentPage <= MAX_AUTH_PAGES) {
+      try {
+        const { data: authData, error: authErr } = await adminClient.auth.admin.listUsers({
+          page: currentPage,
+          perPage,
+        });
+
+        if (authErr || !authData?.users || authData.users.length === 0) {
+          hasMoreAuth = false;
+          break;
+        }
+
+        authUsers.push(...(authData.users as AuthUserRecord[]));
+
+        if (authData.nextPage && authData.nextPage > currentPage) {
+          currentPage = authData.nextPage;
+        } else if (authData.users.length === perPage) {
+          currentPage += 1;
+        } else {
+          hasMoreAuth = false;
+        }
+      } catch (authFetchError) {
+        console.warn(`Erreur lors de la pagination listUsers page ${currentPage}:`, authFetchError);
+        hasMoreAuth = false;
+      }
+    }
+
+    // 2. Récupérer tous les profils de la table public.profiles avec pagination itérative
+    interface ProfileDbRecord {
+      id: string;
+      email?: string;
+      first_name?: string;
+      last_name?: string;
+      role?: string;
+      department?: string;
+      phone?: string;
+      is_active?: boolean;
+      avatar_url?: string;
+      created_at?: string;
+      last_login_at?: string;
+      updated_at?: string;
+      [key: string]: unknown;
+    }
+
+    const allProfiles: ProfileDbRecord[] = [];
+    let profileOffset = 0;
+    const profilePageSize = 1000;
+    let profilesHasMore = true;
+    const MAX_PROFILE_PAGES = 50;
+    let profilePageCount = 0;
+
+    while (profilesHasMore && profilePageCount < MAX_PROFILE_PAGES) {
+      profilePageCount++;
+      const { data: pageProfiles, error: profileErr } = await adminClient
+        .from('profiles')
+        .select('*')
+        .range(profileOffset, profileOffset + profilePageSize - 1);
+
+      if (profileErr || !pageProfiles || pageProfiles.length === 0) {
+        profilesHasMore = false;
+        break;
+      }
+
+      allProfiles.push(...(pageProfiles as ProfileDbRecord[]));
+      if (pageProfiles.length < profilePageSize) {
+        profilesHasMore = false;
+      } else {
+        profileOffset += profilePageSize;
+      }
+    }
+
+    const profileMap = new Map(allProfiles.map((p) => [p.id, p]));
     const processedIds = new Set<string>();
 
     const users: Record<string, unknown>[] = [];
@@ -325,7 +488,7 @@ const getCollaboratorsHandler = async (_req: express.Request, res: express.Respo
     }
 
     // Ajouter les profils qui ne seraient pas dans authUsers
-    for (const p of (profiles || [])) {
+    for (const p of allProfiles) {
       if (!processedIds.has(p.id)) {
         processedIds.add(p.id);
         users.push({
@@ -345,10 +508,10 @@ const getCollaboratorsHandler = async (_req: express.Request, res: express.Respo
       }
     }
 
-    res.json({ users });
+    res.json({ users, total: users.length });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Erreur interne du serveur';
-    res.status(500).json({ error: message });
+    console.error('Erreur getCollaboratorsHandler:', err);
+    res.status(500).json({ error: 'Erreur interne lors de la récupération des collaborateurs.' });
   }
 };
 
@@ -402,8 +565,8 @@ app.post('/api/auth/sync-role', requireAuth, async (req: express.Request, res: e
       email: user.email,
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Erreur lors de la synchronisation du rôle';
-    res.status(500).json({ error: message });
+    console.error('Erreur lors de la synchronisation du rôle:', err);
+    res.status(500).json({ error: 'Erreur interne lors de la synchronisation du rôle.' });
   }
 });
 
@@ -479,7 +642,13 @@ const createCollaboratorHandler = async (req: express.Request, res: express.Resp
     });
 
     if (adminAuthError) {
-      res.status(400).json({ error: adminAuthError.message });
+      console.error('Échec création utilisateur auth:', adminAuthError.message);
+      const isDuplicate = adminAuthError.message?.toLowerCase().includes('already') || adminAuthError.message?.toLowerCase().includes('exists');
+      if (isDuplicate) {
+        res.status(409).json({ error: 'Un compte utilisateur avec cette adresse email existe déjà.' });
+        return;
+      }
+      res.status(400).json({ error: 'Échec de la création du compte d’authentification du collaborateur.' });
       return;
     }
     const authUserId = adminAuthData.user.id;
@@ -516,7 +685,7 @@ const createCollaboratorHandler = async (req: express.Request, res: express.Resp
           isActive: isActive !== undefined ? isActive : true,
           createdAt: new Date().toISOString(),
         },
-        warning: `Compte Auth créé mais la synchronisation du profil public a rencontré une erreur: ${profileError.message}`,
+        warning: 'Compte créé mais la synchronisation du profil public a rencontré une erreur interne.',
       });
       return;
     }
@@ -537,8 +706,8 @@ const createCollaboratorHandler = async (req: express.Request, res: express.Resp
       message: 'Collaborateur créé avec succès (droits scellés dans app_metadata et synchronisés)',
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Erreur interne du serveur';
-    res.status(500).json({ error: message });
+    console.error('Erreur createCollaboratorHandler:', err);
+    res.status(500).json({ error: 'Erreur interne lors de la création du collaborateur.' });
   }
 };
 
@@ -548,6 +717,71 @@ app.post('/api/admin/users', requireAdmin, createCollaboratorHandler);
 /**
  * Modification d'un compte collaborateur (synchronisation auth.app_metadata + public.profiles)
  */
+const updateCurrentUserProfileHandler = async (req: express.Request, res: express.Response): Promise<void> => {
+  const user = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string } | undefined;
+  const userId = user?.id;
+  if (!userId) {
+    res.status(401).json({ error: 'Session utilisateur introuvable.' });
+    return;
+  }
+
+  const { firstName, lastName, department, phone } = req.body;
+  const adminClient = getSupabaseAdmin();
+  if (!adminClient) {
+    res.status(503).json({ error: 'Service d’administration indisponible : SUPABASE_SERVICE_ROLE_KEY non configurée' });
+    return;
+  }
+
+  try {
+    const profileUpdates: Record<string, unknown> = {
+      id: userId,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (firstName !== undefined) profileUpdates['first_name'] = firstName;
+    if (lastName !== undefined) profileUpdates['last_name'] = lastName;
+    if (department !== undefined) profileUpdates['department'] = department;
+    if (phone !== undefined) profileUpdates['phone'] = phone;
+
+    const { error: profileUpdateError } = await adminClient
+      .from('profiles')
+      .update(profileUpdates)
+      .eq('id', userId)
+      .select('id');
+
+    if (profileUpdateError) {
+      console.error('Échec de la mise à jour du profil utilisateur:', profileUpdateError.message);
+      res.status(400).json({ error: 'Impossible de mettre à jour votre profil.' });
+      return;
+    }
+
+    const authMeta: Record<string, unknown> = {};
+    if (firstName !== undefined || lastName !== undefined) {
+      authMeta['user_metadata'] = {
+        first_name: firstName ?? undefined,
+        last_name: lastName ?? undefined,
+        display_name: `${firstName ?? ''} ${lastName ?? ''}`.trim(),
+      };
+    }
+
+    if (Object.keys(authMeta).length > 0) {
+      const { error: authUpdateError } = await adminClient.auth.admin.updateUserById(userId, authMeta);
+      if (authUpdateError) {
+        console.error('Échec de synchronisation auth.users:', authUpdateError.message);
+        res.status(500).json({ error: 'Impossible de synchroniser vos informations de compte.' });
+        return;
+      }
+    }
+
+    res.json({ success: true, message: 'Profil mis à jour avec succès' });
+  } catch (err: unknown) {
+    console.error('Erreur updateCurrentUserProfileHandler:', err);
+    res.status(500).json({ error: 'Erreur interne lors de la mise à jour de votre profil.' });
+  }
+};
+
+app.patch('/api/profile/me', requireAuth, updateCurrentUserProfileHandler);
+
 const updateCollaboratorHandler = async (req: express.Request, res: express.Response): Promise<void> => {
   const rawUserId = req.params['id'];
   const userId = Array.isArray(rawUserId) ? rawUserId[0] : rawUserId;
@@ -590,7 +824,7 @@ const updateCollaboratorHandler = async (req: express.Request, res: express.Resp
 
     if (profileUpdateError) {
       console.error('Échec de la mise à jour public.profiles:', profileUpdateError.message);
-      res.status(500).json({ error: `Erreur mise à jour profil: ${profileUpdateError.message}` });
+      res.status(500).json({ error: 'Impossible de mettre à jour le profil du collaborateur.' });
       return;
     }
 
@@ -609,15 +843,15 @@ const updateCollaboratorHandler = async (req: express.Request, res: express.Resp
       const { error: authUpdateError } = await adminClient.auth.admin.updateUserById(userId, authUpdates);
       if (authUpdateError) {
         console.error('Échec mise à jour auth.users:', authUpdateError.message);
-        res.status(500).json({ error: `Erreur mise à jour auth: ${authUpdateError.message}` });
+        res.status(500).json({ error: 'Impossible de synchroniser les autorisations du collaborateur.' });
         return;
       }
     }
 
     res.json({ success: true, message: 'Collaborateur mis à jour avec succès' });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Erreur lors de la mise à jour';
-    res.status(500).json({ error: message });
+    console.error('Erreur updateCollaboratorHandler:', err);
+    res.status(500).json({ error: 'Erreur interne lors de la mise à jour du collaborateur.' });
   }
 };
 
@@ -652,21 +886,21 @@ const deleteCollaboratorHandler = async (req: express.Request, res: express.Resp
     const { error: authDeleteError } = await adminClient.auth.admin.deleteUser(userId);
     if (authDeleteError) {
       console.error('Échec suppression auth.users:', authDeleteError.message);
-      res.status(500).json({ error: `Erreur suppression auth: ${authDeleteError.message}` });
+      res.status(500).json({ error: 'Impossible de supprimer le compte d’accès du collaborateur.' });
       return;
     }
 
     const { error: profileDeleteError } = await adminClient.from('profiles').delete().eq('id', userId);
     if (profileDeleteError) {
       console.error('Échec suppression public.profiles:', profileDeleteError.message);
-      res.status(500).json({ error: `Erreur suppression profil: ${profileDeleteError.message}` });
+      res.status(500).json({ error: 'Impossible de supprimer le profil du collaborateur.' });
       return;
     }
 
     res.json({ success: true, message: 'Compte collaborateur supprimé avec succès' });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Erreur lors de la suppression';
-    res.status(500).json({ error: message });
+    console.error('Erreur deleteCollaboratorHandler:', err);
+    res.status(500).json({ error: 'Erreur interne lors de la suppression du collaborateur.' });
   }
 };
 
@@ -722,72 +956,6 @@ const formatPersistedPieceComptable = (row: Record<string, unknown>): Record<str
 };
 
 /**
- * Récupération des opérations de caisse (GET /api/cahier/operations & /api/cashier/transactions)
- * Supporte la pagination optionnelle via limit/offset (défaut limit: 100, max: 1000) pour préserver les ressources.
- */
-const getOperationsHandler = async (req: express.Request, res: express.Response): Promise<void> => {
-  const adminClient = getSupabaseAdmin();
-  if (!adminClient) {
-    res.status(503).json({ error: 'Service Supabase non configuré sur le serveur' });
-    return;
-  }
-
-  try {
-    const rawLimit = req.query['limit'];
-    const rawOffset = req.query['offset'];
-
-    let limit = rawLimit ? Number(rawLimit) : 100;
-    if (isNaN(limit) || limit <= 0) {
-      limit = 100;
-    }
-    // Plafond de sécurité pour empêcher la saturation mémoire
-    if (limit > 1000) {
-      limit = 1000;
-    }
-
-    let offset = rawOffset ? Number(rawOffset) : 0;
-    if (isNaN(offset) || offset < 0) {
-      offset = 0;
-    }
-
-    const { data, error, count } = await adminClient
-      .from('cashier_transactions')
-      .select('id, piece_comptable, date, libelle, service, type_description, category, status, no_dossier, dossier_id, first_name, partenaire, employee, employee_id, created_by, quantity, montant, solde_apres, selected, created_at, updated_at', { count: 'exact' })
-      .order('date', { ascending: false })
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-
-    if (error) {
-      console.error('Erreur SQL lors de la lecture des opérations:', error.message);
-      res.status(500).json({ error: error.message });
-      return;
-    }
-
-    const enrichedRows = (data || []).map((row) => formatPersistedPieceComptable(row));
-
-    res.json({
-      operations: enrichedRows,
-      transactions: enrichedRows,
-      total: count ?? (data?.length || 0),
-      limit,
-      offset,
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Erreur interne lors de la récupération des opérations';
-    res.status(500).json({ error: message });
-  }
-};
-
-interface DuplicateCandidateRow {
-  id: string;
-  date: string;
-  libelle: string;
-  montant: number;
-  service?: string | null;
-  no_dossier?: string | null;
-}
-
-/**
  * Normalise une date textuellement en format YYYY-MM-DD
  * Immunisé contre tout décalage horaire UTC/local.
  */
@@ -815,6 +983,116 @@ const normalizeDateToDay = (rawDate?: string | null): string => {
   }
   return trimmed;
 };
+
+let datesMigrationPromise: Promise<void> | null = null;
+/**
+ * Migration transparente au premier appel :
+ * Convertit les dates stockées au format 'DD/MM/YYYY' en format standard ISO 'YYYY-MM-DD'
+ * afin de garantir un tri chronologique PostgreSQL strict via .order('date', { ascending: false }).
+ */
+async function ensureCashierDatesMigrated(adminClient: SupabaseClient): Promise<void> {
+  if (!datesMigrationPromise) {
+    datesMigrationPromise = (async () => {
+      try {
+        const { data: slashRows, error } = await adminClient
+          .from('cashier_transactions')
+          .select('id, date')
+          .like('date', '%/%')
+          .limit(2000);
+
+        if (error || !slashRows || slashRows.length === 0) {
+          return;
+        }
+
+        console.log(`[MIGRATION DATES] Détection de ${slashRows.length} opération(s) au format DD/MM/YYYY. Normalisation en cours vers YYYY-MM-DD...`);
+
+        for (const row of slashRows) {
+          const normalized = normalizeDateToDay(row.date);
+          if (normalized && normalized !== row.date) {
+            await adminClient
+              .from('cashier_transactions')
+              .update({ date: normalized })
+              .eq('id', row.id);
+          }
+        }
+
+        console.log(`[MIGRATION DATES] Migration terminée avec succès : ${slashRows.length} opération(s) converties en ISO YYYY-MM-DD.`);
+      } catch (migErr) {
+        console.warn('[MIGRATION DATES] Erreur lors de la normalisation des dates en ISO:', migErr);
+      }
+    })();
+  }
+  return datesMigrationPromise;
+}
+
+/**
+ * Récupération des opérations de caisse (GET /api/cahier/operations & /api/cashier/transactions)
+ * Supporte la pagination optionnelle via limit/offset (défaut limit: 100, max: 1000) pour préserver les ressources.
+ */
+const getOperationsHandler = async (req: express.Request, res: express.Response): Promise<void> => {
+  const adminClient = getSupabaseAdmin();
+  if (!adminClient) {
+    res.status(503).json({ error: 'Service Supabase non configuré sur le serveur' });
+    return;
+  }
+
+  try {
+    // S'assurer que les dates en base sont converties en ISO YYYY-MM-DD pour un tri SQL chronologique strict
+    await ensureCashierDatesMigrated(adminClient);
+
+    const rawLimit = req.query['limit'];
+    const rawOffset = req.query['offset'];
+
+    let limit = rawLimit ? Number(rawLimit) : 100;
+    if (isNaN(limit) || limit <= 0) {
+      limit = 100;
+    }
+    // Plafond de sécurité pour empêcher la saturation mémoire
+    if (limit > 1000) {
+      limit = 1000;
+    }
+
+    let offset = rawOffset ? Number(rawOffset) : 0;
+    if (isNaN(offset) || offset < 0) {
+      offset = 0;
+    }
+
+    const { data, error, count } = await adminClient
+      .from('cashier_transactions')
+      .select('id, piece_comptable, date, libelle, service, type_description, category, status, no_dossier, dossier_id, first_name, partenaire, employee, employee_id, created_by, quantity, montant, solde_apres, selected, created_at, updated_at', { count: 'exact' })
+      .order('date', { ascending: false })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) {
+      console.error('Erreur SQL lors de la lecture des opérations:', error.message);
+      res.status(500).json({ error: 'Erreur lors de la récupération des opérations de caisse.' });
+      return;
+    }
+
+    const enrichedRows = (data || []).map((row) => formatPersistedPieceComptable(row));
+
+    res.json({
+      operations: enrichedRows,
+      transactions: enrichedRows,
+      total: count ?? (data?.length || 0),
+      limit,
+      offset,
+    });
+  } catch (err: unknown) {
+    console.error('Erreur getOperationsHandler:', err);
+    res.status(500).json({ error: 'Erreur interne lors de la récupération des opérations.' });
+  }
+};
+
+interface DuplicateCandidateRow {
+  id: string;
+  date: string;
+  libelle: string;
+  montant: number;
+  service?: string | null;
+  no_dossier?: string | null;
+}
 
 /**
  * Vérifie si une transaction de caisse identique existe déjà en base de données.
@@ -941,7 +1219,7 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       montant = Math.abs(montant);
     }
 
-    const dateToStore = payload.date ? (typeof payload.date === 'string' ? payload.date : new Date(payload.date).toISOString()) : new Date().toISOString();
+    const dateToStore = normalizeDateToDay(payload.date) || new Date().toISOString().slice(0, 10);
 
     // Contrôle d'unicité strict côté serveur : Date + Montant + Libellé + N° de dossier/matricule + Service
     const duplicateCheck = await checkDuplicateCashierTransaction(adminClient, {
@@ -995,7 +1273,7 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       created_by: callerId,
       quantity,
       montant,
-      date: payload.date ? (typeof payload.date === 'string' ? payload.date : new Date(payload.date).toISOString()) : new Date().toISOString(),
+      date: dateToStore,
     };
 
     console.log(`[AUDIT CASHIER] Création opération par [${authenticatedUser?.email || callerId || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'}) : Montant=${montant}, Libellé="${libelle}", Pièce="${candidatePiece || 'auto'}"`);
@@ -1011,11 +1289,11 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       const isUniqueViolation = error.code === '23505' || error.message?.toLowerCase().includes('unique') || error.message?.includes('duplicate key');
       if (isUniqueViolation) {
         res.status(409).json({
-          error: `Erreur d'unicité (SQL 23505) : le numéro de pièce comptable "${candidatePiece || 'indéfini'}" existe déjà dans la base de données.`,
+          error: `Erreur d'unicité : le numéro de pièce comptable est déjà utilisé dans la base de données.`,
         });
         return;
       }
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: 'Erreur lors de l’enregistrement de l’opération de caisse.' });
       return;
     }
 
@@ -1028,8 +1306,8 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       message: 'Opération enregistrée avec succès',
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Erreur interne lors de la sauvegarde';
-    res.status(500).json({ error: message });
+    console.error('Erreur saveOperationHandler:', err);
+    res.status(500).json({ error: 'Erreur interne lors de la sauvegarde de l’opération.' });
   }
 };
 
@@ -1068,7 +1346,8 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
         .maybeSingle();
 
       if (fetchError) {
-        res.status(500).json({ error: `Erreur lors de la vérification des droits: ${fetchError.message}` });
+        console.error('Erreur vérification droits updateOperationHandler:', fetchError.message);
+        res.status(500).json({ error: 'Erreur lors de la vérification des autorisations sur l’opération.' });
         return;
       }
       if (!existingRow) {
@@ -1172,7 +1451,7 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
     }
 
     if (payload.date !== undefined && payload.date) {
-      updateData['date'] = typeof payload.date === 'string' ? payload.date : new Date(payload.date).toISOString();
+      updateData['date'] = normalizeDateToDay(payload.date) || new Date().toISOString().slice(0, 10);
     }
 
     if (payload.pieceComptable !== undefined || payload.piece_comptable !== undefined) {
@@ -1255,11 +1534,11 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       const isUniqueViolation = error.code === '23505' || error.message?.toLowerCase().includes('unique') || error.message?.includes('duplicate key');
       if (isUniqueViolation) {
         res.status(409).json({
-          error: `Erreur d'unicité (SQL 23505) : le numéro de pièce comptable est déjà utilisé dans la base de données.`,
+          error: `Erreur d'unicité : le numéro de pièce comptable est déjà utilisé dans la base de données.`,
         });
         return;
       }
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: 'Erreur lors de la modification de l’opération de caisse.' });
       return;
     }
 
@@ -1272,8 +1551,8 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       message: 'Opération modifiée avec succès',
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Erreur interne lors de la modification';
-    res.status(500).json({ error: message });
+    console.error('Erreur updateOperationHandler:', err);
+    res.status(500).json({ error: 'Erreur interne lors de la modification de l’opération.' });
   }
 };
 
@@ -1328,21 +1607,22 @@ const deleteOperationsHandler = async (req: express.Request, res: express.Respon
         return;
       }
 
-      // Pour tout utilisateur non-admin (caissières, managers, trésoriers, employés) :
-      // ne bloquer que si la ligne a un created_by ou employee_id défini et différent de l'utilisateur courant (par id ou email)
+      // Pour tout utilisateur non-admin (ex: caissière) :
+      // Vérification stricte de propriété : l'utilisateur ne peut supprimer QUE ses propres opérations.
+      // Règle de parité stricte avec la policy RLS : une ligne sans créateur explicite (created_by ou employee_id vide) ne peut être supprimée que par un admin
       const userEmail = (authenticatedUser?.email || '').toLowerCase().trim();
       const unauthorizedRows = rowsToCheck.filter((r) => {
         const creator = String(r.created_by || r.employee_id || '').trim();
-        // Si aucun créateur n'était renseigné sur la ligne historique, autoriser la suppression
-        if (!creator) return false;
-        const matchesId = callerId && creator === callerId;
-        const matchesEmail = userEmail && creator.toLowerCase() === userEmail;
+        // Si aucun créateur n'est défini en base, interdire la suppression à tout non-administrateur
+        if (!creator) return true;
+        const matchesId = Boolean(callerId && creator === callerId);
+        const matchesEmail = Boolean(userEmail && creator.toLowerCase() === userEmail);
         return !matchesId && !matchesEmail;
       });
 
       if (unauthorizedRows.length > 0) {
         res.status(403).json({
-          error: 'Action refusée : vous ne pouvez modifier que les opérations que vous avez vous-même enregistrées.',
+          error: 'Action refusée : vous ne pouvez supprimer que les opérations que vous avez vous-même enregistrées.',
         });
         return;
       }
@@ -1357,7 +1637,7 @@ const deleteOperationsHandler = async (req: express.Request, res: express.Respon
 
     if (error) {
       console.error('Erreur SQL lors de la suppression d’opérations:', error.message);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: 'Erreur lors de la suppression des opérations de caisse.' });
       return;
     }
 
@@ -1368,8 +1648,8 @@ const deleteOperationsHandler = async (req: express.Request, res: express.Respon
       message: `${targetIds.length} opération(s) supprimée(s) avec succès`,
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Erreur interne lors de la suppression';
-    res.status(500).json({ error: message });
+    console.error('Erreur deleteOperationsHandler:', err);
+    res.status(500).json({ error: 'Erreur interne lors de la suppression des opérations.' });
   }
 };
 
@@ -1450,7 +1730,7 @@ const duplicateOperationsHandler = async (req: express.Request, res: express.Res
 
     if (insertErr) {
       console.error('Erreur SQL lors de la duplication:', insertErr.message);
-      res.status(500).json({ error: insertErr.message });
+      res.status(500).json({ error: 'Erreur lors de la duplication des opérations de caisse.' });
       return;
     }
 
@@ -1461,8 +1741,8 @@ const duplicateOperationsHandler = async (req: express.Request, res: express.Res
       data: enriched,
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Erreur interne lors de la duplication';
-    res.status(500).json({ error: message });
+    console.error('Erreur duplicateOperationsHandler:', err);
+    res.status(500).json({ error: 'Erreur interne lors de la duplication des opérations.' });
   }
 };
 
@@ -1528,7 +1808,7 @@ const updateOperationsStatusHandler = async (req: express.Request, res: express.
 
     if (updateErr) {
       console.error('Erreur SQL mise à jour statut:', updateErr.message);
-      res.status(500).json({ error: updateErr.message });
+      res.status(500).json({ error: 'Erreur lors de la mise à jour du statut des opérations.' });
       return;
     }
 
@@ -1539,15 +1819,15 @@ const updateOperationsStatusHandler = async (req: express.Request, res: express.
       data: enriched,
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Erreur interne modification de statut';
-    res.status(500).json({ error: message });
+    console.error('Erreur updateOperationsStatusHandler:', err);
+    res.status(500).json({ error: 'Erreur interne lors de la modification de statut des opérations.' });
   }
 };
 
-// Déclaration des routes de caisse sécurisées par RBAC strict
-app.get('/api/cahier/operations', requireAuth, getOperationsHandler);
-app.get('/api/cashier/transactions', requireAuth, getOperationsHandler);
-app.get('/api/system/operations', requireAuth, getOperationsHandler);
+// Déclaration des routes de caisse sécurisées par RBAC strict (lecture réservée aux rôles financiers et encadrement)
+app.get('/api/cahier/operations', requireAuth, requireRole(['admin', 'manager', 'caissiere', 'comptable', 'tresorier']), getOperationsHandler);
+app.get('/api/cashier/transactions', requireAuth, requireRole(['admin', 'manager', 'caissiere', 'comptable', 'tresorier']), getOperationsHandler);
+app.get('/api/system/operations', requireAuth, requireRole(['admin', 'manager', 'caissiere', 'comptable', 'tresorier']), getOperationsHandler);
 
 // Actions en masse (Duplication & Changement de statut)
 app.post('/api/cahier/operations/duplicate', requireAuth, requireRole(['admin', 'caissiere', 'manager', 'comptable']), duplicateOperationsHandler);
@@ -1564,11 +1844,11 @@ app.put('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'cai
 app.patch('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager', 'comptable']), updateOperationHandler);
 app.patch('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere', 'manager', 'comptable']), updateOperationHandler);
 
-// Suppression : autorisée pour tout utilisateur authentifié (vérification stricte de propriété dans deleteOperationsHandler)
-app.delete('/api/cahier/operations/:id', requireAuth, deleteOperationsHandler);
-app.delete('/api/cashier/transactions/:id', requireAuth, deleteOperationsHandler);
-app.delete('/api/cahier/operations', requireAuth, deleteOperationsHandler);
-app.delete('/api/cashier/transactions', requireAuth, deleteOperationsHandler);
+// Suppression : autorisée pour les Administrateurs et Caissières (vérification stricte de propriété dans deleteOperationsHandler)
+app.delete('/api/cahier/operations/:id', requireAuth, requireRole(['admin', 'caissiere']), deleteOperationsHandler);
+app.delete('/api/cashier/transactions/:id', requireAuth, requireRole(['admin', 'caissiere']), deleteOperationsHandler);
+app.delete('/api/cahier/operations', requireAuth, requireRole(['admin', 'caissiere']), deleteOperationsHandler);
+app.delete('/api/cashier/transactions', requireAuth, requireRole(['admin', 'caissiere']), deleteOperationsHandler);
 
 /**
  * Example Express Rest API endpoints can be defined here.

@@ -344,11 +344,39 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
     // Écoute dynamique du type de service
     this.transactionForm.get('service')?.valueChanges.subscribe((type) => {
-      this.isOperationsType.set(Boolean(type));
+      const isOps = type === 'TRANSPORT' || type === 'TRANSIT' || type === 'MANUT';
+      this.isOperationsType.set(isOps);
+
+      const noDossierCtrl = this.transactionForm.get('noDossier');
+      const qtyCtrl = this.transactionForm.get('quantity');
+
+      if (isOps) {
+        noDossierCtrl?.setValidators([Validators.required]);
+        qtyCtrl?.setValidators([Validators.required]);
+      } else {
+        noDossierCtrl?.clearValidators();
+        qtyCtrl?.clearValidators();
+      }
+      noDossierCtrl?.updateValueAndValidity();
+      qtyCtrl?.updateValueAndValidity();
     });
 
     this.editTransactionForm.get('service')?.valueChanges.subscribe((type) => {
-      this.isEditOperationsType.set(Boolean(type));
+      const isOps = type === 'TRANSPORT' || type === 'TRANSIT' || type === 'MANUT';
+      this.isEditOperationsType.set(isOps);
+
+      const noDossierCtrl = this.editTransactionForm.get('noDossier');
+      const qtyCtrl = this.editTransactionForm.get('quantity');
+
+      if (isOps) {
+        noDossierCtrl?.setValidators([Validators.required]);
+        qtyCtrl?.setValidators([Validators.required]);
+      } else {
+        noDossierCtrl?.clearValidators();
+        qtyCtrl?.clearValidators();
+      }
+      noDossierCtrl?.updateValueAndValidity();
+      qtyCtrl?.updateValueAndValidity();
     });
 
     // Conversion automatique si saisie directe d'un montant négatif (ex: -5000 -> catégorie sortie + 5000)
@@ -816,7 +844,6 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     if (
       !document.body.contains(target) ||
       target.closest('#cp-btn-nouveau') ||
-      target.closest('#cashier-new-btn') ||
       target.closest('app-odoo-datepicker') ||
       target.closest('.odoo-datepicker-popover') ||
       target.closest('.p-dropdown') ||
@@ -829,7 +856,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     if (this.isAddingRow()) {
       const addRowEl = this.elementRef.nativeElement.querySelector('#inline-add-row');
       // Si le clic provient de la ligne elle-même ou de ses contrôles internes, ne RIEN faire
-      if (!addRowEl || addRowEl.contains(target) || target.closest('#inline-add-row')) {
+      if (addRowEl && (addRowEl.contains(target) || target.closest('#inline-add-row'))) {
         return;
       }
 
@@ -837,15 +864,9 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
       const libelleVal = this.transactionForm.get('libelle')?.value?.trim();
       const rawMontant = this.transactionForm.get('montant')?.value;
       const hasMontant = rawMontant !== null && rawMontant !== undefined && !Number.isNaN(Number(rawMontant));
-      const hasStartedTyping = Boolean(libelleVal) || hasMontant || this.transactionForm.dirty;
-
-      // RÈGLE MÉTIER STRICTE :
-      // - Si les champs obligatoires sont tous les deux remplis et valides -> on enregistre automatiquement.
-      // - Si l'utilisateur a commencé à taper du texte mais n'a pas fini -> NE JAMAIS FERMER LA LIGNE (garder ses saisies intactes).
-      // - Si et seulement si la ligne est totalement vierge et intacte -> on referme sans perte.
       if (libelleVal && hasMontant && Number(rawMontant) !== 0) {
         this.submitInlineTransaction();
-      } else if (!hasStartedTyping) {
+      } else {
         this.cancelAddInline();
       }
       return;
@@ -855,18 +876,16 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     const activeEditId = this.editingTxId();
     if (activeEditId) {
       const editRowEl = this.elementRef.nativeElement.querySelector(`#inline-edit-row-${activeEditId}`);
-      if (!editRowEl || editRowEl.contains(target) || target.closest(`#inline-edit-row-${activeEditId}`)) {
+      if (editRowEl && (editRowEl.contains(target) || target.closest(`#inline-edit-row-${activeEditId}`))) {
         return;
       }
 
       const libelleVal = this.editTransactionForm.get('libelle')?.value?.trim();
       const rawMontant = this.editTransactionForm.get('montant')?.value;
       const hasMontant = rawMontant !== null && rawMontant !== undefined && !Number.isNaN(Number(rawMontant));
-      const hasStartedTyping = Boolean(libelleVal) || hasMontant || this.editTransactionForm.dirty;
-
       if (libelleVal && hasMontant && Number(rawMontant) !== 0) {
         this.submitInlineEdit();
-      } else if (!hasStartedTyping) {
+      } else {
         this.cancelInlineEdit();
       }
     }
