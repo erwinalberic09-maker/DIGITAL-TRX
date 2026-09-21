@@ -13,7 +13,7 @@ import helmet from 'helmet';
 import { UserRole } from './app/core/models/auth.model';
 import { getSupabaseAdmin, requireAdmin, requireAuth, requireRole } from './server/auth';
 import { getSupabaseConfigHandler } from './server/config';
-import { computeNextPieceComptable, formatPersistedPieceComptable, normalizeDateToDay } from './server/cashier.utils';
+import { formatPersistedPieceComptable, normalizeDateToDay } from './server/cashier.utils';
 import { updateCurrentUserProfileHandler } from './server/profile';
 import { createCollaboratorHandler } from './server/collaborators.create';
 import { getCollaboratorsHandler } from './server/collaborators.list';
@@ -393,8 +393,11 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
 
     const status = payload.status === 'posted' ? 'posted' : (payload.status === 'cancelled' ? 'cancelled' : 'draft');
 
-    // Si aucune pièce comptable n'est fournie, calculer et persister la prochaine séquence réelle en DB
-    const finalPieceComptable = candidatePiece || (await computeNextPieceComptable(adminClient, dateToStore));
+    // Si aucune pièce comptable n'est fournie explicitement (saisie manuelle/import), on laisse `null` :
+    // le déclencheur PostgreSQL `assign_piece_comptable` (voir supabase/migrations/202609201200_...)
+    // assigne alors le numéro de façon atomique (verrouillage de ligne sur le compteur de l'année),
+    // ce qu'un calcul "SELECT max()+1" en Node.js ne peut pas garantir sous concurrence.
+    const finalPieceComptable = candidatePiece || null;
 
     const rowToInsert = {
       piece_comptable: finalPieceComptable,
@@ -845,10 +848,10 @@ const duplicateOperationsHandler = async (req: express.Request, res: express.Res
 
     const todayIso = new Date().toISOString();
     const rowsToInsert = await Promise.all(
-      originalRows.map(async (orig, idx) => {
-        const piece = await computeNextPieceComptable(adminClient, todayIso, idx);
+      originalRows.map(async (orig) => {
+        // `piece_comptable: null` -> assigné atomiquement par le déclencheur DB pour chaque ligne.
         return {
-          piece_comptable: piece,
+          piece_comptable: null,
           libelle: orig.libelle ? `${orig.libelle} (Copie)` : 'Copie opération',
           service: orig.service,
           type_description: orig.type_description,

@@ -361,6 +361,8 @@ describe('CashierService - Architecture Hybride & Signals', () => {
       date: '2026-09-01',
       libelle: `Opération test ${i + 1}`,
       montant: 1000,
+      category: 'entree' as const,
+      status: 'draft' as const,
       created_at: new Date(2026, 8, 1, 10, i).toISOString(),
     }));
 

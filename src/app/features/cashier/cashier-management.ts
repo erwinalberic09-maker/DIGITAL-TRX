@@ -1054,15 +1054,11 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   /**
    * Retourne la référence officielle de pièce comptable séquentielle au format Odoo ERP (ex: CSH1/2026/00001)
    */
-  public getOdooSequence(tx: CashierTransaction, index: number): string {
-    if (tx.pieceComptable) {
-      return tx.pieceComptable;
+  public getOdooSequence(tx: CashierTransaction): string {
+    if (tx.pieceComptable && tx.pieceComptable.trim() !== '') {
+      return tx.pieceComptable.trim();
     }
-    const year = tx.date?.includes('/')
-      ? tx.date.split('/')[2] || '2026'
-      : (tx.date?.includes('-') ? tx.date.split('-')[0] : '2026');
-    const seqNum = String(index + 1).padStart(5, '0');
-    return `CSH1/${year}/${seqNum}`;
+    return '-';
   }
 
   /**

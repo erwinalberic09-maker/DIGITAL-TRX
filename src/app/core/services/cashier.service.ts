@@ -546,6 +546,12 @@ export class CashierService implements OnDestroy {
       }
     }
 
+    // Après l'insertion du lot, forcer le rechargement depuis le serveur pour synchroniser
+    // l'état local avec les pièces officielles et soldes recalculés en base de données.
+    if (insertedCount > 0) {
+      await this.loadTransactions();
+    }
+
     return {
       success: insertedCount > 0 || duplicateCount > 0,
       insertedCount,
@@ -1130,11 +1136,11 @@ export class CashierService implements OnDestroy {
         : (row.date?.includes('-') ? Number(row.date.split('-')[0]) : 2026);
       const year = isNaN(yrMatch) ? 2026 : yrMatch;
       yearCounters[year] = (yearCounters[year] || 0) + 1;
-      const computedPiece = `CSH1/${year}/${String(yearCounters[year]).padStart(5, '0')}`;
+      const computedFallback = `CSH1/${year}/${String(yearCounters[year]).padStart(5, '0')}`;
 
       return {
         id: row.id,
-        pieceComptable: row.piece_comptable || computedPiece,
+        pieceComptable: row.piece_comptable ? String(row.piece_comptable).trim() : computedFallback,
         date: this.formatDate(row.date),
         libelle: row.libelle || '',
         service: row.service || row.type_transaction || '',
