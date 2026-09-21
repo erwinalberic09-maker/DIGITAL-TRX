@@ -112,12 +112,12 @@ export class CashierService implements OnDestroy {
     this.cleanupRealtimeSubscription();
   }
 
-  // Filtres et pagination
+  // Filtres et pagination (plancher de 80 lignes minimum par page)
   private readonly _filterState = signal<CashierFilterState>({
     searchQuery: '',
     categoryFilter: 'all',
     pageIndex: 0,
-    pageSize: 10,
+    pageSize: 80,
   });
 
   // Signal pour piloter l'ouverture de la ligne d'ajout inline depuis le Layout
@@ -1210,6 +1210,18 @@ export class CashierService implements OnDestroy {
     this._filterState.update((state) => ({
       ...state,
       pageIndex: Math.max(0, index),
+    }));
+  }
+
+  /**
+   * Modifie la taille de la page en imposant strictement un minimum de 80 lignes
+   */
+  public setPageSize(size: number): void {
+    const validSize = Math.max(80, isNaN(size) ? 80 : Number(size));
+    this._filterState.update((state) => ({
+      ...state,
+      pageSize: validSize,
+      pageIndex: 0,
     }));
   }
 

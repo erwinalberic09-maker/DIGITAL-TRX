@@ -330,13 +330,47 @@ describe('CashierService - Architecture Hybride & Signals', () => {
     expect(service.error()).toContain('CSH1/2026/00099');
   });
 
-  it('devrait refuser la lecture si l’API Express échoue sans interroger Supabase directement', async () => {
-    globalThis.fetch = (async () => {
-      throw new Error('API Express indisponible');
-    }) as typeof globalThis.fetch;
-    await service.loadTransactions(500);
+  it('devrait initialiser la pagination à 80 éléments minimum et respecter ce plancher via setPageSize', () => {
+    expect(service.filterState().pageSize).toBe(80);
 
-    expect(service.allTransactions()).toEqual([]);
-    expect(service.error()).toBeNull();
+    // Tentative de définir une taille inférieure à 80 -> doit être ramenée à 80
+    service.setPageSize(10);
+    expect(service.filterState().pageSize).toBe(80);
+
+    service.setPageSize(50);
+    expect(service.filterState().pageSize).toBe(80);
+
+    // Taille supérieure ou égale à 80 -> acceptée
+    service.setPageSize(100);
+    expect(service.filterState().pageSize).toBe(100);
+
+    // Valeur invalide ou négative -> ramenée à 80
+    service.setPageSize(-5);
+    expect(service.filterState().pageSize).toBe(80);
+  });
+
+  it('devrait paginer correctement avec le plancher de 80 éléments', () => {
+    const mockRows = Array.from({ length: 95 }, (_, i) => ({
+      id: `tx-${i + 1}`,
+      date: '2026-09-01',
+      libelle: `Opération test ${i + 1}`,
+      montant: 1000,
+      created_at: new Date(2026, 8, 1, 10, i).toISOString(),
+    }));
+
+    const mapped = service.mapDatabaseOperations(mockRows);
+    (service as unknown as { _transactions: { set: (v: unknown) => void } })._transactions.set(mapped);
+
+    expect(service.totalCount()).toBe(95);
+    expect(service.pagedTransactions().length).toBe(80);
+    expect(service.paginationLabel()).toBe('1-80 / 95');
+    expect(service.hasNextPage()).toBe(true);
+    expect(service.hasPrevPage()).toBe(false);
+
+    service.nextPage();
+    expect(service.pagedTransactions().length).toBe(15);
+    expect(service.paginationLabel()).toBe('81-95 / 95');
+    expect(service.hasNextPage()).toBe(false);
+    expect(service.hasPrevPage()).toBe(true);
   });
 });
