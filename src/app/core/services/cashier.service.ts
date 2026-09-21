@@ -323,12 +323,12 @@ export class CashierService implements OnDestroy {
   ): Promise<{ success: boolean; operation?: CashierTransaction; error?: string }> {
     this._error.set(null);
 
-    // Contrôle d'unicité strict : N° de pièce comptable en priorité absolue
-    const candidatePiece = normalizePieceComptable(op.pieceComptable || this.nextPieceComptable());
-    if (candidatePiece) {
-      const pieceDuplicate = findDuplicatePieceComptable({ pieceComptable: candidatePiece }, this._transactions());
+    // Si une pièce comptable est explicitement fournie par l'appelant (ex: import ou rattachement manuel), on la normalise
+    const explicitPiece = op.pieceComptable ? normalizePieceComptable(op.pieceComptable) : undefined;
+    if (explicitPiece) {
+      const pieceDuplicate = findDuplicatePieceComptable({ pieceComptable: explicitPiece }, this._transactions());
       if (pieceDuplicate) {
-        const errorMsg = `Le numéro de pièce comptable "${candidatePiece}" est déjà attribué à une autre opération (ID: ${pieceDuplicate.id}, Date: ${pieceDuplicate.date}, Libellé: "${pieceDuplicate.libelle}"). Les numéros de pièces comptables doivent être strictement uniques.`;
+        const errorMsg = `Le numéro de pièce comptable "${explicitPiece}" est déjà attribué à une autre opération (ID: ${pieceDuplicate.id}, Date: ${pieceDuplicate.date}, Libellé: "${pieceDuplicate.libelle}"). Les numéros de pièces comptables doivent être strictement uniques.`;
         this.setError(errorMsg);
         return { success: false, error: errorMsg };
       }
@@ -343,7 +343,7 @@ export class CashierService implements OnDestroy {
         libelle: op.libelle,
         noDossier: op.noDossier,
         service: op.service,
-        pieceComptable: candidatePiece,
+        pieceComptable: explicitPiece,
       },
       this._transactions()
     );
@@ -363,6 +363,7 @@ export class CashierService implements OnDestroy {
     let savedRow: CashierDbRow | null = null;
 
     // Étape 1 : Appel de l'API Serveur-Relais sécurisée
+    // Comme sur Odoo, si explicitPiece est vide (création standard), on envoie null/undefined pour que le trigger assigne la séquence
     try {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -375,7 +376,7 @@ export class CashierService implements OnDestroy {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          pieceComptable: candidatePiece,
+          pieceComptable: explicitPiece || null,
           libelle: op.libelle,
           service: op.service,
           typeDescription: op.typeDescription || null,
@@ -426,11 +427,11 @@ export class CashierService implements OnDestroy {
       return { success: false, error: failureMsg };
     }
 
-    // Étape 3 : Création de l'objet transaction unifié
+    // Étape 3 : Création de l'objet transaction unifié (comme sur Odoo : la pièce officielle retournée par la base)
     const currentUserId = this.authService.currentUser()?.id;
     const operationToStore: CashierTransaction = {
       id: savedRow.id,
-      pieceComptable: savedRow.piece_comptable || this.nextPieceComptable(),
+      pieceComptable: savedRow.piece_comptable || explicitPiece || this.nextPieceComptable(),
       date: this.formatDate(savedRow.date || new Date().toISOString()),
       libelle: savedRow.libelle,
       service: savedRow.service || savedRow.type_transaction || '',

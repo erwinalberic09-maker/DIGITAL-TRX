@@ -69,6 +69,7 @@ describe('CashierService - Architecture Hybride & Signals', () => {
   it('devrait sauvegarder via l’API serveur-relais et mettre à jour le Signal instantanément (cas nominal)', async () => {
     const mockCreatedDbRow = {
       id: 'tx-uuid-123',
+      piece_comptable: 'CSH1/2026/00001',
       date: new Date('2026-09-06T10:00:00Z').toISOString(),
       libelle: 'Plein carburant camion',
       type_transaction: 'Carburant',
@@ -115,10 +116,15 @@ describe('CashierService - Architecture Hybride & Signals', () => {
     const headers = fetchCalledWithInit?.headers as Record<string, string>;
     expect(headers?.['Authorization']).toBe('Bearer mock-jwt-token');
 
-    // 2. Vérification de la mise à jour immédiate du Signal
+    // Vérifie que pieceComptable n'est pas imposé côté client (null envoyé pour laisser le trigger l'assigner comme Odoo)
+    const bodySent = JSON.parse(String(fetchCalledWithInit?.body || '{}'));
+    expect(bodySent.pieceComptable).toBeNull();
+
+    // 2. Vérification de la mise à jour immédiate du Signal avec la pièce retournée par le serveur
     expect(result.success).toBe(true);
     expect(service.allTransactions().length).toBe(1);
     expect(service.allTransactions()[0].id).toBe('tx-uuid-123');
+    expect(service.allTransactions()[0].pieceComptable).toBe('CSH1/2026/00001');
     expect(service.allTransactions()[0].libelle).toBe('Plein carburant camion');
     expect(service.currentBalance()).toBe(-75000);
   });

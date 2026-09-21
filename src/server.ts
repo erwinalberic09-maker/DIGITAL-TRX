@@ -19,6 +19,7 @@ import { createCollaboratorHandler } from './server/collaborators.create';
 import { getCollaboratorsHandler } from './server/collaborators.list';
 import { deleteCollaboratorHandler, updateCollaboratorHandler } from './server/collaborators.manage';
 import { getOperationsHandler } from './server/cashier.read';
+import { auditPiecesComptablesHandler } from './server/cashier.audit';
 
 // Charger les variables d'environnement depuis le fichier `.env` (si présent)
 dotenv.config();
@@ -993,6 +994,10 @@ cashierOperationAliases.forEach((path) => {
   app.put(`${path}/:id`, requireAuth, requireRole(cashierWriteRoles), updateOperationHandler);
   app.patch(`${path}/:id`, requireAuth, requireRole(cashierWriteRoles), updateOperationHandler);
 });
+
+// Audit de conformité et intégrité de la séquence des pièces comptables
+app.get('/api/cashier/audit-pieces', requireAuth, requireRole(cashierReadRoles), auditPiecesComptablesHandler);
+app.get('/api/cahier/audit-pieces', requireAuth, requireRole(cashierReadRoles), auditPiecesComptablesHandler);
 
 // Suppression : autorisée pour les Administrateurs et Caissières (vérification stricte de propriété dans deleteOperationsHandler)
 cashierOperationAliases.forEach((path) => {
