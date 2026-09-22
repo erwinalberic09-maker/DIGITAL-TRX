@@ -20,6 +20,7 @@ import { getCollaboratorsHandler } from './server/collaborators.list';
 import { deleteCollaboratorHandler, updateCollaboratorHandler } from './server/collaborators.manage';
 import { getOperationsHandler } from './server/cashier.read';
 import { auditPiecesComptablesHandler } from './server/cashier.audit';
+import { writeAuditLog } from './server/audit-log';
 
 // Charger les variables d'environnement depuis le fichier `.env` (si présent)
 dotenv.config();
@@ -418,8 +419,6 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       date: dateToStore,
     };
 
-    console.log(`[AUDIT CASHIER] Création opération par [${authenticatedUser?.email || callerId || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'}) : Montant=${montant}, Libellé="${libelle}", Pièce="${finalPieceComptable}"`);
-
     const { data, error } = await adminClient
       .from('cashier_transactions')
       .insert([rowToInsert])
@@ -439,6 +438,15 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       res.status(500).json({ error: `Erreur lors de l’enregistrement de l’opération : ${error.message || 'erreur base de données'}` });
       return;
     }
+
+    await writeAuditLog(adminClient, {
+      userId: callerId,
+      userEmail: authenticatedUser?.email,
+      userRole: authenticatedUser?.role,
+      action: 'CREATE_OPERATION',
+      entityId: data?.id ?? null,
+      details: { montant, libelle, piece_comptable: data?.piece_comptable ?? finalPieceComptable },
+    });
 
     const enrichedOperation = formatPersistedPieceComptable(data);
 
@@ -663,8 +671,6 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
 
     updateData['updated_at'] = new Date().toISOString();
 
-    console.log(`[AUDIT CASHIER] Modification opération [${targetId}] par [${authenticatedUser?.email || authenticatedUser?.id || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'}) :`, Object.keys(updateData));
-
     const { data, error } = await adminClient
       .from('cashier_transactions')
       .update(updateData)
@@ -685,6 +691,15 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       res.status(500).json({ error: `Erreur lors de la modification de l’opération : ${error.message || 'erreur base de données'}` });
       return;
     }
+
+    await writeAuditLog(adminClient, {
+      userId: authenticatedUser?.id,
+      userEmail: authenticatedUser?.email,
+      userRole: authenticatedUser?.role,
+      action: 'UPDATE_OPERATION',
+      entityId: targetId,
+      details: { champs_modifies: Object.keys(updateData) },
+    });
 
     const enrichedOperation = formatPersistedPieceComptable(data);
 
@@ -772,8 +787,6 @@ const deleteOperationsHandler = async (req: express.Request, res: express.Respon
       }
     }
 
-    console.warn(`[AUDIT CASHIER] Suppression de ${targetIds.length} opération(s) [${targetIds.join(', ')}] initiée par [${authenticatedUser?.email || authenticatedUser?.id || 'inconnu'}] (rôle: ${userRole || 'non-défini'})`);
-
     const { error, count } = await adminClient
       .from('cashier_transactions')
       .delete({ count: 'exact' })
@@ -784,6 +797,15 @@ const deleteOperationsHandler = async (req: express.Request, res: express.Respon
       res.status(500).json({ error: 'Erreur lors de la suppression des opérations de caisse.' });
       return;
     }
+
+    await writeAuditLog(adminClient, {
+      userId: authenticatedUser?.id,
+      userEmail: authenticatedUser?.email,
+      userRole: userRole,
+      action: 'DELETE_OPERATION',
+      entityId: targetIds.join(','),
+      details: { nombre_supprime: count ?? targetIds.length, ids: targetIds },
+    });
 
     // Nettoyage éventuel des pièces justificatives associées dans storage ou liens
     res.json({
