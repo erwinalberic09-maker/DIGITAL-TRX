@@ -427,15 +427,16 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       .single();
 
     if (error) {
-      console.error('Erreur SQL lors de l’insertion de l’opération:', error.message);
+      console.error('Erreur SQL lors de l’insertion de l’opération:', error.message, error.details, error.hint);
       const isUniqueViolation = error.code === '23505' || error.message?.toLowerCase().includes('unique') || error.message?.includes('duplicate key');
       if (isUniqueViolation) {
+        const detailMsg = error.details || error.message || '';
         res.status(409).json({
-          error: `Erreur d'unicité : le numéro de pièce comptable est déjà utilisé dans la base de données.`,
+          error: `Erreur d'unicité : ${detailMsg.includes('piece_comptable') ? 'le numéro de pièce comptable est déjà utilisé' : 'une valeur unique est en doublon'} dans la base de données (${detailMsg || 'conflit d’unicité SQL'}).`,
         });
         return;
       }
-      res.status(500).json({ error: 'Erreur lors de l’enregistrement de l’opération de caisse.' });
+      res.status(500).json({ error: `Erreur lors de l’enregistrement de l’opération : ${error.message || 'erreur base de données'}` });
       return;
     }
 
@@ -672,15 +673,16 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       .single();
 
     if (error) {
-      console.error('Erreur SQL lors de la mise à jour de l’opération:', error.message);
+      console.error('Erreur SQL lors de la mise à jour de l’opération:', error.message, error.details, error.hint);
       const isUniqueViolation = error.code === '23505' || error.message?.toLowerCase().includes('unique') || error.message?.includes('duplicate key');
       if (isUniqueViolation) {
+        const detailMsg = error.details || error.message || '';
         res.status(409).json({
-          error: `Erreur d'unicité : le numéro de pièce comptable est déjà utilisé dans la base de données.`,
+          error: `Erreur d'unicité : ${detailMsg.includes('piece_comptable') ? 'le numéro de pièce comptable est déjà utilisé' : 'une valeur unique est en doublon'} dans la base de données (${detailMsg || 'conflit d’unicité SQL'}).`,
         });
         return;
       }
-      res.status(500).json({ error: 'Erreur lors de la modification de l’opération de caisse.' });
+      res.status(500).json({ error: `Erreur lors de la modification de l’opération : ${error.message || 'erreur base de données'}` });
       return;
     }
 
