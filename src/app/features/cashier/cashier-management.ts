@@ -1022,10 +1022,9 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
         montant: finalMontant,
       });
 
-      if (updateResult.success) {
+      if (updateResult) {
         this.cancelInlineEdit();
-      } else if (updateResult.message) {
-        this.cashierService.setError(updateResult.message, false);
+      } else {
         this.cancelInlineEdit();
       }
     } finally {
