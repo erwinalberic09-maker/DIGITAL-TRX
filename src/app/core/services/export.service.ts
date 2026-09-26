@@ -104,14 +104,6 @@ export class ExportService {
     return true;
   }
 
-  public exportToCsv(transactions: CashierTransaction[], filename?: string): boolean {
-    return this.exportCashierTransactionsCsv(transactions, { filename });
-  }
-
-  public exportToSpreadsheet(transactions: CashierTransaction[], filename?: string): boolean {
-    return this.exportCashierTransactionsCsv(transactions, { filename });
-  }
-
   /**
    * Échappe une chaîne pour le format CSV (doublement des guillemets et encapsulation)
    */
