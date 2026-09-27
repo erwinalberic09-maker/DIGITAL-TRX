@@ -33,6 +33,8 @@ export interface CashierTransaction {
   selected?: boolean; // Case à cocher de sélection
   createdBy?: string; // UUID du créateur (auth.uid() / profiles.id)
   employeeId?: string; // Référence forte vers profiles.id
+  journalId?: string | null; // Identifiant du journal comptable de rattachement
+  journal_id?: string | null; // Alias direct vers la colonne Supabase
   createdAt?: string; // Date de création ISO
   updatedAt?: string; // Date de modification ISO
 }

@@ -6,12 +6,52 @@
 }
 
 .layout-container {
+  --app-bg: #edf5ff;
+  --app-surface: #ffffff;
+  --app-surface-muted: #e4efff;
+  --app-surface-hover: #e7f0ff;
+  --app-border: #bfd3ee;
+  --app-text: #123c6d;
+  --app-text-muted: #35517a;
+  --app-text-subtle: #617d9e;
+  --odoo-text-teal: #0b5ed7;
+  --odoo-primary-purple: #0b5ed7;
+  --odoo-primary-purple-hover: #084db1;
+  --odoo-bg-search: #f7faff;
+  --brand-accent: #0b5ed7;
+  --brand-accent-hover: #084db1;
+  --brand-focus: #0b5ed7;
+  --brand-action: #0b5ed7;
+  --brand-action-hover: #084db1;
+  --brand-red: #d52b1e;
   display: flex;
   flex-direction: column;
   background-color: var(--app-bg, #f8fafc);
   color: var(--app-text, #0f172a);
   min-height: 100vh;
   transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+:host-context(html.dark) .layout-container,
+:host-context([data-theme="dark"]) .layout-container {
+  --app-bg: #0a2342;
+  --app-surface: #0d1f3a;
+  --app-surface-muted: #123c6d;
+  --app-surface-hover: rgba(124, 179, 255, 0.12);
+  --app-border: rgba(207, 227, 255, 0.16);
+  --app-text: #f3f8ff;
+  --app-text-muted: #d6e8ff;
+  --app-text-subtle: #a9c4e5;
+  --odoo-text-teal: #8cc2ff;
+  --odoo-primary-purple: #1d4ed8;
+  --odoo-primary-purple-hover: #2563eb;
+  --odoo-bg-search: #102542;
+  --brand-accent: #8cc2ff;
+  --brand-accent-hover: #a6ccff;
+  --brand-focus: #8cc2ff;
+  --brand-action: #1d4ed8;
+  --brand-action-hover: #2563eb;
+  --brand-red: #ed5143;
 }
 
 /* ========================================================================= */
@@ -21,7 +61,7 @@
   display: flex;
   flex-direction: column;
   background-color: var(--app-surface, #ffffff);
-  border-bottom: 1px solid var(--app-border, #e2e8f0);
+  border-bottom: 2px solid var(--brand-red);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   color: var(--app-text, #0f172a);
   transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
@@ -56,11 +96,11 @@
     }
 
     &.active {
-      color: var(--odoo-text-teal, #00a09d) !important;
+      color: var(--brand-accent) !important;
       font-weight: 600;
 
       .nav-icon {
-        color: var(--odoo-text-teal, #00a09d) !important;
+        color: var(--brand-accent) !important;
       }
     }
   }
@@ -112,7 +152,7 @@
       }
 
       &:focus-visible {
-        outline: 2px solid var(--odoo-text-teal, #00a09d);
+        outline: 2px solid var(--brand-focus);
         outline-offset: -1px;
       }
 
@@ -132,6 +172,10 @@
   }
 }
 
+#app-topbar {
+  border-bottom: 2px solid var(--brand-red) !important;
+}
+
 @keyframes dropdownFadeIn {
   from {
     opacity: 0;
@@ -149,7 +193,7 @@
 .control-panel {
   display: flex;
   flex-direction: column;
-  background-color: var(--app-surface, #ffffff);
+  background-color: var(--app-surface-muted, #e4efff);
   border-bottom: 1px solid var(--app-border, #e2e8f0);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
   color: var(--app-text, #0f172a);
@@ -161,9 +205,9 @@
     align-items: center;
   }
 
-  /* Bouton d'action principal (#190056) */
+  /* Action principale Transimex */
   .btn-primary {
-    background-color: var(--odoo-primary-purple, #190056);
+    background-color: var(--brand-action);
     color: #ffffff;
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 4px;
@@ -172,11 +216,11 @@
     transition: background-color 0.15s ease, transform 0.05s ease;
 
     &:hover {
-      background-color: var(--odoo-primary-purple-hover, #130042);
+      background-color: var(--brand-action-hover);
     }
 
     &:focus-visible {
-      outline: 2px solid var(--odoo-text-teal, #00a09d);
+      outline: 2px solid var(--brand-focus);
       outline-offset: 2px;
     }
   }
@@ -195,7 +239,7 @@
     }
 
     &:focus-visible {
-      outline: 2px solid var(--odoo-text-teal, #00a09d);
+      outline: 2px solid var(--brand-focus);
       outline-offset: 2px;
     }
   }
@@ -203,7 +247,7 @@
   /* Fil d'Ariane */
   .breadcrumbs {
     .title {
-      color: var(--odoo-text-teal, #00a09d);
+      color: var(--brand-accent);
       font-weight: 700;
     }
 
@@ -222,12 +266,12 @@
 
     &:focus-within {
       background-color: var(--app-surface, #ffffff);
-      border-color: var(--odoo-text-teal, #00a09d);
-      box-shadow: 0 0 0 1px var(--odoo-text-teal, #00a09d);
+      border-color: var(--brand-accent);
+      box-shadow: 0 0 0 1px var(--brand-accent);
     }
 
     .search-tag {
-      background-color: var(--odoo-primary-purple, #714b67);
+      background-color: var(--brand-action);
       border-radius: 3px;
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
       color: #ffffff;
@@ -263,14 +307,75 @@
     }
 
     &.active {
-      color: var(--odoo-text-teal, #00a09d) !important;
-      border: 1px solid var(--odoo-text-teal, #00a09d);
-      background-color: rgba(0, 160, 157, 0.12);
+      color: var(--brand-accent) !important;
+      border: 1px solid var(--brand-accent);
+      background-color: rgba(11, 94, 215, 0.12);
     }
 
     &:focus-visible {
-      outline: 2px solid var(--odoo-text-teal, #00a09d);
+      outline: 2px solid var(--brand-focus);
       outline-offset: 1px;
+    }
+  }
+}
+
+#app-control-panel {
+  background-color: var(--app-surface-muted) !important;
+  border-color: var(--app-border) !important;
+}
+
+.layout-container.apps-home {
+  background-color: #edf5ff !important;
+  color: #123c6d;
+
+  .topbar {
+    background-color: #ffffff !important;
+    border-color: #d5e2f2 !important;
+    box-shadow: none;
+    color: #123c6d;
+
+    #topbar-brand-logo span:first-child {
+      color: #123c6d;
+    }
+
+    #topbar-main-nav {
+      display: none !important;
+    }
+
+    .utility-icon-btn,
+    #topbar-user-profile-trigger {
+      color: #35517a;
+    }
+
+    #topbar-app-launcher-link:hover {
+      background-color: rgba(11, 94, 215, 0.08) !important;
+      color: #0b5ed7 !important;
+    }
+  }
+}
+
+:host-context(html.dark) .layout-container.apps-home,
+:host-context([data-theme="dark"]) .layout-container.apps-home {
+  background-color: #0a2342 !important;
+  color: #f3f8ff;
+
+  .topbar {
+    background-color: #0d1f3a !important;
+    border-color: rgba(207, 227, 255, 0.16) !important;
+    color: #f3f8ff;
+
+    #topbar-brand-logo span:first-child {
+      color: #f3f8ff;
+    }
+
+    .utility-icon-btn,
+    #topbar-user-profile-trigger {
+      color: #d6e8ff;
+    }
+
+    #topbar-app-launcher-link:hover {
+      background-color: rgba(124, 179, 255, 0.14) !important;
+      color: #a6ccff !important;
     }
   }
 }

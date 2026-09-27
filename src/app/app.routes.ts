@@ -4,10 +4,10 @@ import { roleGuard } from './core/guards/role.guard';
 import { MainLayout } from './layout/main-layout/main-layout';
 
 export const routes: Routes = [
-  // Redirection racine vers le tableau de bord
+  // Redirection racine vers le lanceur d'applications
   {
     path: '',
-    redirectTo: 'dashboard',
+    redirectTo: 'apps',
     pathMatch: 'full',
   },
   // Route d'authentification publique
@@ -36,6 +36,12 @@ export const routes: Routes = [
     component: MainLayout,
     canActivate: [authGuard],
     children: [
+      {
+        path: 'apps',
+        loadComponent: () =>
+          import('./features/app-launcher/app-launcher').then((m) => m.AppLauncher),
+        title: 'Transmex - Applications',
+      },
       {
         path: 'dashboard',
         loadComponent: () =>
@@ -92,7 +98,7 @@ export const routes: Routes = [
             (m) => m.CashierManagement
           ),
         canActivate: [roleGuard],
-        data: { roles: ['admin', 'manager', 'caissiere', 'comptable'] },
+        data: { roles: ['admin', 'manager', 'caissiere', 'comptable', 'tresorier'] },
         title: 'Transmex - Caisse',
       },
       {
@@ -114,6 +120,8 @@ export const routes: Routes = [
           import('./features/configuration/journal/configuration-journal').then(
             (m) => m.ConfigurationJournalComponent
           ),
+        canActivate: [roleGuard],
+        data: { roles: ['admin', 'tresorier', 'manager'] },
         title: 'Transmex - Journaux',
       },
       {

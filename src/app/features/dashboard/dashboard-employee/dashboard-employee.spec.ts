@@ -34,6 +34,9 @@ describe('DashboardEmployee', () => {
   };
 
   beforeEach(async () => {
+    authServiceMock.currentUser.set(mockEmployeeUser);
+    cashierServiceMock.currentBalance.set(0);
+    cashierServiceMock.allTransactions.set([]);
     await TestBed.configureTestingModule({
       imports: [DashboardEmployee],
       providers: [
@@ -54,9 +57,21 @@ describe('DashboardEmployee', () => {
 
   it('devrait récupérer et exposer les informations du collaborateur connecté', () => {
     expect(component.currentUser()).toEqual(mockEmployeeUser);
-    const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.textContent).toContain('Jean');
-    expect(compiled.textContent).toContain('Kamga');
+    expect(component.currentUser()?.firstName).toBe('Jean');
+    expect(component.currentUser()?.lastName).toBe('Kamga');
+  });
+
+  it('affiche le lien Journal de caisse uniquement à la caissière', () => {
+    const cashierUser = { ...mockEmployeeUser, role: 'caissiere' as const };
+    authServiceMock.currentUser.set(cashierUser);
+    fixture.detectChanges();
+
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('a[routerLink="/caisse"]')).toBeTruthy();
+
+    authServiceMock.currentUser.set(mockEmployeeUser);
+    fixture.detectChanges();
+    expect(host.querySelector('a[routerLink="/caisse"]')).toBeNull();
   });
 
   it('devrait gérer le cas où aucun utilisateur n\'est encore connecté', () => {
