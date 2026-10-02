@@ -1,6 +1,43 @@
 import express from 'express';
 import { getSupabaseAdmin } from './auth';
 
+/**
+ * Récupère le profil complet de l'utilisateur authentifié directement depuis PostgreSQL.
+ * Source de vérité unique avec vérification de session côté serveur.
+ */
+export const getCurrentUserProfileHandler = async (req: express.Request, res: express.Response): Promise<void> => {
+  const user = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string } | undefined;
+  const userId = user?.id;
+  if (!userId) {
+    res.status(401).json({ error: 'Session utilisateur introuvable.' });
+    return;
+  }
+
+  const adminClient = getSupabaseAdmin();
+  if (!adminClient) {
+    res.status(503).json({ error: 'Service d’administration indisponible : SUPABASE_SERVICE_ROLE_KEY non configurée' });
+    return;
+  }
+
+  try {
+    const { data: profile, error } = await adminClient
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (error || !profile) {
+      res.status(404).json({ error: 'Profil utilisateur introuvable.' });
+      return;
+    }
+
+    res.json({ profile });
+  } catch (err: unknown) {
+    console.error('Erreur getCurrentUserProfileHandler:', err);
+    res.status(500).json({ error: 'Erreur interne lors de la récupération du profil.' });
+  }
+};
+
 export const updateCurrentUserProfileHandler = async (req: express.Request, res: express.Response): Promise<void> => {
   const user = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string } | undefined;
   const userId = user?.id;

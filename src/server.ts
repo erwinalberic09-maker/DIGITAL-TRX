@@ -14,7 +14,7 @@ import { getSupabaseAdmin, requireAuth } from './server/auth';
 import { getSupabaseConfigHandler } from './server/config';
 import { syncUserAccessRole } from './server/access-role-sync';
 import { formatPersistedPieceComptable, normalizeDateToDay } from './server/cashier.utils';
-import { updateCurrentUserProfileHandler } from './server/profile';
+import { getCurrentUserProfileHandler, updateCurrentUserProfileHandler } from './server/profile';
 import { createCollaboratorHandler } from './server/collaborators.create';
 import { getCollaboratorsHandler } from './server/collaborators.list';
 import { deleteCollaboratorHandler, updateCollaboratorHandler } from './server/collaborators.manage';
@@ -206,19 +206,17 @@ app.post('/api/auth/sync-role', requireAuth, async (req: express.Request, res: e
       app_metadata: { ...user.app_metadata, role: targetRole },
     });
 
-    // Scellement dans public.profiles
-    const { error: profileUpsertError } = await supabaseAdmin.from('profiles').upsert(
-      {
-        id: user.id,
-        email: user.email,
+    // Scellement dans public.profiles (UPDATE strict pour préserver les contraintes NOT NULL sur first_name / last_name)
+    const { error: profileUpdateError } = await supabaseAdmin
+      .from('profiles')
+      .update({
         role: targetRole,
         updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'id' }
-    );
+      })
+      .eq('id', user.id);
 
-    if (profileUpsertError) {
-      console.error('Erreur upsert profile dans sync-role:', profileUpsertError.message);
+    if (profileUpdateError) {
+      console.error('Erreur mise à jour profile dans sync-role:', profileUpdateError.message);
       res.status(500).json({ error: 'Échec de synchronisation du profil utilisateur.' });
       return;
     }
@@ -247,8 +245,9 @@ collaboratorCollectionAliases.forEach((path) => {
 });
 
 /**
- * Modification d'un compte collaborateur (synchronisation auth.app_metadata + public.profiles)
+ * Lecture et modification d'un compte collaborateur (synchronisation auth.app_metadata + public.profiles)
  */
+app.get('/api/profile/me', requireAuth, getCurrentUserProfileHandler);
 app.patch('/api/profile/me', requireAuth, requirePermission('profile.update'), updateCurrentUserProfileHandler);
 
 collaboratorCollectionAliases.forEach((path) => {
@@ -991,19 +990,58 @@ const getCashierSummaryHandler = async (req: express.Request, res: express.Respo
       ? rawJournalId.trim()
       : null;
 
+    // 1. Tenter la procédure stockée PostgreSQL
     const { data, error } = await adminClient.rpc('get_cashier_summary', {
       p_journal_id: journalId,
     });
 
-    if (error) {
-      console.error('Erreur SQL get_cashier_summary:', error.message);
+    if (!error && data) {
+      res.json({
+        success: true,
+        summary: data,
+      });
+      return;
+    }
+
+    // 2. Calcul direct sur PostgreSQL via adminClient si la RPC n'est pas encore déployée
+    let query = adminClient
+      .from('cashier_transactions')
+      .select('montant, category');
+
+    if (journalId) {
+      query = query.eq('journal_id', journalId);
+    }
+
+    const { data: rows, error: directQueryError } = await query;
+
+    if (directQueryError) {
+      console.error('Erreur SQL direct cashier_transactions:', directQueryError.message);
       res.status(500).json({ error: 'Erreur lors du calcul du solde de caisse.' });
       return;
     }
 
+    let totalEntrees = 0;
+    let totalSorties = 0;
+    let soldeGlobal = 0;
+
+    for (const row of rows || []) {
+      const montant = Number(row.montant) || 0;
+      if (row.category === 'entree') {
+        totalEntrees += montant;
+      } else if (row.category === 'sortie') {
+        totalSorties += Math.abs(montant);
+      }
+      soldeGlobal += montant;
+    }
+
     res.json({
       success: true,
-      summary: data,
+      summary: {
+        total_entrees: totalEntrees,
+        total_sorties: totalSorties,
+        solde_global: soldeGlobal,
+        total_count: (rows || []).length,
+      },
     });
   } catch (err: unknown) {
     console.error('Erreur getCashierSummaryHandler:', err);

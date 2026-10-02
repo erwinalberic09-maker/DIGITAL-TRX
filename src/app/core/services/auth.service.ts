@@ -197,17 +197,38 @@ export class AuthService {
     accessToken: string,
     authUser?: { app_metadata?: Record<string, unknown>; user_metadata?: Record<string, unknown> } | null
   ): Promise<UserProfile | null> {
-    if (!this.supabaseService.supabase) return null;
-
     try {
-      const { data: profile } = await this.supabaseService.supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
+      let profile: Record<string, unknown> | null = null;
+
+      // 1. Lecture sécurisée côté serveur (source de vérité PostgreSQL avec vérification de session)
+      if (accessToken) {
+        try {
+          const resp = await fetch('/api/profile/me', {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+          });
+          if (resp.ok) {
+            const json = await resp.json();
+            profile = (json.profile as Record<string, unknown>) || null;
+          }
+        } catch (serverErr) {
+          console.warn('Endpoint serveur /api/profile/me non disponible:', serverErr);
+        }
+      }
+
+      // 2. Repli direct Supabase si l'appel serveur n'a pas pu aboutir
+      if (!profile && this.supabaseService.supabase) {
+        const { data: directProfile } = await this.supabaseService.supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+        profile = (directProfile as unknown as Record<string, unknown>) || null;
+      }
 
       const appRole = authUser?.app_metadata?.['role'] as UserRole | undefined;
-      const profileRole = profile?.role as UserRole | undefined;
+      const profileRole = profile?.['role'] as UserRole | undefined;
       // Résolution sécurisée du rôle :
       // 1. Si app_metadata (scellé serveur par Supabase Admin) ou profile (table SQL sécurisée) spécifie 'admin' => 'admin'
       // 2. user_metadata n'est jamais utilisé pour élever les privilèges admin (modifiable côté client)
@@ -222,16 +243,16 @@ export class AuthService {
 
       const userProfile: UserProfile = {
         id: userId,
-        email: email || profile?.email || '',
-        firstName: profile?.first_name || (authUser?.user_metadata?.['first_name'] as string) || 'Utilisateur',
-        lastName: profile?.last_name || (authUser?.user_metadata?.['last_name'] as string) || 'Transmex',
+        email: email || (profile?.['email'] as string) || '',
+        firstName: (profile?.['first_name'] as string) || (authUser?.user_metadata?.['first_name'] as string) || 'Utilisateur',
+        lastName: (profile?.['last_name'] as string) || (authUser?.user_metadata?.['last_name'] as string) || 'Transmex',
         role: resolvedRole,
         roles: [resolvedRole],
-        department: profile?.department || 'Services Généraux',
-        phone: profile?.phone,
-        isActive: profile?.is_active ?? true,
-        avatarUrl: profile?.avatar_url,
-        createdAt: profile?.created_at || new Date().toISOString(),
+        department: (profile?.['department'] as string) || 'Services Généraux',
+        phone: profile?.['phone'] as string | undefined,
+        isActive: (profile?.['is_active'] as boolean | undefined) ?? true,
+        avatarUrl: profile?.['avatar_url'] as string | undefined,
+        createdAt: (profile?.['created_at'] as string) || new Date().toISOString(),
         lastLoginAt: new Date().toISOString(),
       };
 
@@ -244,7 +265,7 @@ export class AuthService {
 
       return userProfile;
     } catch (err) {
-      console.warn('Erreur lors du chargement du profil utilisateur depuis Supabase:', err);
+      console.warn('Erreur lors du chargement du profil utilisateur:', err);
       return null;
     }
   }
