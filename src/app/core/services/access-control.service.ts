@@ -89,28 +89,11 @@ export class AccessControlService {
     const matchingPermissions = this._effectivePermissions().filter(
       (permission) => permission.permissionKey === permissionKey
     );
-    if (matchingPermissions.some((permission) => permission.effect === 'deny' && permission.scope.type === 'all')) return false;
-    if (matchingPermissions.some((permission) => permission.effect === 'allow' && permission.scope.type === 'all')) return true;
+    if (matchingPermissions.some((permission) => permission.effect === 'deny')) return false;
+    if (matchingPermissions.some((permission) => permission.effect === 'allow')) return true;
 
-    // 4. Repli canonique robuste selon le rôle Transmex du collaborateur
-    const userRole = this.authService.currentRole();
-    if (!userRole) return false;
-
-    switch (userRole) {
-      case 'admin':
-        return true;
-      case 'manager':
-        return ['cashier.read', 'cashier.write', 'hr.read', 'hr.write', 'prospects.read', 'prospects.write'].includes(permissionKey);
-      case 'tresorier':
-      case 'comptable':
-        return ['cashier.read', 'cashier.write', 'journals.read', 'journals.write'].includes(permissionKey);
-      case 'caissiere':
-        return ['cashier.read', 'cashier.write'].includes(permissionKey);
-      case 'employe':
-        return ['hr.read'].includes(permissionKey);
-      default:
-        return false;
-    }
+    // 4. Aucune permission codée en dur : 100% des droits proviennent de la base de données
+    return false;
   }
   
   public hasPermissionForResource(

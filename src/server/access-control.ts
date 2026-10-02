@@ -57,8 +57,7 @@ const isValidScope = (scope: unknown): scope is AccessScope =>
   isRecord(scope) &&
   typeof scope['type'] === 'string' &&
   scope['type'].trim().length > 0 &&
-  typeof scope['version'] === 'number' &&
-  scope['version'] === 1;
+  (scope['version'] === undefined || scope['version'] === 1);
 
 export const isAccessScopeSupported = (scope: unknown): scope is AccessScope =>
   isValidScope(scope) && scopeEvaluators.has(scope.type);
@@ -227,21 +226,8 @@ export const hasPermission = async (
     return true;
   }
 
-  // 3. Repli métier par rôle canonique côté serveur
-  const hasRole = (role: string) => accessRules.roleKeys.includes(role);
-  if (hasRole('manager') && ['cashier.read', 'cashier.write', 'hr.read', 'hr.write', 'prospects.read', 'prospects.write'].includes(permissionKey)) {
-    return true;
-  }
-  if ((hasRole('tresorier') || hasRole('comptable')) && ['cashier.read', 'cashier.write', 'journals.read', 'journals.write'].includes(permissionKey)) {
-    return true;
-  }
-  if (hasRole('caissiere') && ['cashier.read', 'cashier.write'].includes(permissionKey)) {
-    return true;
-  }
-  if (hasRole('employe') && ['hr.read'].includes(permissionKey)) {
-    return true;
-  }
-
+  // 3. Résolution stricte basée sur les permissions dynamiques de la base de données
+  // Aucun rôle n'est codé en dur : seules les permissions accordées au rôle dans access_role_permissions font foi.
   return false;
 };
 
