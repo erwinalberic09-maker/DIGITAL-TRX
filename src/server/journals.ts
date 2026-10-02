@@ -1,20 +1,6 @@
 import express from 'express';
 import { getSupabaseAdmin } from './auth';
-
-/**
- * Rôles autorisés pour la consultation des journaux :
- * - admin : accès complet
- * - tresorier : accès complet
- * - manager : consultation en lecture seule
- */
-const ALLOWED_VIEW_ROLES = ['admin', 'tresorier', 'manager'];
-
-/**
- * Rôles autorisés pour la création et suppression de journaux :
- * - admin
- * - tresorier
- */
-const ALLOWED_MANAGE_ROLES = ['admin', 'tresorier'];
+import { requestHasPermission } from './access-control';
 
 /**
  * GET /api/journals
@@ -27,21 +13,18 @@ export const getJournalsHandler = async (req: express.Request, res: express.Resp
     return;
   }
 
-  const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { role?: string; id?: string } | undefined;
-  const userRole = authenticatedUser?.role;
-
-  if (!userRole || !ALLOWED_VIEW_ROLES.includes(userRole)) {
-    res.status(403).json({
-      error: 'Accès interdit : seuls les administrateurs, trésoriers et managers peuvent consulter les journaux.',
-    });
-    return;
-  }
-
   try {
-    const { data, error } = await adminClient
+    const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { role?: string } | undefined;
+    let query = adminClient
       .from('journals')
-      .select('id, name, type, ledger_type, sequence_prefix, default_account, currency, is_active, created_at, updated_at')
+      .select('id, name, type, ledger_type, sequence_prefix, default_account, currency, is_active, created_by, created_at, updated_at')
       .order('created_at', { ascending: true });
+
+    if (authenticatedUser?.role === 'caissiere') {
+      query = query.eq('sequence_prefix', 'CSH1');
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error('[API JOURNAUX] Erreur lecture Supabase:', error);
@@ -52,8 +35,7 @@ export const getJournalsHandler = async (req: express.Request, res: express.Resp
     res.status(200).json({
       journals: data || [],
       count: data ? data.length : 0,
-      userRole,
-      canManage: ALLOWED_MANAGE_ROLES.includes(userRole),
+      canManage: requestHasPermission(req, 'journals.create'),
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Erreur interne';
@@ -61,7 +43,6 @@ export const getJournalsHandler = async (req: express.Request, res: express.Resp
     res.status(500).json({ error: msg });
   }
 };
-
 /**
  * POST /api/journals
  * Crée un nouveau journal comptable (strictement réservé à admin et tresorier)
@@ -73,13 +54,15 @@ export const createJournalHandler = async (req: express.Request, res: express.Re
     return;
   }
 
-  const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { role?: string; id?: string } | undefined;
-  const userRole = authenticatedUser?.role;
+  const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { id?: string } | undefined;
+  const userId = authenticatedUser?.id;
+  if (!userId) {
+    res.status(401).json({ error: 'Utilisateur non identifié. Création du journal refusée.' });
+    return;
+  }
 
-  if (!userRole || !ALLOWED_MANAGE_ROLES.includes(userRole)) {
-    res.status(403).json({
-      error: 'Accès interdit : seuls les administrateurs et les trésoriers ont le droit de créer des journaux.',
-    });
+  if (!userId) {
+    res.status(401).json({ error: 'Utilisateur non identifié. Création du journal refusée.' });
     return;
   }
 
@@ -134,6 +117,7 @@ export const createJournalHandler = async (req: express.Request, res: express.Re
           default_account,
           currency,
           is_active,
+          created_by: userId,
         },
       ])
       .select()
@@ -165,16 +149,6 @@ export const updateJournalHandler = async (req: express.Request, res: express.Re
   const adminClient = getSupabaseAdmin();
   if (!adminClient) {
     res.status(503).json({ error: 'Service Supabase non configuré sur le serveur' });
-    return;
-  }
-
-  const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { role?: string; id?: string } | undefined;
-  const userRole = authenticatedUser?.role;
-
-  if (!userRole || !ALLOWED_MANAGE_ROLES.includes(userRole)) {
-    res.status(403).json({
-      error: 'Accès interdit : seuls les administrateurs et les trésoriers ont le droit de modifier les journaux.',
-    });
     return;
   }
 
@@ -302,16 +276,6 @@ export const deleteJournalHandler = async (req: express.Request, res: express.Re
   const adminClient = getSupabaseAdmin();
   if (!adminClient) {
     res.status(503).json({ error: 'Service Supabase non configuré sur le serveur' });
-    return;
-  }
-
-  const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { role?: string; id?: string } | undefined;
-  const userRole = authenticatedUser?.role;
-
-  if (!userRole || !ALLOWED_MANAGE_ROLES.includes(userRole)) {
-    res.status(403).json({
-      error: 'Accès interdit : seuls les administrateurs et les trésoriers ont le droit de supprimer des journaux.',
-    });
     return;
   }
 

@@ -10,15 +10,22 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
-import { UserRole } from './app/core/models/auth.model';
-import { getSupabaseAdmin, requireAdmin, requireAuth, requireRole } from './server/auth';
+import { getSupabaseAdmin, requireAuth } from './server/auth';
 import { getSupabaseConfigHandler } from './server/config';
+import { syncUserAccessRole } from './server/access-role-sync';
 import { formatPersistedPieceComptable, normalizeDateToDay } from './server/cashier.utils';
 import { updateCurrentUserProfileHandler } from './server/profile';
 import { createCollaboratorHandler } from './server/collaborators.create';
 import { getCollaboratorsHandler } from './server/collaborators.list';
 import { deleteCollaboratorHandler, updateCollaboratorHandler } from './server/collaborators.manage';
 import { getOperationsHandler } from './server/cashier.read';
+import {
+  createProspectHandler,
+  deleteProspectHandler,
+  listProspectAssigneesHandler,
+  listProspectsHandler,
+  updateProspectHandler,
+} from './server/prospects';
 import {
   createJournalHandler,
   deleteJournalHandler,
@@ -32,6 +39,24 @@ import {
   getJournalEntriesHandler,
   updateJournalEntryHandler,
 } from './server/journal-entries';
+import {
+  assignAccessRoleHandler,
+  createAccessRoleHandler,
+  deleteAccessRoleHandler,
+  getMyAccessPermissionsHandler,
+  getRolePermissionsHandler,
+  getUserAccessHandler,
+  listAccessUsersHandler,
+  listAccessAuditHandler,
+  listAccessPermissionsHandler,
+  listAccessRolesHandler,
+  replaceRolePermissionsHandler,
+  revokeAccessRoleHandler,
+  revokeUserPermissionOverrideHandler,
+  setUserPermissionOverrideHandler,
+  updateAccessRoleHandler,
+} from './server/access-control.handlers';
+import { requirePermission, resolveJournalOwnerContext } from './server/access-control';
 
 // Charger les variables d'environnement depuis le fichier `.env` (si présent)
 dotenv.config();
@@ -133,6 +158,7 @@ app.use(
     '/api/cahier/operations',
     '/api/cashier/transactions',
     '/api/system/operations',
+    '/api/prospects',
   ],
   (req, res, next): void => {
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
@@ -149,7 +175,7 @@ app.get('/api/config', getSupabaseConfigHandler);
 const collaboratorCollectionAliases = ['/api/system/collaborators', '/api/admin/users'];
 
 collaboratorCollectionAliases.forEach((path) => {
-  app.get(path, requireAdmin, getCollaboratorsHandler);
+  app.get(path, requireAuth, requirePermission('users.read'), getCollaboratorsHandler);
 });
 
 /**
@@ -181,7 +207,7 @@ app.post('/api/auth/sync-role', requireAuth, async (req: express.Request, res: e
     });
 
     // Scellement dans public.profiles
-    await supabaseAdmin.from('profiles').upsert(
+    const { error: profileUpsertError } = await supabaseAdmin.from('profiles').upsert(
       {
         id: user.id,
         email: user.email,
@@ -190,6 +216,18 @@ app.post('/api/auth/sync-role', requireAuth, async (req: express.Request, res: e
       },
       { onConflict: 'id' }
     );
+
+    if (profileUpsertError) {
+      console.error('Erreur upsert profile dans sync-role:', profileUpsertError.message);
+      res.status(500).json({ error: 'Échec de synchronisation du profil utilisateur.' });
+      return;
+    }
+
+    try {
+      await syncUserAccessRole(supabaseAdmin, user.id, targetRole, user.id, 'legacy_profile');
+    } catch (syncErr) {
+      console.warn('Synchronisation access_user_roles dans sync-role:', syncErr);
+    }
 
     res.json({
       success: true,
@@ -205,23 +243,23 @@ app.post('/api/auth/sync-role', requireAuth, async (req: express.Request, res: e
 });
 
 collaboratorCollectionAliases.forEach((path) => {
-  app.post(path, requireAdmin, createCollaboratorHandler);
+  app.post(path, requireAuth, requirePermission('users.create'), createCollaboratorHandler);
 });
 
 /**
  * Modification d'un compte collaborateur (synchronisation auth.app_metadata + public.profiles)
  */
-app.patch('/api/profile/me', requireAuth, updateCurrentUserProfileHandler);
+app.patch('/api/profile/me', requireAuth, requirePermission('profile.update'), updateCurrentUserProfileHandler);
 
 collaboratorCollectionAliases.forEach((path) => {
-  app.patch(`${path}/:id`, requireAdmin, updateCollaboratorHandler);
+  app.patch(`${path}/:id`, requireAuth, requirePermission('users.update'), updateCollaboratorHandler);
 });
 
 /**
  * Suppression d'un compte collaborateur (auth.users + public.profiles).
  */
 collaboratorCollectionAliases.forEach((path) => {
-  app.delete(`${path}/:id`, requireAdmin, deleteCollaboratorHandler);
+  app.delete(`${path}/:id`, requireAuth, requirePermission('users.delete'), deleteCollaboratorHandler);
 });
 
 /**
@@ -267,11 +305,17 @@ const checkDuplicateCashierTransaction = async (
 
   const absMontant = Math.abs(Number(candidate.montant));
 
-  // Requête large sur le montant (positif ou négatif) pour neutraliser toute incohérence de signe
-  const { data: candidates, error } = await adminClient
+  // Requête optimisée ciblée sur le jour et le montant pour éviter les balayages complets de table
+  let candidateQuery = adminClient
     .from('cashier_transactions')
     .select('id, date, libelle, montant, service, no_dossier')
     .or(`montant.eq.${candidate.montant},montant.eq.${-candidate.montant},montant.eq.${absMontant},montant.eq.${-absMontant}`);
+
+  if (normDay) {
+    candidateQuery = candidateQuery.eq('date', normDay);
+  }
+
+  const { data: candidates, error } = await candidateQuery;
 
   if (error || !candidates || candidates.length === 0) {
     return { isDuplicate: false };
@@ -341,8 +385,13 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       return;
     }
 
-    if (isNaN(montant)) {
-      res.status(400).json({ error: 'Le montant de l’opération doit être un nombre valide.' });
+    if (payload.category !== undefined && !['entree', 'sortie'].includes(payload.category)) {
+      res.status(400).json({ error: 'La catégorie de l’opération est invalide.' });
+      return;
+    }
+
+    if (!Number.isFinite(montant) || montant === 0) {
+      res.status(400).json({ error: 'Le montant de l’opération doit être un nombre fini différent de zéro.' });
       return;
     }
 
@@ -439,9 +488,11 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       console.error('Erreur SQL lors de l’insertion de l’opération:', error.message);
       const isUniqueViolation = error.code === '23505' || error.message?.toLowerCase().includes('unique') || error.message?.includes('duplicate key');
       if (isUniqueViolation) {
-        res.status(409).json({
-          error: `Erreur d'unicité : le numéro de pièce comptable est déjà utilisé dans la base de données.`,
-        });
+        const isPiece = error.message?.includes('piece_comptable') || error.message?.includes('piece');
+        const errorMsg = isPiece
+          ? `Erreur d'unicité : le numéro de pièce comptable est déjà utilisé dans la base de données.`
+          : `Opération déjà enregistrée : une opération identique existe déjà en caisse (conflit de saisie simultanée). La double saisie est interdite.`;
+        res.status(409).json({ error: errorMsg });
         return;
       }
       res.status(500).json({ error: 'Erreur lors de l’enregistrement de l’opération de caisse.' });
@@ -484,34 +535,34 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
     }
 
     const updateData: Record<string, unknown> = {};
+    const { data: existingRow, error: fetchError } = await adminClient
+      .from('cashier_transactions')
+      .select('created_by, employee_id, category, montant')
+      .eq('id', targetId)
+      .maybeSingle();
+
+    if (fetchError) {
+      console.error('Erreur vérification droits updateOperationHandler:', fetchError.message);
+      res.status(500).json({ error: 'Erreur lors de la vérification des autorisations sur l’opération.' });
+      return;
+    }
+    if (!existingRow) {
+      res.status(404).json({ error: 'Opération introuvable' });
+      return;
+    }
 
     // RÈGLE MÉTIER : chacun ne modifie que ce qu'il a lui-même enregistré.
     // Un manager ne peut pas modifier une opération saisie par un caissier, et un
     // caissier ne peut pas modifier celle d'un collègue. Seul un admin déroge à la règle.
     // (Miroir applicatif de la policy RLS "cashier_transactions_update_own_or_admin".)
     if (authenticatedUser?.role !== 'admin') {
-      const { data: existingRow, error: fetchError } = await adminClient
-        .from('cashier_transactions')
-        .select('created_by, employee_id')
-        .eq('id', targetId)
-        .maybeSingle();
-
-      if (fetchError) {
-        console.error('Erreur vérification droits updateOperationHandler:', fetchError.message);
-        res.status(500).json({ error: 'Erreur lors de la vérification des autorisations sur l’opération.' });
-        return;
-      }
-      if (!existingRow) {
-        res.status(404).json({ error: 'Opération introuvable' });
-        return;
-      }
       const creator = String(existingRow.created_by || existingRow.employee_id || '').trim();
       const userEmail = (authenticatedUser?.email || '').toLowerCase().trim();
       const callerId = authenticatedUser?.id;
       const matchesId = callerId && creator === callerId;
       const matchesEmail = userEmail && creator.toLowerCase() === userEmail;
 
-      if (creator && !matchesId && !matchesEmail) {
+      if (!creator || (!matchesId && !matchesEmail)) {
         res.status(403).json({ error: 'Action refusée : vous ne pouvez modifier que les opérations que vous avez vous-même enregistrées.' });
         return;
       }
@@ -540,12 +591,22 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       updateData['type_description'] = payload.typeDescription ?? payload.type_description ?? null;
     }
 
+    if (payload.category !== undefined && !['entree', 'sortie'].includes(payload.category)) {
+      res.status(400).json({ error: 'La catégorie de l’opération est invalide.' });
+      return;
+    }
+
+    const effectiveCategory = payload.category !== undefined ? payload.category : existingRow.category;
     if (payload.category !== undefined) {
-      updateData['category'] = payload.category === 'sortie' ? 'sortie' : 'entree';
+      updateData['category'] = effectiveCategory;
     }
 
     if (payload.status !== undefined) {
-      updateData['status'] = payload.status === 'posted' ? 'posted' : (payload.status === 'cancelled' ? 'cancelled' : 'draft');
+      if (!['draft', 'posted', 'cancelled'].includes(payload.status)) {
+        res.status(400).json({ error: 'Le statut de l’opération est invalide.' });
+        return;
+      }
+      updateData['status'] = payload.status;
     }
 
     if (payload.noDossier !== undefined || payload.no_dossier !== undefined || payload.matriculeVehicule !== undefined || payload.matricule_vehicule !== undefined) {
@@ -594,11 +655,18 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
 
     if (payload.montant !== undefined) {
       const montant = Number(payload.montant);
-      if (isNaN(montant)) {
-        res.status(400).json({ error: 'Le montant de l’opération doit être un nombre valide' });
+      if (!Number.isFinite(montant) || montant === 0) {
+        res.status(400).json({ error: 'Le montant de l’opération doit être un nombre fini différent de zéro.' });
         return;
       }
-      updateData['montant'] = montant;
+      updateData['montant'] = effectiveCategory === 'sortie' ? -Math.abs(montant) : Math.abs(montant);
+    } else if (payload.category !== undefined) {
+      const montant = Math.abs(Number(existingRow.montant));
+      if (!Number.isFinite(montant) || montant === 0) {
+        res.status(400).json({ error: 'Le montant existant doit être corrigé avant de changer la catégorie.' });
+        return;
+      }
+      updateData['montant'] = effectiveCategory === 'sortie' ? -montant : montant;
     }
 
     if (payload.date !== undefined && payload.date) {
@@ -684,9 +752,11 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       console.error('Erreur SQL lors de la mise à jour de l’opération:', error.message);
       const isUniqueViolation = error.code === '23505' || error.message?.toLowerCase().includes('unique') || error.message?.includes('duplicate key');
       if (isUniqueViolation) {
-        res.status(409).json({
-          error: `Erreur d'unicité : le numéro de pièce comptable est déjà utilisé dans la base de données.`,
-        });
+        const isPiece = error.message?.includes('piece_comptable') || error.message?.includes('piece');
+        const errorMsg = isPiece
+          ? `Erreur d'unicité : le numéro de pièce comptable est déjà utilisé dans la base de données.`
+          : `Modification refusée : une opération identique existe déjà en caisse (conflit de saisie simultanée). La double saisie est interdite.`;
+        res.status(409).json({ error: errorMsg });
         return;
       }
       res.status(500).json({ error: 'Erreur lors de la modification de l’opération de caisse.' });
@@ -824,6 +894,10 @@ const duplicateOperationsHandler = async (req: express.Request, res: express.Res
       res.status(400).json({ error: 'Aucun identifiant fourni pour la duplication' });
       return;
     }
+    if (bodyIds.length > 100 || bodyIds.some((targetId: unknown) => typeof targetId !== 'string' || !targetId) || new Set(bodyIds).size !== bodyIds.length) {
+      res.status(400).json({ error: 'La duplication accepte au maximum 100 identifiants distincts et valides.' });
+      return;
+    }
 
     // Récupération des transactions originales
     const { data: originalRows, error: fetchErr } = await adminClient
@@ -835,6 +909,10 @@ const duplicateOperationsHandler = async (req: express.Request, res: express.Res
       res.status(404).json({ error: 'Aucune opération trouvée pour duplication' });
       return;
     }
+    if (originalRows.length !== bodyIds.length) {
+      res.status(404).json({ error: 'Une ou plusieurs opérations sont introuvables.' });
+      return;
+    }
 
     // Contrôle d'appartenance pour les rôles non-admin : on ne peut dupliquer que ses propres opérations
     if (userRole !== 'admin') {
@@ -843,9 +921,8 @@ const duplicateOperationsHandler = async (req: express.Request, res: express.Res
         return;
       }
       const unauthorizedRows = originalRows.filter((r) => {
-        const creator = r.created_by || r.employee_id;
-        if (!creator) return false; // Tolérance pour les lignes historiques sans auteur
-        return creator !== callerId;
+        const creator = String(r.created_by || r.employee_id || '').trim();
+        return !creator || creator !== callerId;
       });
       if (unauthorizedRows.length > 0) {
         res.status(403).json({
@@ -898,6 +975,43 @@ const duplicateOperationsHandler = async (req: express.Request, res: express.Res
 };
 
 /**
+ * Calcul du solde global et des métriques de caisse côté PostgreSQL
+ * Indépendant de la pagination et des tranches locales.
+ */
+const getCashierSummaryHandler = async (req: express.Request, res: express.Response): Promise<void> => {
+  const adminClient = getSupabaseAdmin();
+  if (!adminClient) {
+    res.status(503).json({ error: 'Service Supabase non configuré sur le serveur' });
+    return;
+  }
+
+  try {
+    const rawJournalId = req.query['journalId'] || req.query['journal_id'];
+    const journalId = typeof rawJournalId === 'string' && rawJournalId.trim() && rawJournalId !== 'native-caisse-principal' && rawJournalId !== 'CSH1'
+      ? rawJournalId.trim()
+      : null;
+
+    const { data, error } = await adminClient.rpc('get_cashier_summary', {
+      p_journal_id: journalId,
+    });
+
+    if (error) {
+      console.error('Erreur SQL get_cashier_summary:', error.message);
+      res.status(500).json({ error: 'Erreur lors du calcul du solde de caisse.' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      summary: data,
+    });
+  } catch (err: unknown) {
+    console.error('Erreur getCashierSummaryHandler:', err);
+    res.status(500).json({ error: 'Erreur interne lors du calcul du solde.' });
+  }
+};
+
+/**
  * Modification de statut en masse (PATCH /api/cahier/operations/status)
  */
 const updateOperationsStatusHandler = async (req: express.Request, res: express.Response): Promise<void> => {
@@ -913,12 +1027,21 @@ const updateOperationsStatusHandler = async (req: express.Request, res: express.
     const userRole = authenticatedUser?.role;
 
     const bodyIds = Array.isArray(req.body?.ids) ? req.body.ids : [];
-    const newStatus = req.body?.status === 'posted' ? 'posted' : (req.body?.status === 'cancelled' ? 'cancelled' : 'draft');
+    const requestedStatus = req.body?.status;
 
     if (bodyIds.length === 0) {
       res.status(400).json({ error: 'Aucun identifiant fourni' });
       return;
     }
+    if (bodyIds.length > 100 || bodyIds.some((targetId: unknown) => typeof targetId !== 'string' || !targetId) || new Set(bodyIds).size !== bodyIds.length) {
+      res.status(400).json({ error: 'La modification accepte au maximum 100 identifiants distincts et valides.' });
+      return;
+    }
+    if (!['draft', 'posted', 'cancelled'].includes(requestedStatus)) {
+      res.status(400).json({ error: 'Le statut demandé est invalide.' });
+      return;
+    }
+    const newStatus = requestedStatus;
 
     // Contrôle d'appartenance pour les non-admins : interdiction de changer le statut des opérations créées par un tiers
     if (userRole !== 'admin') {
@@ -936,11 +1059,14 @@ const updateOperationsStatusHandler = async (req: express.Request, res: express.
         res.status(500).json({ error: 'Impossible de vérifier la propriété des opérations' });
         return;
       }
+      if (rowsToCheck.length !== bodyIds.length) {
+        res.status(404).json({ error: 'Une ou plusieurs opérations sont introuvables.' });
+        return;
+      }
 
       const unauthorizedRows = rowsToCheck.filter((r) => {
-        const creator = r.created_by || r.employee_id;
-        if (!creator) return false;
-        return creator !== callerId;
+        const creator = String(r.created_by || r.employee_id || '').trim();
+        return !creator || creator !== callerId;
       });
 
       if (unauthorizedRows.length > 0) {
@@ -975,36 +1101,31 @@ const updateOperationsStatusHandler = async (req: express.Request, res: express.
   }
 };
 
-// Déclaration des routes de caisse sécurisées par RBAC strict (lecture réservée aux rôles financiers et encadrement)
-const cashierReadRoles: UserRole[] = ['admin', 'manager', 'caissiere', 'comptable', 'tresorier'];
-const cashierWriteRoles: UserRole[] = ['admin', 'caissiere', 'tresorier', 'manager', 'comptable'];
-const cashierDeleteRoles: UserRole[] = ['admin', 'caissiere', 'tresorier'];
+// Caisse native : chaque route exige une permission du catalogue serveur.
 const cashierOperationAliases = ['/api/cahier/operations', '/api/cashier/transactions'];
 
 cashierOperationAliases.forEach((path) => {
-  app.get(path, requireAuth, requireRole(cashierReadRoles), getOperationsHandler);
-});
-
-// Actions en masse (Duplication & Changement de statut)
-cashierOperationAliases.forEach((path) => {
-  app.post(`${path}/duplicate`, requireAuth, requireRole(cashierWriteRoles), duplicateOperationsHandler);
-  app.patch(`${path}/status`, requireAuth, requireRole(cashierWriteRoles), updateOperationsStatusHandler);
-});
-
-// Écriture : réservée aux Administrateurs, Caissières, Managers et Comptables
-cashierOperationAliases.forEach((path) => {
-  app.post(path, requireAuth, requireRole(cashierWriteRoles), saveOperationHandler);
+  app.get(path, requireAuth, requirePermission('cashier.read'), getOperationsHandler);
+  app.get(`${path}/summary`, requireAuth, requirePermission('cashier.read'), getCashierSummaryHandler);
 });
 
 cashierOperationAliases.forEach((path) => {
-  app.put(`${path}/:id`, requireAuth, requireRole(cashierWriteRoles), updateOperationHandler);
-  app.patch(`${path}/:id`, requireAuth, requireRole(cashierWriteRoles), updateOperationHandler);
+  app.post(`${path}/duplicate`, requireAuth, requirePermission('cashier.duplicate'), duplicateOperationsHandler);
+  app.patch(`${path}/status`, requireAuth, requirePermission('cashier.status_update'), updateOperationsStatusHandler);
 });
 
-// Suppression : autorisée pour les Administrateurs et Caissières (vérification stricte de propriété dans deleteOperationsHandler)
 cashierOperationAliases.forEach((path) => {
-  app.delete(`${path}/:id`, requireAuth, requireRole(cashierDeleteRoles), deleteOperationsHandler);
-  app.delete(path, requireAuth, requireRole(cashierDeleteRoles), deleteOperationsHandler);
+  app.post(path, requireAuth, requirePermission('cashier.create'), saveOperationHandler);
+});
+
+cashierOperationAliases.forEach((path) => {
+  app.put(`${path}/:id`, requireAuth, requirePermission('cashier.update'), updateOperationHandler);
+  app.patch(`${path}/:id`, requireAuth, requirePermission('cashier.update'), updateOperationHandler);
+});
+
+cashierOperationAliases.forEach((path) => {
+  app.delete(`${path}/:id`, requireAuth, requirePermission('cashier.delete'), deleteOperationsHandler);
+  app.delete(path, requireAuth, requirePermission('cashier.delete'), deleteOperationsHandler);
 });
 
 /**
@@ -1014,14 +1135,11 @@ cashierOperationAliases.forEach((path) => {
  * Consultation : admin, tresorier, manager (lecture seule pour manager)
  * Création et suppression : strictement réservées à admin et tresorier
  */
-const journalViewRoles: UserRole[] = ['admin', 'tresorier', 'manager'];
-const journalManageRoles: UserRole[] = ['admin', 'tresorier'];
-
-app.get('/api/journals', requireAuth, requireRole(journalViewRoles), getJournalsHandler);
-app.post('/api/journals', requireAuth, requireRole(journalManageRoles), createJournalHandler);
-app.put('/api/journals/:id', requireAuth, requireRole(journalManageRoles), updateJournalHandler);
-app.patch('/api/journals/:id', requireAuth, requireRole(journalManageRoles), updateJournalHandler);
-app.delete('/api/journals/:id', requireAuth, requireRole(journalManageRoles), deleteJournalHandler);
+app.get('/api/journals', requireAuth, requirePermission('journals.read'), getJournalsHandler);
+app.post('/api/journals', requireAuth, requirePermission('journals.create'), createJournalHandler);
+app.put('/api/journals/:id', requireAuth, requirePermission('journals.update', resolveJournalOwnerContext), updateJournalHandler);
+app.patch('/api/journals/:id', requireAuth, requirePermission('journals.update', resolveJournalOwnerContext), updateJournalHandler);
+app.delete('/api/journals/:id', requireAuth, requirePermission('journals.delete', resolveJournalOwnerContext), deleteJournalHandler);
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
@@ -1031,15 +1149,36 @@ app.delete('/api/journals/:id', requireAuth, requireRole(journalManageRoles), de
  * Consultation : admin, tresorier, manager, comptable (manager = lecture seule)
  * Saisie et suppression : strictement réservées à admin et tresorier
  */
-const journalEntriesViewRoles: UserRole[] = ['admin', 'tresorier', 'manager', 'comptable'];
-const journalEntriesWriteRoles: UserRole[] = ['admin', 'tresorier'];
+app.get('/api/journals/:journalId/entries', requireAuth, requirePermission('journal_entries.read'), getJournalEntriesHandler);
+app.get('/api/journals/:journalId/chart-data', requireAuth, requirePermission('journal_entries.chart_read'), getJournalChartDataHandler);
+app.post('/api/journals/:journalId/entries', requireAuth, requirePermission('journal_entries.create', resolveJournalOwnerContext), createJournalEntryHandler);
+app.put('/api/journals/:journalId/entries/:id', requireAuth, requirePermission('journal_entries.update', resolveJournalOwnerContext), updateJournalEntryHandler);
+app.patch('/api/journals/:journalId/entries/:id', requireAuth, requirePermission('journal_entries.update', resolveJournalOwnerContext), updateJournalEntryHandler);
+app.delete('/api/journals/:journalId/entries/:id', requireAuth, requirePermission('journal_entries.delete', resolveJournalOwnerContext), deleteJournalEntryHandler);
 
-app.get('/api/journals/:journalId/entries', requireAuth, requireRole(journalEntriesViewRoles), getJournalEntriesHandler);
-app.get('/api/journals/:journalId/chart-data', requireAuth, requireRole(journalEntriesViewRoles), getJournalChartDataHandler);
-app.post('/api/journals/:journalId/entries', requireAuth, requireRole(journalEntriesWriteRoles), createJournalEntryHandler);
-app.put('/api/journals/:journalId/entries/:id', requireAuth, requireRole(journalEntriesWriteRoles), updateJournalEntryHandler);
-app.patch('/api/journals/:journalId/entries/:id', requireAuth, requireRole(journalEntriesWriteRoles), updateJournalEntryHandler);
-app.delete('/api/journals/:journalId/entries/:id', requireAuth, requireRole(journalEntriesWriteRoles), deleteJournalEntryHandler);
+// Module Prospects : contrôles serveur dédiés à chaque capacité.
+app.get('/api/prospects/assignees', requireAuth, requirePermission('prospects.read'), listProspectAssigneesHandler);
+app.get('/api/prospects', requireAuth, requirePermission('prospects.read'), listProspectsHandler);
+app.post('/api/prospects', requireAuth, requirePermission('prospects.create'), createProspectHandler);
+app.patch('/api/prospects/:id', requireAuth, requirePermission('prospects.update'), updateProspectHandler);
+app.delete('/api/prospects/:id', requireAuth, requirePermission('prospects.delete'), deleteProspectHandler);
+
+// Centre de gestion des accès : contrôles serveur dédiés à chaque capacité.
+app.get('/api/access-control/me', requireAuth, getMyAccessPermissionsHandler);
+app.get('/api/access-control/roles', requireAuth, requirePermission('access.roles.read'), listAccessRolesHandler);
+app.post('/api/access-control/roles', requireAuth, requirePermission('access.roles.manage'), createAccessRoleHandler);
+app.patch('/api/access-control/roles/:roleId', requireAuth, requirePermission('access.roles.manage'), updateAccessRoleHandler);
+app.delete('/api/access-control/roles/:roleId', requireAuth, requirePermission('access.roles.manage'), deleteAccessRoleHandler);
+app.get('/api/access-control/permissions', requireAuth, requirePermission('access.permissions.read'), listAccessPermissionsHandler);
+app.get('/api/access-control/roles/:roleId/permissions', requireAuth, requirePermission('access.roles.read'), getRolePermissionsHandler);
+app.put('/api/access-control/roles/:roleId/permissions', requireAuth, requirePermission('access.permissions.assign'), replaceRolePermissionsHandler);
+app.get('/api/access-control/users', requireAuth, requirePermission('access.users.read'), listAccessUsersHandler);
+app.get('/api/access-control/users/:userId', requireAuth, requirePermission('access.users.read'), getUserAccessHandler);
+app.post('/api/access-control/users/:userId/roles', requireAuth, requirePermission('access.users.assign_roles'), assignAccessRoleHandler);
+app.delete('/api/access-control/users/:userId/roles/:roleId', requireAuth, requirePermission('access.users.assign_roles'), revokeAccessRoleHandler);
+app.put('/api/access-control/users/:userId/overrides', requireAuth, requirePermission('access.users.override'), setUserPermissionOverrideHandler);
+app.delete('/api/access-control/users/:userId/overrides/:overrideId', requireAuth, requirePermission('access.users.override'), revokeUserPermissionOverrideHandler);
+app.get('/api/access-control/audit', requireAuth, requirePermission('access.audit.read'), listAccessAuditHandler);
 
 /**
  * Example Express Rest API endpoints can be defined here.

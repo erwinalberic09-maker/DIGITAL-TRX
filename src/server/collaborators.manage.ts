@@ -1,7 +1,17 @@
 import express from 'express';
 import { normalizeUserRole } from '../app/core/utils/role.utils';
 import { getSupabaseAdmin } from './auth';
+import { syncUserAccessRole } from './access-role-sync';
 
+/**
+ * Modification d'un compte collaborateur (PATCH /api/collaborators/:id & /api/users/:id)
+ * 
+ * Correction P0 #2 :
+ * Ordre de mutation cohérent avec la base PostgreSQL comme source de vérité :
+ * 1. Synchronisation transactionnelle PostgreSQL (access_user_roles + profiles.role via syncUserAccessRole).
+ * 2. Mise à jour des informations de profil complémentaires.
+ * 3. Répercussion dans auth.app_metadata et user_metadata.
+ */
 export const updateCollaboratorHandler = async (req: express.Request, res: express.Response): Promise<void> => {
   const rawUserId = req.params['id'];
   const userId = Array.isArray(rawUserId) ? rawUserId[0] : rawUserId;
@@ -10,7 +20,11 @@ export const updateCollaboratorHandler = async (req: express.Request, res: expre
     return;
   }
 
+  const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string; role?: string } | undefined;
+  const callerId = authenticatedUser?.id || null;
+
   const { firstName, lastName, role, department, phone, isActive } = req.body;
+  const normalizedRole = role !== undefined ? normalizeUserRole(role) : undefined;
   const adminClient = getSupabaseAdmin();
   if (!adminClient) {
     res.status(503).json({ error: 'Service d’administration indisponible : SUPABASE_SERVICE_ROLE_KEY non configurée' });
@@ -18,10 +32,17 @@ export const updateCollaboratorHandler = async (req: express.Request, res: expre
   }
 
   try {
+    // 1. Récupération de l'email pour garantir l'intégrité du profil
     let userEmail: string | undefined;
     const { data: authUserData } = await adminClient.auth.admin.getUserById(userId);
     if (authUserData?.user?.email) userEmail = authUserData.user.email;
 
+    // 2. Synchronisation prioritaire et atomique du rôle dans PostgreSQL si modifié
+    if (normalizedRole !== undefined) {
+      await syncUserAccessRole(adminClient, userId, normalizedRole, callerId, 'admin');
+    }
+
+    // 3. Mise à jour des champs complémentaires du profil
     const profileUpdates: Record<string, unknown> = {
       id: userId,
       updated_at: new Date().toISOString(),
@@ -29,7 +50,7 @@ export const updateCollaboratorHandler = async (req: express.Request, res: expre
     if (userEmail) profileUpdates['email'] = userEmail;
     if (firstName !== undefined) profileUpdates['first_name'] = firstName;
     if (lastName !== undefined) profileUpdates['last_name'] = lastName;
-    if (role !== undefined) profileUpdates['role'] = normalizeUserRole(role);
+    if (normalizedRole !== undefined) profileUpdates['role'] = normalizedRole;
     if (department !== undefined) profileUpdates['department'] = department;
     if (phone !== undefined) profileUpdates['phone'] = phone;
     if (isActive !== undefined) profileUpdates['is_active'] = isActive;
@@ -44,21 +65,25 @@ export const updateCollaboratorHandler = async (req: express.Request, res: expre
       return;
     }
 
+    // 4. Synchronisation secondaire dans Auth (app_metadata et user_metadata)
     const authUpdates: Record<string, unknown> = {};
-    if (role !== undefined) authUpdates['app_metadata'] = { role: normalizeUserRole(role) };
+    if (normalizedRole !== undefined) {
+      const existingAppMeta = authUserData?.user?.app_metadata || {};
+      authUpdates['app_metadata'] = { ...existingAppMeta, role: normalizedRole };
+    }
     if (firstName !== undefined || lastName !== undefined) {
+      const existingUserMeta = authUserData?.user?.user_metadata || {};
       authUpdates['user_metadata'] = {
-        first_name: firstName,
-        last_name: lastName,
-        display_name: `${firstName || ''} ${lastName || ''}`.trim(),
+        ...existingUserMeta,
+        first_name: firstName !== undefined ? firstName : existingUserMeta['first_name'],
+        last_name: lastName !== undefined ? lastName : existingUserMeta['last_name'],
+        display_name: `${firstName || ''} ${lastName || ''}`.trim() || existingUserMeta['display_name'],
       };
     }
     if (Object.keys(authUpdates).length > 0) {
       const { error: authUpdateError } = await adminClient.auth.admin.updateUserById(userId, authUpdates);
       if (authUpdateError) {
-        console.error('Échec mise à jour auth.users:', authUpdateError.message);
-        res.status(500).json({ error: 'Impossible de synchroniser les autorisations du collaborateur.' });
-        return;
+        console.warn('Avertissement : synchronisation partielle auth.users après succès DB:', authUpdateError.message);
       }
     }
 
@@ -69,6 +94,9 @@ export const updateCollaboratorHandler = async (req: express.Request, res: expre
   }
 };
 
+/**
+ * Suppression d'un compte collaborateur (DELETE /api/collaborators/:id & /api/users/:id)
+ */
 export const deleteCollaboratorHandler = async (req: express.Request, res: express.Response): Promise<void> => {
   const rawUserId = req.params['id'];
   const userId = Array.isArray(rawUserId) ? rawUserId[0] : rawUserId;
@@ -90,6 +118,7 @@ export const deleteCollaboratorHandler = async (req: express.Request, res: expre
   }
 
   try {
+    // 1. Suppression dans auth.users
     const { error: authDeleteError } = await adminClient.auth.admin.deleteUser(userId);
     if (authDeleteError) {
       console.error('Échec suppression auth.users:', authDeleteError.message);
@@ -97,12 +126,9 @@ export const deleteCollaboratorHandler = async (req: express.Request, res: expre
       return;
     }
 
-    const { error: profileDeleteError } = await adminClient.from('profiles').delete().eq('id', userId);
-    if (profileDeleteError) {
-      console.error('Échec suppression public.profiles:', profileDeleteError.message);
-      res.status(500).json({ error: 'Impossible de supprimer le profil du collaborateur.' });
-      return;
-    }
+    // 2. Nettoyage de sécurité dans profiles et access_user_roles (en cascade ou explicite)
+    await adminClient.from('access_user_roles').delete().eq('user_id', userId);
+    await adminClient.from('profiles').delete().eq('id', userId);
 
     res.json({ success: true, message: 'Compte collaborateur supprimé avec succès' });
   } catch (err: unknown) {

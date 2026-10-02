@@ -4,6 +4,7 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } fro
 import { filter, map } from 'rxjs/operators';
 import { MatIconModule } from '@angular/material/icon';
 import { ROLE_DEFINITIONS, UserRole } from '../../core/models/auth.model';
+import { AccessControlService } from '../../core/services/access-control.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CashierService } from '../../core/services/cashier.service';
 import { ThemeService } from '../../core/services/theme.service';
@@ -17,7 +18,7 @@ export interface NavOption {
   label: string;
   route: string;
   icon?: string;
-  allowedRoles: UserRole[];
+  permissionKey: string;
 }
 
 @Component({
@@ -33,6 +34,7 @@ export interface NavOption {
 })
 export class MainLayout {
   public readonly authService = inject(AuthService);
+  public readonly accessControl = inject(AccessControlService);
   public readonly cashierService = inject(CashierService);
   public readonly themeService = inject(ThemeService);
   public readonly notificationService = inject(NotificationService);
@@ -77,10 +79,21 @@ export class MainLayout {
     return url ? url.includes('/configuration') || url.includes('/settings') : false;
   });
 
-  // Droit d'édition en caisse et journaux (admin, caissière et trésorier - managers en consultation seule)
+  // La caisse native est éditable par admin/caissière; un trésorier ne modifie que ses journaux.
   public readonly canEditCaisse = computed(() => {
-    const role = this.authService.currentRole();
-    return role === 'admin' || role === 'caissiere' || role === 'tresorier';
+    const journalId = this.cashierService.activeJournalId();
+    const isNativeCashJournal =
+      !journalId ||
+      journalId === 'native-caisse-principal' ||
+      journalId === 'CSH1' ||
+      this.cashierService.activeJournalPrefix() === 'CSH1';
+
+    if (isNativeCashJournal) return this.accessControl.hasPermission('cashier.create');
+
+    const activeJournal = this.journalService.journals().find((journal) => journal.id === journalId);
+    return this.accessControl.hasPermissionForResource('journal_entries.create', {
+      ownerUserId: activeJournal?.created_by,
+    });
   });
 
   // Nom dynamique du journal actif (Caisse Principale ou journal personnalisé)
@@ -93,11 +106,7 @@ export class MainLayout {
     return found ? found.name : 'Journal';
   });
 
-  // Droit de consultation des journaux (admin, tresorier, manager)
-  public readonly canViewJournals = computed(() => {
-    const role = this.authService.currentRole();
-    return role === 'admin' || role === 'tresorier' || role === 'manager';
-  });
+  public readonly canViewJournals = computed(() => this.accessControl.hasPermission('journals.read'));
 
   // Synchronisation pagination et état avec le module Caisse
   public readonly paginationLabel = computed(() => this.cashierService.paginationLabel());
@@ -107,52 +116,49 @@ export class MainLayout {
   // Pour rétrocompatibilité
   public readonly isSidebarOpen = this.isMenuOpen;
 
-  // Menu de navigation principal Transimex avec contrôle d'accès RBAC
+  // Le menu suit les permissions effectives; il ne constitue pas la barrière d’accès serveur.
   private readonly allMenuItems: NavOption[] = [
     {
       id: 'dashboard',
       label: 'Tableau de bord',
       route: '/dashboard',
       icon: 'dashboard',
-      allowedRoles: ['admin', 'manager', 'caissiere', 'employe', 'tresorier', 'comptable'],
+      permissionKey: 'dashboard.view',
     },
     {
       id: 'caisse',
       label: 'Caisse',
       route: '/caisse',
       icon: 'point_of_sale',
-      allowedRoles: ['admin', 'caissiere', 'comptable', 'tresorier', 'manager'],
+      permissionKey: 'cashier.read',
     },
     {
       id: 'personnel',
       label: 'Personnel & RH',
       route: '/personnel',
       icon: 'badge',
-      allowedRoles: ['admin'],
+      permissionKey: 'hr.read',
     },
     {
-      id: 'administration',
-      label: 'Paramètres Système',
-      route: '/administration',
+      id: 'access-control',
+      label: 'Gestion des accès',
+      route: '/admin/access-control',
       icon: 'admin_panel_settings',
-      allowedRoles: ['admin'],
+      permissionKey: 'access.roles.read',
     },
     {
       id: 'configuration',
       label: 'Configuration',
       route: '/configuration',
       icon: 'settings',
-      allowedRoles: ['admin', 'manager', 'caissiere', 'employe', 'tresorier', 'comptable'],
+      permissionKey: 'configuration.read',
     },
   ];
 
   public readonly visibleMenuItems = computed<NavOption[]>(() => {
     const user = this.currentUser();
     if (!user) return [];
-    return this.allMenuItems.filter((item) =>
-      item.allowedRoles.includes(user.role) ||
-      (user.role === 'tresorier' && item.allowedRoles.includes('manager'))
-    );
+    return this.allMenuItems.filter((item) => this.accessControl.hasPermission(item.permissionKey));
   });
 
   public roleLabel(role: UserRole | undefined): string {
@@ -251,6 +257,7 @@ export class MainLayout {
   }
 
   public async onDeleteSelectedAction(): Promise<void> {
+    if (!this.canEditCaisse()) return;
     const count = this.selectedTransactionsCount();
     if (count === 0 || this.isDeleting()) return;
     this.isDeleting.set(true);
@@ -281,12 +288,14 @@ export class MainLayout {
   }
 
   public async onDuplicateAction(): Promise<void> {
+    if (!this.canEditCaisse()) return;
     if (this.selectedTransactionsCount() === 0) return;
     this.closeActionsMenu();
     await this.cashierService.duplicateSelected();
   }
 
   public async onResetToDraftAction(): Promise<void> {
+    if (!this.canEditCaisse()) return;
     if (this.selectedTransactionsCount() === 0) return;
     this.closeActionsMenu();
     await this.cashierService.resetSelectedToDraft();
@@ -310,6 +319,7 @@ export class MainLayout {
   }
 
   public onNouveau(): void {
+    if (!this.canEditCaisse()) return;
     if (!this.router.url.includes('/caisse')) {
       void this.router.navigate(['/caisse']);
     }
@@ -317,6 +327,7 @@ export class MainLayout {
   }
 
   public onOpenImportModal(): void {
+    if (!this.canEditCaisse()) return;
     if (!this.router.url.includes('/caisse')) {
       void this.router.navigate(['/caisse']);
     }
@@ -325,6 +336,7 @@ export class MainLayout {
 
   public async onImportConfirmed(rows: ParsedImportRow[]): Promise<void> {
     this.cashierService.closeImportModal();
+    if (!this.canEditCaisse()) return;
     const result = await this.cashierService.importTransactions(rows);
     if (result.insertedCount > 0) {
       this.notificationService.success(

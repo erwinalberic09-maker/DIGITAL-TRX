@@ -35,6 +35,7 @@ import {
 } from 'chart.js';
 import { CashierService, CashierSortField } from '../../core/services/cashier.service';
 import { AuthService } from '../../core/services/auth.service';
+import { AccessControlService } from '../../core/services/access-control.service';
 import { NotificationService } from '../../core/services/notification.service';
 import { JournalService } from '../../core/services/journal.service';
 import {
@@ -88,6 +89,7 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
   public readonly cashierService = inject(CashierService);
   private readonly notificationService = inject(NotificationService);
   private readonly authService = inject(AuthService);
+  private readonly accessControlService = inject(AccessControlService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   public readonly journalService = inject(JournalService);
@@ -107,7 +109,9 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
 
   public readonly availableJournals = computed(() => [
     { id: 'native-caisse-principal', name: 'Caisse Principale', sequence_prefix: 'CSH1' },
-    ...this.journalService.journals().filter((j) => j.id !== 'native-caisse-principal' && j.sequence_prefix !== 'CSH1'),
+    ...(this.authService.currentRole() === 'caissiere'
+      ? []
+      : this.journalService.journals().filter((j) => j.id !== 'native-caisse-principal' && j.sequence_prefix !== 'CSH1')),
   ]);
 
   public readonly activeJournalName = computed<string>(() => {
@@ -136,33 +140,42 @@ export class CashierManagement implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  // Permissions : Seuls admin, caissiere et tresorier peuvent créer/modifier/supprimer
-  public readonly canEdit = computed(() => {
-    const role = this.authService.currentUser()?.role;
-    return role === 'admin' || role === 'caissiere' || role === 'tresorier';
-  });
+  private canWriteToJournal(journalId: string | null | undefined): boolean {
+    const activeJournalId = this.cashierService.activeJournalId();
+    const targetJournalId = journalId ?? activeJournalId;
+    const isNativeCaisse =
+      !targetJournalId ||
+      targetJournalId === 'native-caisse-principal' ||
+      targetJournalId === 'CSH1' ||
+      (targetJournalId === activeJournalId && this.cashierService.activeJournalPrefix() === 'CSH1');
 
-  /**
-   * Vérifie si l'utilisateur actuel a le droit d'éditer une transaction spécifique.
-   * - Admin : peut éditer toutes les lignes
-   * - Caissière & Trésorier : peuvent éditer les lignes qu'ils ont eux-mêmes enregistrées ou importées (createdBy === currentUser.id)
-   * - Autres rôles : lecture seule
-   */
-  public canEditTransaction(tx: CashierTransaction): boolean {
-    const user = this.authService.currentUser();
-    if (!user) return false;
-    if (user.role === 'admin') return true;
-    if (user.role !== 'caissiere' && user.role !== 'tresorier') return false;
-    // Si la ligne n'a pas encore de créateur spécifié (rétrocompatibilité), autoriser
-    if (!tx.createdBy) return true;
-    return tx.createdBy === user.id;
+    if (isNativeCaisse) return this.accessControlService.hasPermission('cashier.create');
+
+    const journal = this.journalService.journals().find((candidate) => candidate.id === targetJournalId);
+    return this.accessControlService.hasPermissionForResource('journal_entries.create', {
+      ownerUserId: journal?.created_by,
+    });
   }
 
-  // Sélection de lignes : autorisé pour admin, caissiere, tresorier et comptable (pour l'exportation et consultation)
-  public readonly canSelect = computed(() => {
-    const role = this.authService.currentUser()?.role;
-    return role === 'admin' || role === 'caissiere' || role === 'tresorier' || role === 'comptable';
-  });
+  public readonly canEdit = computed(() => this.canWriteToJournal(this.activeJournalId()));
+
+  /** Vérifie le droit d’édition du journal réel associé à la ligne. */
+  public canEditTransaction(tx: CashierTransaction): boolean {
+    const transactionJournalId = tx.journalId ?? tx.journal_id ?? 'native-caisse-principal';
+    const isNativeCaisse =
+      transactionJournalId === 'native-caisse-principal' ||
+      transactionJournalId === 'CSH1' ||
+      tx.pieceComptable?.startsWith('CSH1');
+    if (isNativeCaisse) return this.accessControlService.hasPermission('cashier.update');
+
+    const journal = this.journalService.journals().find((candidate) => candidate.id === transactionJournalId);
+    if (!this.accessControlService.hasPermissionForResource('journal_entries.update', {
+      ownerUserId: journal?.created_by,
+    })) return false;
+    return true;
+  }
+
+  public readonly canSelect = computed(() => this.accessControlService.hasPermission('cashier.read'));
 
   // Visibilité du solde de caisse en temps réel : masqué pour le rôle comptable
   public readonly canViewBalance = computed(() => {
