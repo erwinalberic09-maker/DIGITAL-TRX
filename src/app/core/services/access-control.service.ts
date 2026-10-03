@@ -89,11 +89,44 @@ export class AccessControlService {
     const matchingPermissions = this._effectivePermissions().filter(
       (permission) => permission.permissionKey === permissionKey
     );
-    if (matchingPermissions.some((permission) => permission.effect === 'deny')) return false;
-    if (matchingPermissions.some((permission) => permission.effect === 'allow')) return true;
+    if (matchingPermissions.some((permission) => permission.effect === 'deny' && permission.scope.type === 'all')) return false;
+    if (matchingPermissions.some((permission) => permission.effect === 'allow' && permission.scope.type === 'all')) return true;
 
-    // 4. Aucune permission codée en dur : 100% des droits proviennent de la base de données
-    return false;
+    // 4. Repli canonique robuste selon le rôle Transmex du collaborateur
+    const userRole = this.authService.currentRole();
+    if (!userRole) return false;
+
+    switch (userRole) {
+      case 'admin':
+        return true;
+      case 'manager':
+        return ['cashier.read', 'cashier.write', 'hr.read', 'hr.write', 'prospects.read', 'prospects.write'].includes(permissionKey);
+      case 'tresorier':
+      case 'comptable':
+        return [
+          'cashier.read',
+          'cashier.write',
+          'cashier.update',
+          'cashier.status_update',
+          'cashier.duplicate',
+          'journals.read',
+          'journals.write',
+          'journals.create',
+          'journals.update',
+          'journals.delete',
+          'journal_entries.read',
+          'journal_entries.chart_read',
+          'journal_entries.create',
+          'journal_entries.update',
+          'journal_entries.delete',
+        ].includes(permissionKey);
+      case 'caissiere':
+        return ['cashier.read', 'cashier.write', 'cashier.status_update', 'cashier.update'].includes(permissionKey);
+      case 'employe':
+        return ['hr.read'].includes(permissionKey);
+      default:
+        return false;
+    }
   }
   
   public hasPermissionForResource(
@@ -364,7 +397,13 @@ export class AccessControlService {
   }
 
   private async request<T>(path: string, method = 'GET', body?: unknown): Promise<AccessApiResult<T>> {
-    const token = this.authService.token();
+    // 1. Attendre la résolution initiale de la session d'authentification
+    await this.authService.waitForSession();
+
+    let token = this.authService.token();
+    if (!token && typeof window !== 'undefined' && window.sessionStorage) {
+      token = sessionStorage.getItem('transmex_session_token');
+    }
     if (!token) return { success: false, error: 'Session authentifiée introuvable.' };
 
     this._isLoading.set(true);

@@ -378,85 +378,50 @@ export const assignAccessRoleHandler = async (req: express.Request, res: express
 
   const { data: role, error: roleError } = await adminClient
     .from('access_roles')
-    .select('id, role_key, label')
+    .select('role_key')
     .eq('id', roleId)
     .eq('is_active', true)
     .maybeSingle();
-
   if (roleError || !role) {
     res.status(404).json({ error: 'Rôle actif introuvable.' });
     return;
   }
 
-  const actorUserId = actorIdFromRequest(req);
-  if (!actorUserId) {
-    res.status(401).json({ error: 'Utilisateur non authentifié.' });
+  if (!isCanonicalAccessRoleKey(role.role_key)) {
+    res.status(400).json({
+      error: 'Ce rôle personnalisé n’est pas encore compatible avec l’affectation utilisateur. Utilisez l’un des rôles Transmex canoniques.',
+    });
     return;
   }
 
-  try {
-    // Règle 1:1 stricte : Un employé possède un et un seul rôle actif.
-    // L'attribution d'un rôle remplace tout rôle précédemment affecté à cet utilisateur.
-    await adminClient
-      .from('access_user_roles')
-      .delete()
-      .eq('user_id', userId);
+  await runAccessMutation(
+    req,
+    res,
+    'user.role.assign',
+    { userId, roleId, expiresAt: req.body?.expiresAt },
+    async (data) => {
+      const roleKey = (data as { roleKey?: unknown } | null)?.roleKey;
+      if (typeof roleKey !== 'string') throw new Error('La réponse de la mutation ne contient pas de rôle valide.');
 
-    const { error: insertError } = await adminClient
-      .from('access_user_roles')
-      .insert({
-        user_id: userId,
-        role_id: role.id,
-        assigned_by: actorUserId,
-        assignment_source: 'admin',
-        expires_at: req.body?.expiresAt || null,
-      });
+      // access_control_mutate est déjà la transaction de vérité pour access_user_roles + profiles.
+      // Ne pas rappeler syncUserAccessRole ici : la fonction SQL de synchronisation marque
+      // l'affectation comme legacy_profile et pourrait écraser la source admin.
+      if (isCanonicalAccessRoleKey(roleKey)) {
+        const { error: profileError } = await adminClient
+          .from('profiles')
+          .update({ role: roleKey, updated_at: new Date().toISOString() })
+          .eq('id', userId);
+        if (profileError) throw profileError;
 
-    if (insertError) {
-      console.error('Erreur attribution rôle dans access_user_roles:', insertError.message);
-      res.status(500).json({ error: 'Échec de l’attribution du rôle.' });
-      return;
-    }
-
-    // Synchronisation rétrocompatible uniquement si la clé correspond à l'énumération historique
-    if (isCanonicalAccessRoleKey(role.role_key)) {
-      await adminClient
-        .from('profiles')
-        .update({ role: role.role_key, updated_at: new Date().toISOString() })
-        .eq('id', userId);
-
-      try {
-        const { data: authUser } = await adminClient.auth.admin.getUserById(userId);
-        await adminClient.auth.admin.updateUserById(userId, {
-          app_metadata: { ...(authUser?.user?.app_metadata || {}), role: role.role_key },
+        const { data: authUser, error: authReadError } = await adminClient.auth.admin.getUserById(userId);
+        if (authReadError) throw authReadError;
+        const { error: authUpdateError } = await adminClient.auth.admin.updateUserById(userId, {
+          app_metadata: { ...(authUser.user?.app_metadata || {}), role: roleKey },
         });
-      } catch (authErr) {
-        console.warn('Avertissement mise à jour app_metadata:', authErr);
+        if (authUpdateError) throw authUpdateError;
       }
     }
-
-    // Traçabilité dans le journal d'audit
-    await adminClient.from('access_audit_log').insert({
-      actor_user_id: actorUserId,
-      subject_user_id: userId,
-      action_key: 'user.role.assign',
-      role_key: role.role_key,
-      after_state: { roleId: role.id, roleKey: role.role_key, label: role.label, exclusive: true },
-    });
-
-    res.status(200).json({
-      success: true,
-      data: {
-        userId,
-        roleId: role.id,
-        roleKey: role.role_key,
-        label: role.label,
-      },
-    });
-  } catch (err: unknown) {
-    console.error('Exception lors de l’attribution du rôle:', err);
-    res.status(500).json({ error: 'Impossible d’attribuer ce rôle à l’employé.' });
-  }
+  );
 };
 
 export const revokeAccessRoleHandler = (req: express.Request, res: express.Response): Promise<void> =>

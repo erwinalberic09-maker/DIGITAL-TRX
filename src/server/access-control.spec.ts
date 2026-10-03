@@ -23,15 +23,85 @@ describe('hasPermission', () => {
     expect(allowed).toBe(true);
   });
 
+  it('autorise la caissière à modifier le statut d’une opération', async () => {
+    const allowed = await hasPermission(
+      'cashier-user',
+      'cashier.status_update',
+      undefined,
+      { roleKeys: ['caissiere'], rules: [] }
+    );
+
+    expect(allowed).toBe(true);
+    await expect(hasPermission(
+      'cashier-user',
+      'cashier.update',
+      undefined,
+      { roleKeys: ['caissiere'], rules: [] }
+    )).resolves.toBe(true);
+  });
+
+  it('autorise la modification de statut et la mise à jour caisse au comptable', async () => {
+    const allowed = await hasPermission(
+      'accountant-user',
+      'cashier.status_update',
+      undefined,
+      { roleKeys: ['comptable'], rules: [] }
+    );
+
+    expect(allowed).toBe(true);
+    await expect(hasPermission(
+      'accountant-user',
+      'cashier.update',
+      undefined,
+      { roleKeys: ['comptable'], rules: [] }
+    )).resolves.toBe(true);
+  });
+
+  it('refuse la modification de statut aux rôles sans ce droit (ex: employé)', async () => {
+    const allowed = await hasPermission(
+      'employee-user',
+      'cashier.status_update',
+      undefined,
+      { roleKeys: ['employe'], rules: [] }
+    );
+
+    expect(allowed).toBe(false);
+    await expect(hasPermission(
+      'employee-user',
+      'cashier.update',
+      undefined,
+      { roleKeys: ['employe'], rules: [] }
+    )).resolves.toBe(false);
+  });
+
+  it('fait primer le refus individuel sur le fallback caissière', async () => {
+    const allowed = await hasPermission(
+      'cashier-user',
+      'cashier.status_update',
+      undefined,
+      {
+        roleKeys: ['caissiere'],
+        rules: [{
+          permissionKey: 'cashier.status_update',
+          effect: 'deny',
+          scope: { type: 'all', version: 1 },
+          isUserOverride: true,
+        }],
+      }
+    );
+
+    expect(allowed).toBe(false);
+  });
+
   it('applique le scope owner uniquement à la ressource possédée', async () => {
     const rules = {
-      roleKeys: ['tresorier'],
+      roleKeys: ['employe'],
       rules: [{
         permissionKey: 'journal_entries.create',
         effect: 'allow' as const,
         scope: { type: 'owner', version: 1 },
         isUserOverride: false,
-        sourceRoleKey: 'tresorier',
+        sourceRoleKey: 'employe',
       }],
     };
 

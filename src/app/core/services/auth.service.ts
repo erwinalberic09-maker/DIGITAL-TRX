@@ -79,24 +79,48 @@ export class AuthService {
   }
 
   /**
-   * Restaure le profil depuis localStorage pour un affichage instantané.
-   * Sécurité : le token JWT n'est JAMAIS extrait de localStorage (géré via cookies @supabase/ssr).
+   * Restaure le profil et le jeton depuis le stockage sécurisé du navigateur pour un affichage instantané.
    */
   private restoreCachedProfile(): void {
-    if (this.isBrowser && typeof window !== 'undefined' && window.localStorage) {
+    if (this.isBrowser && typeof window !== 'undefined') {
       try {
-        // Nettoyage proactif de tout vestige legacy de token (durcissement anti-XSS)
-        localStorage.removeItem('transmex_auth_token');
-
-        const cached = localStorage.getItem(CACHED_PROFILE_KEY);
+        const cached = window.localStorage ? localStorage.getItem(CACHED_PROFILE_KEY) : null;
         if (cached) {
           const profile = JSON.parse(cached) as UserProfile;
           if (profile && profile.id && profile.isActive) {
             this._currentUser.set(profile);
           }
         }
+        const cachedToken = window.sessionStorage ? sessionStorage.getItem('transmex_session_token') : null;
+        if (cachedToken) {
+          this._token.set(cachedToken);
+        }
       } catch {
-        // Ignorer les exceptions de localStorage
+        // Ignorer les exceptions de stockage
+      }
+    }
+  }
+
+  private saveSessionToken(token: string): void {
+    if (this.isBrowser && typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        if (token) {
+          sessionStorage.setItem('transmex_session_token', token);
+        } else {
+          sessionStorage.removeItem('transmex_session_token');
+        }
+      } catch {
+        // Ignorer
+      }
+    }
+  }
+
+  private clearSessionToken(): void {
+    if (this.isBrowser && typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        sessionStorage.removeItem('transmex_session_token');
+      } catch {
+        // Ignorer
       }
     }
   }
@@ -105,8 +129,6 @@ export class AuthService {
     if (this.isBrowser && typeof window !== 'undefined' && window.localStorage) {
       try {
         localStorage.setItem(CACHED_PROFILE_KEY, JSON.stringify(profile));
-        // Jamais de token dans le localStorage (stockage exclusif en cookie HttpOnly / @supabase/ssr)
-        localStorage.removeItem('transmex_auth_token');
       } catch {
         // Ignorer
       }
@@ -117,7 +139,6 @@ export class AuthService {
     if (this.isBrowser && typeof window !== 'undefined' && window.localStorage) {
       try {
         localStorage.removeItem(CACHED_PROFILE_KEY);
-        localStorage.removeItem('transmex_auth_token');
       } catch {
         // Ignorer
       }
@@ -125,12 +146,17 @@ export class AuthService {
   }
 
   /**
-   * Écoute les événements Supabase (onAuthStateChange) pour synchroniser le Signal _currentUser.
+   * Écoute les événements Supabase (onAuthStateChange) pour synchroniser le Signal _currentUser et rafraîchir le jeton.
    */
   private listenToAuthChanges(): void {
     if (this.checkSupabaseConfigured() && this.supabaseService.supabase) {
       try {
         this.supabaseService.supabase.auth.onAuthStateChange(async (event, session) => {
+          if (session?.access_token) {
+            this._token.set(session.access_token);
+            this.saveSessionToken(session.access_token);
+          }
+
           if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') && session?.user) {
             await this.loadUserProfileFromSupabase(
               session.user.id,
@@ -158,12 +184,20 @@ export class AuthService {
       }
 
       if (this.checkSupabaseConfigured() && this.supabaseService.supabase) {
-        // Validation stricte du JWT avec le serveur Supabase Auth (bonnes pratiques Supabase)
+        // 1. Restauration immédiate depuis la session locale Supabase
+        const { data: sessionData } = await this.supabaseService.supabase.auth.getSession();
+        const session = sessionData?.session;
+
+        if (session?.access_token) {
+          this._token.set(session.access_token);
+          this.saveSessionToken(session.access_token);
+        }
+
+        // 2. Validation / rafraîchissement avec le serveur Supabase Auth
         const { data: userData, error: userError } = await this.supabaseService.supabase.auth.getUser();
         
         if (userData?.user && !userError) {
-          const { data: sessionData } = await this.supabaseService.supabase.auth.getSession();
-          const accessToken = sessionData.session?.access_token || '';
+          const accessToken = session?.access_token || this._token() || '';
           
           const profile = await this.loadUserProfileFromSupabase(
             userData.user.id,
@@ -174,7 +208,7 @@ export class AuthService {
           if (profile && !profile.isActive) {
             this.clearLocalSession();
           }
-        } else if (!this._currentUser()) {
+        } else if (!session && !this._currentUser()) {
           this.clearLocalSession();
         }
       }
@@ -197,75 +231,62 @@ export class AuthService {
     accessToken: string,
     authUser?: { app_metadata?: Record<string, unknown>; user_metadata?: Record<string, unknown> } | null
   ): Promise<UserProfile | null> {
+    if (!accessToken) return null;
+
     try {
-      let profile: Record<string, unknown> | null = null;
+      // Les profils ne sont plus lus directement depuis PostgREST côté navigateur.
+      // Le serveur valide le Bearer token puis lit public.profiles avec service_role.
+      const response = await fetch('/api/profile/me', {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
 
-      // 1. Lecture sécurisée côté serveur (source de vérité PostgreSQL avec vérification de session)
-      if (accessToken) {
-        try {
-          const resp = await fetch('/api/profile/me', {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-            },
-          });
-          if (resp.ok) {
-            const json = await resp.json();
-            profile = (json.profile as Record<string, unknown>) || null;
-          }
-        } catch (serverErr) {
-          console.warn('Endpoint serveur /api/profile/me non disponible:', serverErr);
-        }
+      if (!response.ok) {
+        console.warn(`Lecture profil serveur échouée (HTTP ${response.status}).`);
+        return null;
       }
 
-      // 2. Repli direct Supabase si l'appel serveur n'a pas pu aboutir
-      if (!profile && this.supabaseService.supabase) {
-        const { data: directProfile } = await this.supabaseService.supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', userId)
-          .maybeSingle();
-        profile = (directProfile as unknown as Record<string, unknown>) || null;
+      const payload = await response.json() as {
+        profile?: Record<string, unknown>;
+        role?: string;
+      };
+      const profile = payload.profile;
+      if (!profile || profile['id'] !== userId) {
+        return null;
       }
 
+      const serverRole = typeof payload.role === 'string' ? payload.role : undefined;
       const appRole = authUser?.app_metadata?.['role'] as UserRole | undefined;
-      const profileRole = profile?.['role'] as UserRole | undefined;
-      // Résolution sécurisée du rôle :
-      // 1. Si app_metadata (scellé serveur par Supabase Admin) ou profile (table SQL sécurisée) spécifie 'admin' => 'admin'
-      // 2. user_metadata n'est jamais utilisé pour élever les privilèges admin (modifiable côté client)
-      let targetRole: UserRole = 'employe';
-      if (appRole === 'admin' || profileRole === 'admin') {
-        targetRole = 'admin';
-      } else {
-        targetRole = normalizeUserRole(appRole || profileRole || 'employe');
-      }
-
-      const resolvedRole: UserRole = targetRole;
+      const profileRole = profile['role'] as UserRole | undefined;
+      const resolvedRole: UserRole = normalizeUserRole(serverRole || appRole || profileRole || 'employe');
 
       const userProfile: UserProfile = {
         id: userId,
-        email: email || (profile?.['email'] as string) || '',
-        firstName: (profile?.['first_name'] as string) || (authUser?.user_metadata?.['first_name'] as string) || 'Utilisateur',
-        lastName: (profile?.['last_name'] as string) || (authUser?.user_metadata?.['last_name'] as string) || 'Transmex',
+        email: email || String(profile['email'] || ''),
+        firstName: String(profile['first_name'] || authUser?.user_metadata?.['first_name'] || 'Utilisateur'),
+        lastName: String(profile['last_name'] || authUser?.user_metadata?.['last_name'] || 'Transmex'),
         role: resolvedRole,
         roles: [resolvedRole],
-        department: (profile?.['department'] as string) || 'Services Généraux',
-        phone: profile?.['phone'] as string | undefined,
-        isActive: (profile?.['is_active'] as boolean | undefined) ?? true,
-        avatarUrl: profile?.['avatar_url'] as string | undefined,
-        createdAt: (profile?.['created_at'] as string) || new Date().toISOString(),
+        department: String(profile['department'] || 'Services Généraux'),
+        phone: typeof profile['phone'] === 'string' ? profile['phone'] : undefined,
+        isActive: profile['is_active'] !== false,
+        avatarUrl: typeof profile['avatar_url'] === 'string' ? profile['avatar_url'] : undefined,
+        createdAt: typeof profile['created_at'] === 'string' ? profile['created_at'] : new Date().toISOString(),
         lastLoginAt: new Date().toISOString(),
       };
 
       this.setLocalSession(userProfile, accessToken);
 
-      // Auto-réconciliation avec le serveur d'administration
       if (accessToken && resolvedRole === 'admin') {
         this.triggerServerRoleSync(accessToken);
       }
 
       return userProfile;
     } catch (err) {
-      console.warn('Erreur lors du chargement du profil utilisateur:', err);
+      console.warn('Erreur lors du chargement du profil utilisateur depuis le serveur:', err);
       return null;
     }
   }
@@ -440,6 +461,7 @@ export class AuthService {
 
   private clearLocalSession(): void {
     this.clearCachedProfile();
+    this.clearSessionToken();
     this._currentUser.set(null);
     this._token.set(null);
     this._authError.set(null);
@@ -447,6 +469,7 @@ export class AuthService {
 
   public setLocalSession(user: UserProfile, token: string): void {
     this.saveCachedProfile(user);
+    this.saveSessionToken(token);
     this._currentUser.set(user);
     this._token.set(token);
     this._authError.set(null);

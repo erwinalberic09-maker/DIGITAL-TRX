@@ -471,24 +471,24 @@
                       </button>
                     }
 
-                    <!-- 4. Supprimer (Style rouge Odoo) -->
-                    @if (canEditCaisse()) {
+                    <!-- 4. Annuler en conservant la pièce comptable -->
+                    @if (canCancelCashierOperations()) {
                       <button
                         type="button"
-                        (click)="onDeleteSelectedAction()"
-                        [disabled]="isDeleting()"
+                        (click)="onCancelSelectedAction()"
+                        [disabled]="isCancelling()"
                         class="w-full flex items-center gap-3 px-3.5 py-2 text-left transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-600 dark:text-rose-400 font-medium"
-                        id="cp-action-delete-selected"
+                        id="cp-action-cancel-selected"
                         role="menuitem">
-                        <mat-icon class="!text-[17px] !w-4.5 !h-4.5 text-rose-500">delete_outline</mat-icon>
-                        <span>Supprimer</span>
+                        <mat-icon class="!text-[17px] !w-4.5 !h-4.5 text-rose-500">cancel</mat-icon>
+                        <span>Annuler</span>
                       </button>
                     }
 
                     <div class="my-1 border-t border-slate-200 dark:border-white/10"></div>
 
                     <!-- 5. Remettre en brouillon -->
-                    @if (canEditCaisse()) {
+                    @if (canCancelCashierOperations()) {
                       <button
                         type="button"
                         (click)="onResetToDraftAction()"

@@ -63,7 +63,12 @@ export class CashierService implements OnDestroy {
   private readonly _isLoading = signal<boolean>(false);
   private readonly _error = signal<string | null>(null);
   private errorTimeout: ReturnType<typeof setTimeout> | null = null;
-  private realtimeChannel: ReturnType<NonNullable<SupabaseService['supabase']>['channel']> | null = null;
+  private cashierRealtimeChannel: ReturnType<NonNullable<SupabaseService['supabase']>['channel']> | null = null;
+  private journalRealtimeChannel: ReturnType<NonNullable<SupabaseService['supabase']>['channel']> | null = null;
+  private realtimeRefreshTimeout: ReturnType<typeof setTimeout> | null = null;
+  private journalRefreshTimeout: ReturnType<typeof setTimeout> | null = null;
+  private readonly _journalBalanceRefreshVersion = signal(0);
+  public readonly journalBalanceRefreshVersion = this._journalBalanceRefreshVersion.asReadonly();
 
   // Résumé global calculé côté serveur (indépendant de la pagination locale)
   private readonly _serverSummary = signal<{
@@ -71,6 +76,8 @@ export class CashierService implements OnDestroy {
     total_sorties: number;
     solde_global: number;
     total_count: number;
+    nb_brouillons?: number;
+    nb_annulees?: number;
   } | null>(null);
   public readonly serverSummary = this._serverSummary.asReadonly();
 
@@ -217,35 +224,42 @@ export class CashierService implements OnDestroy {
       if (res.ok) {
         const json = await res.json();
         const entries = json.entries || [];
-        const mappedOps: CashierTransaction[] = entries.map((row: Record<string, unknown>) => ({
-          id: String(row['id']),
-          pieceComptable: String(row['piece_comptable']),
-          date: this.formatDate(String(row['date'] || '')),
-          libelle: String(row['libelle']),
-          service: row['service'] ? String(row['service']) : '',
-          typeDescription: row['type_description'] ? String(row['type_description']) : '',
-          category: (row['category'] === 'sortie' ? 'sortie' : 'entree') as 'entree' | 'sortie',
-          status: (row['status'] as 'draft' | 'posted' | 'cancelled') || 'draft',
-          noDossier: row['no_dossier'] ? String(row['no_dossier']) : '',
-          firstName: '',
-          employee: row['employee'] ? String(row['employee']) : '',
-          partenaire: row['partenaire'] ? String(row['partenaire']) : '',
-          quantity: row['quantity'] ? Number(row['quantity']) : undefined,
-          montant: Number(row['montant']) || 0,
-          soldeApres: row['solde_apres'] !== undefined && row['solde_apres'] !== null ? Number(row['solde_apres']) : undefined,
-          selected: false,
-          createdBy: row['created_by'] ? String(row['created_by']) : undefined,
-          employeeId: row['employee_id'] ? String(row['employee_id']) : undefined,
-          journalId: journalId,
-          journal_id: journalId,
-          createdAt: String(row['created_at'] || ''),
-          updatedAt: row['updated_at'] ? String(row['updated_at']) : undefined,
-        }));
+        const mappedOps: CashierTransaction[] = entries.map((row: Record<string, unknown>) => {
+          const emp = row['employee'] ? String(row['employee']) : (row['partenaire'] ? String(row['partenaire']) : '');
+          const part = row['partenaire'] ? String(row['partenaire']) : (row['employee'] ? String(row['employee']) : '');
+          const numMontant = Number(row['montant']) || 0;
+          return {
+            id: String(row['id']),
+            pieceComptable: row['piece_comptable'] ? String(row['piece_comptable']).trim() : undefined,
+            date: this.formatDate(String(row['date'] || '')),
+            libelle: String(row['libelle'] || ''),
+            service: row['service'] ? String(row['service']) : '',
+            typeDescription: row['type_description'] ? String(row['type_description']) : (row['typeDescription'] ? String(row['typeDescription']) : ''),
+            category: (row['category'] === 'sortie' ? 'sortie' : 'entree') as 'entree' | 'sortie',
+            status: (row['status'] as 'draft' | 'posted' | 'cancelled') || 'draft',
+            noDossier: row['no_dossier'] ? String(row['no_dossier']) : (row['noDossier'] ? String(row['noDossier']) : ''),
+            firstName: '',
+            employee: emp,
+            partenaire: part,
+            quantity: row['quantity'] !== null && row['quantity'] !== undefined ? Number(row['quantity']) : undefined,
+            montant: numMontant,
+            soldeApres: row['solde_apres'] !== undefined && row['solde_apres'] !== null ? Number(row['solde_apres']) : undefined,
+            selected: false,
+            createdBy: row['created_by'] ? String(row['created_by']) : undefined,
+            employeeId: row['employee_id'] ? String(row['employee_id']) : undefined,
+            journalId: journalId,
+            journal_id: journalId,
+            createdAt: String(row['created_at'] || ''),
+            updatedAt: row['updated_at'] ? String(row['updated_at']) : undefined,
+          };
+        });
 
         this._transactions.update((curr) => {
           const withoutThisJournal = curr.filter((t) => t.journalId !== journalId && t.journal_id !== journalId);
           return [...withoutThisJournal, ...mappedOps];
         });
+
+        this.recalculateRunningBalances();
       }
     } catch (err) {
       console.warn(`Erreur chargement écritures pour le journal ${journalId}:`, err);
@@ -276,12 +290,7 @@ export class CashierService implements OnDestroy {
       const headers: Record<string, string> = { Accept: 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const activeJournal = this._activeJournalId();
-      const journalQuery = activeJournal && activeJournal !== 'native-caisse-principal' && activeJournal !== 'CSH1'
-        ? `?journalId=${encodeURIComponent(activeJournal)}`
-        : '';
-
-      const res = await fetch(`/api/cahier/operations/summary${journalQuery}`, { headers });
+      const res = await fetch('/api/cahier/operations/summary', { headers });
       if (res.ok) {
         const json = await res.json();
         if (json?.summary) {
@@ -297,14 +306,12 @@ export class CashierService implements OnDestroy {
   // Utilise en priorité le solde global exact calculé côté serveur PostgreSQL (P0 #5)
   public readonly caisseBalance = computed(() => {
     const summary = this._serverSummary();
-    const currentJournal = this._activeJournalId();
-    const isMainCaisse = !currentJournal || currentJournal === 'native-caisse-principal' || currentJournal === 'CSH1';
-    if (summary && summary.solde_global !== undefined && isMainCaisse) {
+    if (summary && summary.solde_global !== undefined) {
       return Number(summary.solde_global);
     }
     const list = this.caisseTransactions();
     if (list.length === 0) return 0;
-    return list.reduce((acc, curr) => acc + (Number(curr.montant) || 0), 0);
+    return list.reduce((acc, curr) => acc + (curr.status === 'posted' ? Number(curr.montant) || 0 : 0), 0);
   });
 
   // Transactions appartenant exclusivement au journal sélectionné
@@ -317,29 +324,6 @@ export class CashierService implements OnDestroy {
     }
 
     return list.filter((t) => t.journalId === currentJournal || t.journal_id === currentJournal);
-  });
-
-  // Signal calculé pour la prochaine référence de pièce comptable prévisionnelle adaptée au journal
-  public readonly nextPieceComptable = computed<string>(() => {
-    const list = this.journalTransactions();
-    const currentYear = new Date().getFullYear() || 2026;
-    const prefixStr = this._activeJournalPrefix() || 'CSH1';
-    const prefix = `${prefixStr}/${currentYear}/`;
-    let maxSeq = 0;
-
-    for (const t of list) {
-      const piece = normalizePieceComptable(t.pieceComptable);
-      if (piece && piece.startsWith(prefix)) {
-        const seqStr = piece.substring(prefix.length);
-        const seqNum = parseInt(seqStr, 10);
-        if (!isNaN(seqNum) && seqNum > maxSeq) {
-          maxSeq = seqNum;
-        }
-      }
-    }
-
-    const nextNum = maxSeq > 0 ? maxSeq + 1 : list.length + 1;
-    return `${prefix}${String(nextNum).padStart(5, '0')}`;
   });
 
   // États exposés en lecture seule
@@ -367,6 +351,12 @@ export class CashierService implements OnDestroy {
     });
 
     return [...filtered].sort((a, b) => {
+      const draftWithoutPieceA = a.status === 'draft' && !a.pieceComptable;
+      const draftWithoutPieceB = b.status === 'draft' && !b.pieceComptable;
+      if (draftWithoutPieceA !== draftWithoutPieceB) {
+        return draftWithoutPieceA ? -1 : 1;
+      }
+
       let comparison = 0;
       if (field === 'pieceComptable') {
         const numA = this.extractPieceSequence(a.pieceComptable);
@@ -390,11 +380,26 @@ export class CashierService implements OnDestroy {
     });
   });
 
-  // Calcul du solde actuel en temps réel pour le journal actif
+  // Calcul du solde actuel en temps réel pour le journal actif (100% hermétique et indépendant)
   public readonly currentBalance = computed(() => {
+    const currentJournal = this._activeJournalId();
+    const isMainCash =
+      !currentJournal || currentJournal === 'native-caisse-principal' || currentJournal === 'CSH1';
+
+    if (isMainCash) {
+      return this.caisseBalance();
+    }
+
     const list = this.journalTransactions();
     if (list.length === 0) return 0;
-    return list.reduce((acc, curr) => acc + curr.montant, 0);
+
+    const postedSum = list.reduce((acc, curr) => acc + (curr.status === 'posted' ? Number(curr.montant) || 0 : 0), 0);
+    const hasPosted = list.some((curr) => curr.status === 'posted');
+    if (hasPosted) {
+      return postedSum;
+    }
+    // Si toutes les écritures sont en cours/brouillon pour ce nouveau journal, sommer les écritures non annulées
+    return list.reduce((acc, curr) => acc + (curr.status !== 'cancelled' ? Number(curr.montant) || 0 : 0), 0);
   });
 
   // Transactions paginées
@@ -540,11 +545,12 @@ export class CashierService implements OnDestroy {
    * Dès réception de la confirmation, injecte l'opération dans le Signal _transactions.
    */
   public async saveOperationViaApi(
-    op: Partial<CashierTransaction> | Omit<CashierTransaction, 'id' | 'soldeApres' | 'selected'>
+    op: Partial<CashierTransaction> | Omit<CashierTransaction, 'id' | 'soldeApres' | 'selected'>,
+    refreshSummary = true
   ): Promise<{ success: boolean; operation?: CashierTransaction; error?: string }> {
     this._error.set(null);
 
-    // Si une pièce comptable est explicitement fournie par l'appelant (ex: import ou rattachement manuel), on la normalise
+    // Une pièce officielle ne peut pas être choisie par le client.
     const explicitPiece = op.pieceComptable ? normalizePieceComptable(op.pieceComptable) : undefined;
     if (explicitPiece) {
       const pieceDuplicate = findDuplicatePieceComptable({ pieceComptable: explicitPiece }, this._transactions());
@@ -553,6 +559,10 @@ export class CashierService implements OnDestroy {
         this.setError(errorMsg);
         return { success: false, error: errorMsg };
       }
+
+      const errorMsg = 'La pièce comptable est attribuée par la base à la comptabilisation. Les numéros importés ne sont pas conservés.';
+      this.setError(errorMsg);
+      return { success: false, error: errorMsg };
     }
 
     // Contrôle d'unicité par empreinte métier : Date + Montant + Libellé + N° de dossier/matricule + Service
@@ -673,6 +683,7 @@ export class CashierService implements OnDestroy {
       };
 
       this._transactions.update((currentOps) => [operationToStore, ...currentOps]);
+      if (refreshSummary) void this.loadCashierSummary();
       return { success: true, operation: operationToStore };
     }
 
@@ -741,6 +752,9 @@ export class CashierService implements OnDestroy {
 
     // Étape 3 : Création de l'objet transaction unifié (comme sur Odoo : la pièce officielle retournée par la base)
     const currentUserId = this.authService.currentUser()?.id;
+    const persistedJournalId = isNativeCaisse
+      ? 'native-caisse-principal'
+      : savedRow.journal_id || op.journalId || op.journal_id || this._activeJournalId();
     const operationToStore: CashierTransaction = {
       id: savedRow.id,
       pieceComptable: savedRow.piece_comptable || explicitPiece || undefined,
@@ -760,15 +774,17 @@ export class CashierService implements OnDestroy {
       selected: false,
       createdBy: savedRow.created_by || currentUserId || undefined,
       employeeId: savedRow.employee_id || currentUserId || undefined,
-      journalId: savedRow.journal_id || op.journalId || op.journal_id || this._activeJournalId(),
-      journal_id: savedRow.journal_id || op.journalId || op.journal_id || this._activeJournalId(),
+      journalId: persistedJournalId,
+      journal_id: persistedJournalId,
       createdAt: savedRow.created_at || new Date().toISOString(),
       updatedAt: savedRow.updated_at,
     };
 
     // Étape 4 (RÉACTIVITÉ INSTANTANÉE) : Mise à jour immédiate du Signal Angular 19
     this._transactions.update((currentOps) => [operationToStore, ...currentOps]);
+    this.setPageIndex(0);
     this.recalculateRunningBalances();
+    if (refreshSummary) void this.loadCashierSummary();
 
     return { success: true, operation: operationToStore };
   }
@@ -777,9 +793,10 @@ export class CashierService implements OnDestroy {
    * Alias rétrocompatible pour l'ajout d'une transaction
    */
   public async addTransaction(
-    newTx: Omit<CashierTransaction, 'id' | 'soldeApres' | 'selected'>
+    newTx: Omit<CashierTransaction, 'id' | 'soldeApres' | 'selected'>,
+    refreshSummary = true
   ): Promise<{ success: boolean; operation?: CashierTransaction; error?: string }> {
-    return this.saveOperationViaApi(newTx);
+    return this.saveOperationViaApi(newTx, refreshSummary);
   }
 
   /**
@@ -836,7 +853,7 @@ export class CashierService implements OnDestroy {
 
       try {
         const res = await this.addTransaction({
-          pieceComptable: candidatePiece || undefined,
+          pieceComptable: undefined,
           date: row.date,
           libelle: row.libelle,
           service: row.service,
@@ -849,7 +866,7 @@ export class CashierService implements OnDestroy {
           montant: row.montant,
           journalId: this._activeJournalId(),
           journal_id: this._activeJournalId() === 'native-caisse-principal' ? null : this._activeJournalId(),
-        });
+        }, false);
 
         if (res.success) {
           insertedCount++;
@@ -874,13 +891,6 @@ export class CashierService implements OnDestroy {
       duplicateCount,
       errors,
     };
-  }
-
-  /**
-   * Alias rétrocompatible pour la suppression des transactions sélectionnées
-   */
-  public async deleteSelectedTransactions(): Promise<boolean> {
-    return this.deleteSelected();
   }
 
   /**
@@ -933,46 +943,81 @@ export class CashierService implements OnDestroy {
     // 1. Convertir la date affichée en ISO standard sans décalage de fuseau horaire
     const isoDate = updatedFields.date ? toStandardIsoDateString(updatedFields.date) : undefined;
 
-    // 2. Appel vers l'API serveur-relais
+    // 2. Appel vers l'API serveur-relais (routage dédié selon le journal)
     let updatedViaApi = false;
     let apiErrorMessage = '';
+    const targetJournalId = currentTx?.journalId || currentTx?.journal_id || this._activeJournalId();
+    const isDedicatedJournal =
+      targetJournalId &&
+      targetJournalId !== 'native-caisse-principal' &&
+      targetJournalId !== 'CSH1' &&
+      this._activeJournalPrefix() !== 'CSH1';
+
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const bodyPayload: Record<string, unknown> = {};
-      if (updatedFields.libelle !== undefined) bodyPayload['libelle'] = updatedFields.libelle;
-      if (updatedFields.service !== undefined) bodyPayload['service'] = updatedFields.service;
-      if (updatedFields.typeDescription !== undefined) bodyPayload['typeDescription'] = updatedFields.typeDescription;
-      if (updatedFields.category !== undefined) bodyPayload['category'] = updatedFields.category;
-      if (updatedFields.status !== undefined) bodyPayload['status'] = updatedFields.status;
-      if (updatedFields.noDossier !== undefined) bodyPayload['noDossier'] = updatedFields.noDossier;
-      if (updatedFields.firstName !== undefined) bodyPayload['firstName'] = updatedFields.firstName;
-      if (updatedFields.employee !== undefined) bodyPayload['employee'] = updatedFields.employee;
-      if (updatedFields.partenaire !== undefined) bodyPayload['partenaire'] = updatedFields.partenaire;
-      if (updatedFields.quantity !== undefined) bodyPayload['quantity'] = updatedFields.quantity;
-      if (updatedFields.montant !== undefined) bodyPayload['montant'] = updatedFields.montant;
-      if (updatedFields.pieceComptable !== undefined) bodyPayload['pieceComptable'] = updatedFields.pieceComptable;
-      if (isoDate) bodyPayload['date'] = isoDate;
+      if (isDedicatedJournal) {
+        const bodyPayload: Record<string, unknown> = {};
+        if (updatedFields.libelle !== undefined) bodyPayload['libelle'] = updatedFields.libelle;
+        if (updatedFields.service !== undefined) bodyPayload['service'] = updatedFields.service;
+        if (updatedFields.typeDescription !== undefined) bodyPayload['type_description'] = updatedFields.typeDescription;
+        if (updatedFields.category !== undefined) bodyPayload['category'] = updatedFields.category;
+        if (updatedFields.status !== undefined) bodyPayload['status'] = updatedFields.status;
+        if (updatedFields.noDossier !== undefined) bodyPayload['no_dossier'] = updatedFields.noDossier;
+        if (updatedFields.employee !== undefined) bodyPayload['employee'] = updatedFields.employee;
+        if (updatedFields.partenaire !== undefined) bodyPayload['partenaire'] = updatedFields.partenaire;
+        if (updatedFields.quantity !== undefined) bodyPayload['quantity'] = updatedFields.quantity;
+        if (updatedFields.montant !== undefined) bodyPayload['montant'] = updatedFields.montant;
+        if (isoDate) bodyPayload['date'] = isoDate;
 
-      const response = await fetch(`/api/cahier/operations/${encodeURIComponent(id)}`, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify(bodyPayload),
-      });
+        const response = await fetch(`/api/journals/${encodeURIComponent(targetJournalId)}/entries/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify(bodyPayload),
+        });
 
-      if (response.ok) {
-        updatedViaApi = true;
-      } else {
-        const errJson = await response.json().catch(() => null);
-        if (response.status === 403) {
-          apiErrorMessage = errJson?.error || 'Action refusée : vous ne pouvez modifier que les opérations que vous avez vous-même enregistrées.';
+        if (response.ok) {
+          updatedViaApi = true;
         } else {
+          const errJson = await response.json().catch(() => null);
           apiErrorMessage = errJson?.error || errJson?.message || `Erreur serveur (${response.status})`;
+        }
+      } else {
+        const bodyPayload: Record<string, unknown> = {};
+        if (updatedFields.libelle !== undefined) bodyPayload['libelle'] = updatedFields.libelle;
+        if (updatedFields.service !== undefined) bodyPayload['service'] = updatedFields.service;
+        if (updatedFields.typeDescription !== undefined) bodyPayload['typeDescription'] = updatedFields.typeDescription;
+        if (updatedFields.category !== undefined) bodyPayload['category'] = updatedFields.category;
+        if (updatedFields.status !== undefined) bodyPayload['status'] = updatedFields.status;
+        if (updatedFields.noDossier !== undefined) bodyPayload['noDossier'] = updatedFields.noDossier;
+        if (updatedFields.firstName !== undefined) bodyPayload['firstName'] = updatedFields.firstName;
+        if (updatedFields.employee !== undefined) bodyPayload['employee'] = updatedFields.employee;
+        if (updatedFields.partenaire !== undefined) bodyPayload['partenaire'] = updatedFields.partenaire;
+        if (updatedFields.quantity !== undefined) bodyPayload['quantity'] = updatedFields.quantity;
+        if (updatedFields.montant !== undefined) bodyPayload['montant'] = updatedFields.montant;
+        if (updatedFields.pieceComptable !== undefined) bodyPayload['pieceComptable'] = updatedFields.pieceComptable;
+        if (isoDate) bodyPayload['date'] = isoDate;
+
+        const response = await fetch(`/api/cahier/operations/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify(bodyPayload),
+        });
+
+        if (response.ok) {
+          updatedViaApi = true;
+        } else {
+          const errJson = await response.json().catch(() => null);
+          if (response.status === 403) {
+            apiErrorMessage = errJson?.error || 'Action refusée : vous ne pouvez modifier que les opérations que vous avez vous-même enregistrées.';
+          } else {
+            apiErrorMessage = errJson?.error || errJson?.message || `Erreur serveur (${response.status})`;
+          }
         }
       }
     } catch (apiErr) {
-      console.warn('Appel API update /api/cahier/operations échoué, tentative via client Supabase direct:', apiErr);
+      console.warn('Appel API update opérations échoué:', apiErr);
       apiErrorMessage = apiErr instanceof Error ? apiErr.message : 'Erreur réseau';
     }
 
@@ -1013,6 +1058,7 @@ export class CashierService implements OnDestroy {
     );
 
     this.recalculateRunningBalances();
+    void this.loadCashierSummary();
     return { success: true, message: 'Transaction modifiée avec succès' };
   }
 
@@ -1021,46 +1067,56 @@ export class CashierService implements OnDestroy {
    * 3. SUPPRESSION D'OPÉRATIONS : API RELAIS AVEC REPLI ET RÉACTIVITÉ
    * ───────────────────────────────────────────────────────────────────────────
    */
-  public async deleteTransaction(id: string): Promise<boolean> {
+  public async cancelTransaction(id: string): Promise<boolean> {
     if (!id) return false;
-    return this.deleteBatchTransactions([id]);
+    return this.cancelTransactions([id]);
   }
 
-  public async deleteSelected(): Promise<boolean> {
-    const selectedIds = this._transactions()
+  public async cancelSelected(): Promise<boolean> {
+    const selectedIds = this.caisseTransactions()
       .filter((t) => t.selected)
       .map((t) => t.id);
 
     if (selectedIds.length === 0) return true;
-    return this.deleteBatchTransactions(selectedIds);
+    return this.cancelTransactions(selectedIds);
   }
 
-  /**
-   * Suppression synchronisée avec la base de données (Supabase / Serveur Express)
-   * La mise à jour du Signal local n'intervient QUE SI la suppression en base est confirmée.
-   */
-  private async deleteBatchTransactions(targetIds: string[]): Promise<boolean> {
+  private async cancelTransactions(targetIds: string[]): Promise<boolean> {
     if (targetIds.length === 0) return true;
 
     this._error.set(null);
-    let activeToken = this.authService.token();
-
-    // Récupération dynamique et fraîche du jeton Supabase
-    if (this.supabaseService.supabase) {
-      try {
-        const { data: sessionData } = await this.supabaseService.supabase.auth.getSession();
-        if (sessionData.session?.access_token) {
-          activeToken = sessionData.session.access_token;
-        }
-      } catch (err) {
-        console.warn('Session Supabase non récupérable pour suppression:', err);
+    let activeToken: string | null = null;
+    try {
+      if (typeof this.authService.waitForSession === 'function') {
+        await this.authService.waitForSession();
       }
+      if (typeof this.supabaseService.ensureInitialized === 'function') {
+        await this.supabaseService.ensureInitialized();
+      }
+
+      const supabase = this.supabaseService.supabase;
+      if (supabase) {
+        const { data: sessionData, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        activeToken = sessionData.session?.access_token || this.authService.token();
+      } else {
+        activeToken = this.authService.token();
+      }
+    } catch (err) {
+      console.warn('Session Supabase non récupérable pour annulation:', err);
+      this.setError('Session d’authentification indisponible. Reconnectez-vous avant d’annuler.');
+      return false;
     }
 
-    let deletedSuccessfully = false;
+    if (!activeToken) {
+      this.setError('Session d’authentification indisponible. Reconnectez-vous avant d’annuler.');
+      return false;
+    }
+
+    let cancelledSuccessfully = false;
     let failureReason: string | null = null;
 
-    // Étape 1 : Appel à l'API Express sécurisée (exécute la suppression SQL via la clé de service)
+    // Annule les lignes sans supprimer leur pièce comptable.
     try {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -1070,42 +1126,65 @@ export class CashierService implements OnDestroy {
         headers['Authorization'] = `Bearer ${activeToken}`;
       }
 
-      let response = await fetch('/api/cahier/operations', {
-        method: 'DELETE',
-        headers,
-        body: JSON.stringify({ ids: targetIds }),
-      });
+      const targetedTxs = this._transactions().filter((t) => targetIds.includes(t.id));
+      const isDedicatedJournal = targetedTxs.length > 0 && targetedTxs.every(
+        (t) => t.journalId && t.journalId !== 'native-caisse-principal' && t.journalId !== 'CSH1'
+      );
 
-      if (!response.ok && response.status === 404) {
-        response = await fetch('/api/cashier/transactions', {
-          method: 'DELETE',
-          headers,
-          body: JSON.stringify({ ids: targetIds }),
-        });
-      }
-
-      if (response.ok) {
-        deletedSuccessfully = true;
+      if (isDedicatedJournal) {
+        let allOk = true;
+        for (const tx of targetedTxs) {
+          const jId = tx.journalId || tx.journal_id || this._activeJournalId();
+          const response = await fetch(`/api/journals/${encodeURIComponent(jId)}/entries/${encodeURIComponent(tx.id)}`, {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify({ status: 'cancelled' }),
+          });
+          if (!response.ok) {
+            allOk = false;
+            const errJson = await response.json().catch(() => null);
+            failureReason = errJson?.error || `Erreur d'annulation (${response.status})`;
+          }
+        }
+        if (allOk) {
+          cancelledSuccessfully = true;
+        }
       } else {
-        const errJson = await response.json().catch(() => null);
-        if (response.status === 403) {
-          failureReason = errJson?.error || 'Action refusée : vous ne pouvez modifier que les opérations que vous avez vous-même enregistrées.';
+        let response = await fetch('/api/cahier/operations/status', {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({ ids: targetIds, status: 'cancelled' }),
+        });
+
+        if (!response.ok && response.status === 404) {
+          response = await fetch('/api/cashier/transactions/status', {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify({ ids: targetIds, status: 'cancelled' }),
+          });
+        }
+
+        if (response.ok) {
+          cancelledSuccessfully = true;
         } else {
-          failureReason = errJson?.error || errJson?.message || `Erreur serveur HTTP ${response.status}`;
+          const errJson = await response.json().catch(() => null);
+          if (response.status === 403) {
+            failureReason = errJson?.error || 'Action refusée : vous ne pouvez modifier que les opérations que vous avez vous-même enregistrées.';
+          } else {
+            failureReason = errJson?.error || errJson?.message || `Erreur serveur HTTP ${response.status}`;
+          }
         }
       }
     } catch (networkErr) {
-      console.warn('Erreur réseau appel API Express DELETE, tentative repli Supabase:', networkErr);
+      console.warn('Erreur réseau appel API Express PATCH, annulation impossible:', networkErr);
     }
 
-    // Une panne de l'API ne doit jamais déclencher une suppression directe via Supabase.
-    if (!deletedSuccessfully && !failureReason) {
+    if (!cancelledSuccessfully && !failureReason) {
       failureReason = 'Le service de caisse est temporairement indisponible. Veuillez réessayer.';
     }
 
-    // Si la suppression a échoué en base de données, on refuse la suppression dans l'UI et on alerte l'utilisateur
-    if (!deletedSuccessfully) {
-      let errorMsg = failureReason || 'Impossible de supprimer cette opération dans la base de données.';
+    if (!cancelledSuccessfully) {
+      let errorMsg = failureReason || 'Impossible d’annuler cette opération dans la base de données.';
       if (
         errorMsg.includes('403') ||
         errorMsg.includes('Forbidden') ||
@@ -1116,13 +1195,15 @@ export class CashierService implements OnDestroy {
         errorMsg = 'Action refusée : vous ne pouvez modifier que les opérations que vous avez vous-même enregistrées.';
       }
       this.setError(errorMsg);
-      console.error('[CashierService] Échec suppression DB:', errorMsg);
+      console.error('[CashierService] Échec annulation DB:', errorMsg);
       return false;
     }
 
-    // Étape 3 : Mise à jour de l'état réactif Signals Angular 19 UNIQUEMENT après succès DB
-    this._transactions.update((items) => items.filter((item) => !targetIds.includes(item.id)));
+    this._transactions.update((items) => items.map((item) =>
+      targetIds.includes(item.id) ? { ...item, status: 'cancelled', selected: false } : item
+    ));
     this.recalculateRunningBalances();
+    void this.loadCashierSummary();
     return true;
   }
 
@@ -1187,6 +1268,7 @@ export class CashierService implements OnDestroy {
 
         this._transactions.update((currentList) => [...mapped, ...currentList]);
         this.recalculateRunningBalances();
+        void this.loadCashierSummary();
         this.toggleSelectAll(false);
         return true;
       } else {
@@ -1241,6 +1323,8 @@ export class CashierService implements OnDestroy {
         this._transactions.update((items) =>
           items.map((it) => (selectedIds.includes(it.id) ? { ...it, status: 'draft', selected: false } : it))
         );
+        this.recalculateRunningBalances();
+        void this.loadCashierSummary();
         return true;
       }
     } catch {
@@ -1356,37 +1440,72 @@ export class CashierService implements OnDestroy {
   }
 
   /**
-   * Recalcule les soldes progressifs de manière chronologique et maintient l'ordre antéchronologique
+   * Recalcule les soldes progressifs de manière isolée et hermétique pour chaque journal
+   * et maintient l'ordre antéchronologique global.
    */
   private recalculateRunningBalances(): void {
     const current = this._transactions();
     if (current.length === 0) return;
 
-    // Trier du plus ancien au plus récent pour calculer le solde progressif
-    const chronological = [...current].sort((a, b) => {
-      const timeA = this.parseDateTimestamp(a.date);
-      const timeB = this.parseDateTimestamp(b.date);
-      if (timeA !== timeB) return timeA - timeB;
-      const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return createdA - createdB;
-    });
+    // Partitionner les écritures par journal pour garantir une stricte indépendance de chaque compte
+    const journalsMap = new Map<string, CashierTransaction[]>();
 
-    let balance = 0;
-    const updatedChronological = chronological.map((tx) => {
-      balance += tx.montant;
-      // Ne JAMAIS inventer de fausse pièce comptable CSH1/... côté client (P0 #6)
-      return {
-        ...tx,
-        soldeApres: tx.soldeApres !== undefined && tx.soldeApres !== null ? tx.soldeApres : balance,
-      };
-    });
+    for (const tx of current) {
+      const isCustomJournal =
+        tx.journalId &&
+        tx.journalId !== 'native-caisse-principal' &&
+        tx.journalId !== 'CSH1' &&
+        !tx.pieceComptable?.startsWith('CSH1');
+
+      const jId = isCustomJournal ? (tx.journalId || tx.journal_id || 'native-caisse-principal') : 'native-caisse-principal';
+      const group = journalsMap.get(jId) || [];
+      group.push(tx);
+      journalsMap.set(jId, group);
+    }
+
+    const allUpdated: CashierTransaction[] = [];
+
+    for (const groupTxs of journalsMap.values()) {
+      // Trier chronologiquement (du plus ancien au plus récent) pour ce journal spécifique
+      const chronological = [...groupTxs].sort((a, b) => {
+        const timeA = this.parseDateTimestamp(a.date);
+        const timeB = this.parseDateTimestamp(b.date);
+        if (timeA !== timeB) return timeA - timeB;
+        const seqA = this.extractPieceSequence(a.pieceComptable);
+        const seqB = this.extractPieceSequence(b.pieceComptable);
+        if (seqA !== 0 && seqB !== 0 && seqA !== seqB) {
+          return seqA - seqB;
+        }
+        const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return createdA - createdB;
+      });
+
+      let balance = 0;
+      const updatedGroup = chronological.map((tx) => {
+        if (tx.status === 'cancelled') {
+          return { ...tx, soldeApres: balance };
+        }
+        balance += Number(tx.montant) || 0;
+        return {
+          ...tx,
+          soldeApres: balance,
+        };
+      });
+
+      allUpdated.push(...updatedGroup);
+    }
 
     // Remettre en ordre antéchronologique strict (le plus récent en tête)
-    const antechronological = [...updatedChronological].sort((a, b) => {
+    const antechronological = [...allUpdated].sort((a, b) => {
       const timeA = this.parseDateTimestamp(a.date);
       const timeB = this.parseDateTimestamp(b.date);
       if (timeA !== timeB) return timeB - timeA;
+      const seqA = this.extractPieceSequence(a.pieceComptable);
+      const seqB = this.extractPieceSequence(b.pieceComptable);
+      if (seqA !== 0 && seqB !== 0 && seqA !== seqB) {
+        return seqB - seqA;
+      }
       const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return createdB - createdA;
@@ -1435,6 +1554,11 @@ export class CashierService implements OnDestroy {
       const timeA = this.parseDateTimestamp(a.date);
       const timeB = this.parseDateTimestamp(b.date);
       if (timeA !== timeB) return timeA - timeB;
+      const seqA = this.extractPieceSequence(a.piece_comptable || undefined);
+      const seqB = this.extractPieceSequence(b.piece_comptable || undefined);
+      if (seqA !== 0 && seqB !== 0 && seqA !== seqB) {
+        return seqA - seqB;
+      }
       const createdA = a.created_at ? new Date(a.created_at).getTime() : 0;
       const createdB = b.created_at ? new Date(b.created_at).getTime() : 0;
       return createdA - createdB;
@@ -1443,7 +1567,10 @@ export class CashierService implements OnDestroy {
     let runningBalance = 0;
     const mappedChronological = chronological.map((row) => {
       const numMontant = Number(row.montant) || 0;
-      runningBalance += numMontant;
+      const isPosted = row.status === 'posted';
+      if (isPosted) {
+        runningBalance += numMontant;
+      }
 
       return {
         id: row.id,
@@ -1461,7 +1588,7 @@ export class CashierService implements OnDestroy {
         partenaire: row.partenaire || row.employee || '',
         quantity: row.quantity !== null && row.quantity !== undefined ? Number(row.quantity) : undefined,
         montant: numMontant,
-        soldeApres: row.solde_apres !== undefined && row.solde_apres !== null ? Number(row.solde_apres) : runningBalance,
+        soldeApres: row.solde_apres !== undefined && row.solde_apres !== null ? Number(row.solde_apres) : (isPosted ? runningBalance : 0),
         selected: !!row.selected,
         createdBy: row.created_by || undefined,
         employeeId: row.employee_id || undefined,
@@ -1477,6 +1604,11 @@ export class CashierService implements OnDestroy {
       const timeA = this.parseDateTimestamp(a.date);
       const timeB = this.parseDateTimestamp(b.date);
       if (timeA !== timeB) return timeB - timeA;
+      const seqA = this.extractPieceSequence(a.pieceComptable);
+      const seqB = this.extractPieceSequence(b.pieceComptable);
+      if (seqA !== 0 && seqB !== 0 && seqA !== seqB) {
+        return seqB - seqA;
+      }
       const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return createdB - createdA;
@@ -1567,9 +1699,7 @@ export class CashierService implements OnDestroy {
    * ───────────────────────────────────────────────────────────────────────────
    * SYNCHRONISATION EN TEMPS RÉEL (SUPABASE REALTIME WEBSOCKET)
    * ───────────────────────────────────────────────────────────────────────────
-   * Écoute les événements INSERT, UPDATE, DELETE sur la table cashier_transactions
-   * et met à jour instantanément le Signal _transactions sans rechargement,
-   * avec réconciliation d'état automatique lors de la souscription ou reconnexion.
+  * Écoute un signal privé d'invalidation puis recharge les données par l'API autorisée.
    */
   private async setupRealtimeSubscription(): Promise<void> {
     if (!this.isBrowser) return;
@@ -1579,84 +1709,82 @@ export class CashierService implements OnDestroy {
       const client = this.supabaseService.supabase;
       if (!client) return;
 
-      // Éviter les souscriptions en doublon
-      if (this.realtimeChannel) {
-        return;
+      let token = this.authService.token();
+      if (!token) {
+        const { data } = await client.auth.getSession();
+        token = data.session?.access_token || '';
+      }
+      if (!token) return;
+
+      await client.realtime.setAuth(token);
+      const role = this.authService.currentRole();
+      const canReadCashier = ['admin', 'caissier', 'caissiere', 'manager', 'comptable', 'tresorier'].includes(role || '');
+      const canReadJournalBalances = ['admin', 'manager', 'tresorier'].includes(role || '');
+
+      if (canReadCashier && !this.cashierRealtimeChannel) {
+        this.cashierRealtimeChannel = client
+          .channel('cashier-balances:invalidate', { config: { private: true } })
+          .on('broadcast', { event: 'cashier_balances_invalidated' }, () => this.scheduleRealtimeRefresh())
+          .subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+              if (this._transactions().length === 0) this.loadTransactions();
+              this.loadCashierSummary();
+            }
+          });
       }
 
-      this.realtimeChannel = client
-        .channel('public:cashier_transactions')
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'cashier_transactions' },
-          (payload) => {
-            const newRow = payload.new as CashierDbRow;
-            if (!newRow || !newRow.id) return;
-            const mapped = this.mapSingleDbRow(newRow);
-
-            this._transactions.update((currentList) => {
-              if (currentList.some((t) => t.id === mapped.id)) {
-                return currentList;
-              }
-              return [mapped, ...currentList];
-            });
-            this.recalculateRunningBalances();
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'cashier_transactions' },
-          (payload) => {
-            const updatedRow = payload.new as CashierDbRow;
-            if (!updatedRow || !updatedRow.id) return;
-            const mapped = this.mapSingleDbRow(updatedRow);
-
-            this._transactions.update((currentList) =>
-              currentList.map((t) => (t.id === mapped.id ? { ...mapped, selected: t.selected } : t))
-            );
-            this.recalculateRunningBalances();
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: 'DELETE', schema: 'public', table: 'cashier_transactions' },
-          (payload) => {
-            const deletedId = (payload.old as { id?: string })?.id;
-            if (!deletedId) return;
-
-            this._transactions.update((currentList) =>
-              currentList.filter((t) => t.id !== deletedId)
-            );
-            this.recalculateRunningBalances();
-          }
-        )
-        .subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            // Re-synchronisation ciblée uniquement si le cache local est vide pour éviter les appels concurrents (P0 #7)
-            if (this._transactions().length === 0) {
-              this.loadTransactions();
-            }
-            this.loadCashierSummary();
-          } else if (status === 'CHANNEL_ERROR') {
-            // Silencieux si l'option Realtime n'est pas activée sur la table Supabase
-          } else if (status === 'TIMED_OUT') {
-            // Repli HTTP transparent en cas d'incompatibilité WebSocket/réseau
-            this.loadTransactions();
-          }
-        });
+      if (canReadJournalBalances && !this.journalRealtimeChannel) {
+        this.journalRealtimeChannel = client
+          .channel('journal-balances:invalidate', { config: { private: true } })
+          .on('broadcast', { event: 'journal_balances_invalidated' }, () => this.scheduleJournalRefresh())
+          .subscribe();
+      }
     } catch (err) {
       console.warn('Impossible d’initialiser le canal Realtime Supabase:', err);
     }
   }
 
+  private scheduleRealtimeRefresh(): void {
+    if (this.realtimeRefreshTimeout) clearTimeout(this.realtimeRefreshTimeout);
+    this.realtimeRefreshTimeout = setTimeout(() => {
+      this.realtimeRefreshTimeout = null;
+      void this.loadTransactions();
+    }, 250);
+  }
+
+  private scheduleJournalRefresh(): void {
+    if (this.journalRefreshTimeout) clearTimeout(this.journalRefreshTimeout);
+    this.journalRefreshTimeout = setTimeout(() => {
+      this.journalRefreshTimeout = null;
+      this._journalBalanceRefreshVersion.update((version) => version + 1);
+    }, 250);
+  }
+
   private cleanupRealtimeSubscription(): void {
-    if (this.realtimeChannel && this.supabaseService.supabase) {
+    if (this.realtimeRefreshTimeout) {
+      clearTimeout(this.realtimeRefreshTimeout);
+      this.realtimeRefreshTimeout = null;
+    }
+    if (this.journalRefreshTimeout) {
+      clearTimeout(this.journalRefreshTimeout);
+      this.journalRefreshTimeout = null;
+    }
+    const client = this.supabaseService.supabase;
+    if (this.cashierRealtimeChannel && client) {
       try {
-        this.supabaseService.supabase.removeChannel(this.realtimeChannel);
+        void client.removeChannel(this.cashierRealtimeChannel);
       } catch (err) {
         console.warn('Erreur lors du nettoyage du canal Realtime Supabase:', err);
       }
-      this.realtimeChannel = null;
+      this.cashierRealtimeChannel = null;
+    }
+    if (this.journalRealtimeChannel && client) {
+      try {
+        void client.removeChannel(this.journalRealtimeChannel);
+      } catch (err) {
+        console.warn('Erreur lors du nettoyage du canal Realtime des journaux:', err);
+      }
+      this.journalRealtimeChannel = null;
     }
   }
 

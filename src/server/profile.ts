@@ -1,12 +1,8 @@
 import express from 'express';
 import { getSupabaseAdmin } from './auth';
 
-/**
- * Récupère le profil complet de l'utilisateur authentifié directement depuis PostgreSQL.
- * Source de vérité unique avec vérification de session côté serveur.
- */
 export const getCurrentUserProfileHandler = async (req: express.Request, res: express.Response): Promise<void> => {
-  const user = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string } | undefined;
+  const user = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string; role?: string } | undefined;
   const userId = user?.id;
   if (!userId) {
     res.status(401).json({ error: 'Session utilisateur introuvable.' });
@@ -26,12 +22,21 @@ export const getCurrentUserProfileHandler = async (req: express.Request, res: ex
       .eq('id', userId)
       .maybeSingle();
 
-    if (error || !profile) {
+    if (error) {
+      console.error('Échec de lecture du profil utilisateur:', error.message);
+      res.status(500).json({ error: 'Impossible de récupérer votre profil.' });
+      return;
+    }
+
+    if (!profile) {
       res.status(404).json({ error: 'Profil utilisateur introuvable.' });
       return;
     }
 
-    res.json({ profile });
+    res.json({
+      profile,
+      role: user.role || profile.role,
+    });
   } catch (err: unknown) {
     console.error('Erreur getCurrentUserProfileHandler:', err);
     res.status(500).json({ error: 'Erreur interne lors de la récupération du profil.' });

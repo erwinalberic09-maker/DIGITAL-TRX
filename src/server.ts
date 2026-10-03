@@ -13,12 +13,13 @@ import helmet from 'helmet';
 import { getSupabaseAdmin, requireAuth } from './server/auth';
 import { getSupabaseConfigHandler } from './server/config';
 import { syncUserAccessRole } from './server/access-role-sync';
-import { formatPersistedPieceComptable, normalizeDateToDay } from './server/cashier.utils';
+import { formatPersistedPieceComptable, normalizeDateToDay, requiresCashierDraftBeforeEdit } from './server/cashier.utils';
 import { getCurrentUserProfileHandler, updateCurrentUserProfileHandler } from './server/profile';
 import { createCollaboratorHandler } from './server/collaborators.create';
 import { getCollaboratorsHandler } from './server/collaborators.list';
 import { deleteCollaboratorHandler, updateCollaboratorHandler } from './server/collaborators.manage';
 import { getOperationsHandler } from './server/cashier.read';
+import { writeAuditLog } from './server/audit-log';
 import {
   createProspectHandler,
   deleteProspectHandler,
@@ -56,7 +57,7 @@ import {
   setUserPermissionOverrideHandler,
   updateAccessRoleHandler,
 } from './server/access-control.handlers';
-import { requirePermission, resolveJournalOwnerContext } from './server/access-control';
+import { hasPermission, requirePermission, resolveJournalOwnerContext } from './server/access-control';
 
 // Charger les variables d'environnement depuis le fichier `.env` (si présent)
 dotenv.config();
@@ -175,7 +176,24 @@ app.get('/api/config', getSupabaseConfigHandler);
 const collaboratorCollectionAliases = ['/api/system/collaborators', '/api/admin/users'];
 
 collaboratorCollectionAliases.forEach((path) => {
-  app.get(path, requireAuth, requirePermission('users.read'), getCollaboratorsHandler);
+  app.get(path, requireAuth, async (req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> => {
+    const user = (req as unknown as Record<string, unknown>)['user'] as { id?: string } | undefined;
+    if (!user?.id) {
+      res.status(401).json({ error: 'Utilisateur non authentifié.' });
+      return;
+    }
+
+    try {
+      const canRead = (await hasPermission(user.id, 'hr.read', undefined)) || (await hasPermission(user.id, 'users.read', undefined));
+      if (canRead) {
+        next();
+        return;
+      }
+      requirePermission('users.read')(req, res, next);
+    } catch {
+      requirePermission('users.read')(req, res, next);
+    }
+  }, getCollaboratorsHandler);
 });
 
 /**
@@ -206,17 +224,19 @@ app.post('/api/auth/sync-role', requireAuth, async (req: express.Request, res: e
       app_metadata: { ...user.app_metadata, role: targetRole },
     });
 
-    // Scellement dans public.profiles (UPDATE strict pour préserver les contraintes NOT NULL sur first_name / last_name)
-    const { error: profileUpdateError } = await supabaseAdmin
-      .from('profiles')
-      .update({
+    // Scellement dans public.profiles
+    const { error: profileUpsertError } = await supabaseAdmin.from('profiles').upsert(
+      {
+        id: user.id,
+        email: user.email,
         role: targetRole,
         updated_at: new Date().toISOString(),
-      })
-      .eq('id', user.id);
+      },
+      { onConflict: 'id' }
+    );
 
-    if (profileUpdateError) {
-      console.error('Erreur mise à jour profile dans sync-role:', profileUpdateError.message);
+    if (profileUpsertError) {
+      console.error('Erreur upsert profile dans sync-role:', profileUpsertError.message);
       res.status(500).json({ error: 'Échec de synchronisation du profil utilisateur.' });
       return;
     }
@@ -245,7 +265,7 @@ collaboratorCollectionAliases.forEach((path) => {
 });
 
 /**
- * Lecture et modification d'un compte collaborateur (synchronisation auth.app_metadata + public.profiles)
+ * Modification d'un compte collaborateur (synchronisation auth.app_metadata + public.profiles)
  */
 app.get('/api/profile/me', requireAuth, getCurrentUserProfileHandler);
 app.patch('/api/profile/me', requireAuth, requirePermission('profile.update'), updateCurrentUserProfileHandler);
@@ -365,9 +385,10 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
 
     const payload = req.body || {};
     const rawPiece = payload.pieceComptable || payload.piece_comptable;
-    const candidatePiece = typeof rawPiece === 'string' && rawPiece.trim()
-      ? rawPiece.trim().toUpperCase().replace(/\s+/g, '')
-      : null;
+    if (typeof rawPiece === 'string' && rawPiece.trim()) {
+      res.status(400).json({ error: 'La pièce comptable est attribuée par la base lors de la comptabilisation.' });
+      return;
+    }
     const libelle = typeof payload.libelle === 'string' ? payload.libelle.trim() : '';
     const service = payload.service || payload.typeTransaction || payload.type_transaction || null;
     const typeDescription = payload.typeDescription || payload.type_description || null;
@@ -392,22 +413,6 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
     if (!Number.isFinite(montant) || montant === 0) {
       res.status(400).json({ error: 'Le montant de l’opération doit être un nombre fini différent de zéro.' });
       return;
-    }
-
-    // Contrôle d'unicité strict du numéro de pièce comptable en priorité absolue
-    if (candidatePiece) {
-      const { data: pieceDup } = await adminClient
-        .from('cashier_transactions')
-        .select('id, piece_comptable, date, libelle')
-        .eq('piece_comptable', candidatePiece)
-        .maybeSingle();
-
-      if (pieceDup) {
-        res.status(409).json({
-          error: `Erreur d'unicité : le numéro de pièce comptable "${candidatePiece}" est déjà attribué à une autre opération (ID: ${pieceDup.id}, Libellé: "${pieceDup.libelle}"). Les numéros de pièce comptable doivent être strictement uniques.`,
-        });
-        return;
-      }
     }
 
     // Normalisation absolue du signe du montant selon la catégorie
@@ -456,7 +461,7 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
     const status = payload.status === 'posted' ? 'posted' : (payload.status === 'cancelled' ? 'cancelled' : 'draft');
 
     const rowToInsert = {
-      piece_comptable: candidatePiece,
+      piece_comptable: null,
       libelle,
       service,
       type_description: typeDescription,
@@ -475,7 +480,7 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       journal_id: payload.journal_id || payload.journalId || null,
     };
 
-    console.log(`[AUDIT CASHIER] Création opération par [${authenticatedUser?.email || callerId || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'}) : Montant=${montant}, Libellé="${libelle}", Pièce="${candidatePiece || 'auto'}"`);
+    console.log(`[AUDIT CASHIER] Création opération par [${authenticatedUser?.email || callerId || 'inconnu'}] (rôle: ${authenticatedUser?.role || 'non-défini'}) : Montant=${montant}, Libellé="${libelle}", pièce attribuée à la comptabilisation`);
 
     const { data, error } = await adminClient
       .from('cashier_transactions')
@@ -497,6 +502,20 @@ const saveOperationHandler = async (req: express.Request, res: express.Response)
       res.status(500).json({ error: 'Erreur lors de l’enregistrement de l’opération de caisse.' });
       return;
     }
+
+    await writeAuditLog(adminClient, {
+      userId: callerId,
+      userEmail: authenticatedUser?.email,
+      userRole: authenticatedUser?.role,
+      action: 'CREATE_OPERATION',
+      entityId: data.id,
+      details: {
+        piece_comptable: data.piece_comptable,
+        status: data.status,
+        source: 'cashier_api',
+      },
+      ipAddress: req.ip || null,
+    });
 
     const enrichedOperation = formatPersistedPieceComptable(data);
 
@@ -536,7 +555,7 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
     const updateData: Record<string, unknown> = {};
     const { data: existingRow, error: fetchError } = await adminClient
       .from('cashier_transactions')
-      .select('created_by, employee_id, category, montant')
+      .select('created_by, employee_id, category, montant, status, piece_comptable')
       .eq('id', targetId)
       .maybeSingle();
 
@@ -547,6 +566,10 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
     }
     if (!existingRow) {
       res.status(404).json({ error: 'Opération introuvable' });
+      return;
+    }
+    if (existingRow.status === 'cancelled') {
+      res.status(409).json({ error: 'Une opération annulée est définitive et ne peut plus être modifiée.' });
       return;
     }
 
@@ -569,6 +592,11 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
         updateData['created_by'] = authenticatedUser.id;
         updateData['employee_id'] = authenticatedUser.id;
       }
+    }
+
+    if (requiresCashierDraftBeforeEdit(existingRow.status, authenticatedUser?.role)) {
+      res.status(409).json({ error: 'Remettez l’opération en brouillon avant de la modifier.' });
+      return;
     }
 
     const payload = req.body || {};
@@ -677,23 +705,14 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
       const targetPiece = typeof rawPiece === 'string' && rawPiece.trim()
         ? rawPiece.trim().toUpperCase().replace(/\s+/g, '')
         : null;
+      const currentPiece = typeof existingRow.piece_comptable === 'string' && existingRow.piece_comptable.trim()
+        ? existingRow.piece_comptable.trim().toUpperCase().replace(/\s+/g, '')
+        : null;
 
-      if (targetPiece) {
-        const { data: pieceDup } = await adminClient
-          .from('cashier_transactions')
-          .select('id, piece_comptable, date, libelle')
-          .eq('piece_comptable', targetPiece)
-          .neq('id', targetId)
-          .maybeSingle();
-
-        if (pieceDup) {
-          res.status(409).json({
-            error: `Modification refusée : le numéro de pièce comptable "${targetPiece}" est déjà attribué à une autre opération (ID: ${pieceDup.id}, Libellé: "${pieceDup.libelle}").`,
-          });
-          return;
-        }
+      if (targetPiece !== currentPiece) {
+        res.status(400).json({ error: 'Le numéro de pièce comptable est immuable et ne peut pas être fourni par le client.' });
+        return;
       }
-      updateData['piece_comptable'] = targetPiece;
     }
 
     if (Object.keys(updateData).length === 0) {
@@ -773,103 +792,6 @@ const updateOperationHandler = async (req: express.Request, res: express.Respons
   } catch (err: unknown) {
     console.error('Erreur updateOperationHandler:', err);
     res.status(500).json({ error: 'Erreur interne lors de la modification de l’opération.' });
-  }
-};
-
-/**
- * Suppression d'opérations de caisse (DELETE /api/cahier/operations & /api/cashier/transactions)
- * RÈGLE MÉTIER STRICTE :
- * - Les administrateurs ('admin') peuvent tout supprimer.
- * - Tous les autres utilisateurs ('caissiere', 'manager', 'tresorier', 'employe') ne peuvent supprimer UNIQUEMENT que les opérations qu'ils ont eux-mêmes créées.
- */
-const deleteOperationsHandler = async (req: express.Request, res: express.Response): Promise<void> => {
-  const adminClient = getSupabaseAdmin();
-  if (!adminClient) {
-    res.status(503).json({ error: 'Service d’administration indisponible : SUPABASE_SERVICE_ROLE_KEY manquante' });
-    return;
-  }
-
-  try {
-    const authenticatedUser = (req as unknown as Record<string, unknown>)['user'] as { id?: string; email?: string; role?: string } | undefined;
-    const callerId = authenticatedUser?.id;
-    const userRole = authenticatedUser?.role;
-    const isAdmin = userRole === 'admin';
-
-    const paramId = req.params['id'];
-    const singleId = Array.isArray(paramId) ? paramId[0] : paramId;
-    const bodyIds = Array.isArray(req.body?.ids) ? req.body.ids : [];
-    const targetIds: string[] = singleId ? [singleId] : bodyIds;
-
-    if (targetIds.length === 0) {
-      res.status(400).json({ error: 'Aucun identifiant d’opération fourni pour la suppression' });
-      return;
-    }
-
-    if (targetIds.length > 100) {
-      res.status(400).json({ error: 'Limite dépassée : impossible de supprimer plus de 100 opérations par requête' });
-      return;
-    }
-
-    // Si l'utilisateur n'est pas admin, vérifier les autorisations de propriété stricte
-    if (!isAdmin) {
-      if (!callerId) {
-        res.status(403).json({ error: 'Utilisateur non identifié. Suppression refusée.' });
-        return;
-      }
-
-      const { data: rowsToCheck, error: fetchErr } = await adminClient
-        .from('cashier_transactions')
-        .select('id, created_by, employee_id, libelle')
-        .in('id', targetIds);
-
-      if (fetchErr || !rowsToCheck) {
-        res.status(500).json({ error: 'Impossible de vérifier la propriété des opérations' });
-        return;
-      }
-
-      // Pour tout utilisateur non-admin (ex: caissière) :
-      // Vérification stricte de propriété : l'utilisateur ne peut supprimer QUE ses propres opérations.
-      // Règle de parité stricte avec la policy RLS : une ligne sans créateur explicite (created_by ou employee_id vide) ne peut être supprimée que par un admin
-      const userEmail = (authenticatedUser?.email || '').toLowerCase().trim();
-      const unauthorizedRows = rowsToCheck.filter((r) => {
-        const creator = String(r.created_by || r.employee_id || '').trim();
-        // Si aucun créateur n'est défini en base, interdire la suppression à tout non-administrateur
-        if (!creator) return true;
-        const matchesId = Boolean(callerId && creator === callerId);
-        const matchesEmail = Boolean(userEmail && creator.toLowerCase() === userEmail);
-        return !matchesId && !matchesEmail;
-      });
-
-      if (unauthorizedRows.length > 0) {
-        res.status(403).json({
-          error: 'Action refusée : vous ne pouvez supprimer que les opérations que vous avez vous-même enregistrées.',
-        });
-        return;
-      }
-    }
-
-    console.warn(`[AUDIT CASHIER] Suppression de ${targetIds.length} opération(s) [${targetIds.join(', ')}] initiée par [${authenticatedUser?.email || authenticatedUser?.id || 'inconnu'}] (rôle: ${userRole || 'non-défini'})`);
-
-    const { error, count } = await adminClient
-      .from('cashier_transactions')
-      .delete({ count: 'exact' })
-      .in('id', targetIds);
-
-    if (error) {
-      console.error('Erreur SQL lors de la suppression d’opérations:', error.message);
-      res.status(500).json({ error: 'Erreur lors de la suppression des opérations de caisse.' });
-      return;
-    }
-
-    // Nettoyage éventuel des pièces justificatives associées dans storage ou liens
-    res.json({
-      success: true,
-      deletedCount: count ?? targetIds.length,
-      message: `${targetIds.length} opération(s) supprimée(s) avec succès`,
-    });
-  } catch (err: unknown) {
-    console.error('Erreur deleteOperationsHandler:', err);
-    res.status(500).json({ error: 'Erreur interne lors de la suppression des opérations.' });
   }
 };
 
@@ -990,58 +912,19 @@ const getCashierSummaryHandler = async (req: express.Request, res: express.Respo
       ? rawJournalId.trim()
       : null;
 
-    // 1. Tenter la procédure stockée PostgreSQL
     const { data, error } = await adminClient.rpc('get_cashier_summary', {
       p_journal_id: journalId,
     });
 
-    if (!error && data) {
-      res.json({
-        success: true,
-        summary: data,
-      });
-      return;
-    }
-
-    // 2. Calcul direct sur PostgreSQL via adminClient si la RPC n'est pas encore déployée
-    let query = adminClient
-      .from('cashier_transactions')
-      .select('montant, category');
-
-    if (journalId) {
-      query = query.eq('journal_id', journalId);
-    }
-
-    const { data: rows, error: directQueryError } = await query;
-
-    if (directQueryError) {
-      console.error('Erreur SQL direct cashier_transactions:', directQueryError.message);
+    if (error) {
+      console.error('Erreur SQL get_cashier_summary:', error.message);
       res.status(500).json({ error: 'Erreur lors du calcul du solde de caisse.' });
       return;
     }
 
-    let totalEntrees = 0;
-    let totalSorties = 0;
-    let soldeGlobal = 0;
-
-    for (const row of rows || []) {
-      const montant = Number(row.montant) || 0;
-      if (row.category === 'entree') {
-        totalEntrees += montant;
-      } else if (row.category === 'sortie') {
-        totalSorties += Math.abs(montant);
-      }
-      soldeGlobal += montant;
-    }
-
     res.json({
       success: true,
-      summary: {
-        total_entrees: totalEntrees,
-        total_sorties: totalSorties,
-        solde_global: soldeGlobal,
-        total_count: (rows || []).length,
-      },
+      summary: data,
     });
   } catch (err: unknown) {
     console.error('Erreur getCashierSummaryHandler:', err);
@@ -1081,24 +964,28 @@ const updateOperationsStatusHandler = async (req: express.Request, res: express.
     }
     const newStatus = requestedStatus;
 
+    const { data: rowsToCheck, error: fetchErr } = await adminClient
+      .from('cashier_transactions')
+      .select('id, created_by, employee_id, status')
+      .in('id', bodyIds);
+
+    if (fetchErr || !rowsToCheck) {
+      res.status(500).json({ error: 'Impossible de vérifier les opérations demandées.' });
+      return;
+    }
+    if (rowsToCheck.length !== bodyIds.length) {
+      res.status(404).json({ error: 'Une ou plusieurs opérations sont introuvables.' });
+      return;
+    }
+    if (newStatus !== 'cancelled' && rowsToCheck.some((row) => row.status === 'cancelled')) {
+      res.status(409).json({ error: 'Une opération annulée ne peut pas être réactivée ou modifiée.' });
+      return;
+    }
+
     // Contrôle d'appartenance pour les non-admins : interdiction de changer le statut des opérations créées par un tiers
     if (userRole !== 'admin') {
       if (!callerId) {
         res.status(403).json({ error: 'Utilisateur non identifié. Modification de statut refusée.' });
-        return;
-      }
-
-      const { data: rowsToCheck, error: fetchErr } = await adminClient
-        .from('cashier_transactions')
-        .select('id, created_by, employee_id')
-        .in('id', bodyIds);
-
-      if (fetchErr || !rowsToCheck) {
-        res.status(500).json({ error: 'Impossible de vérifier la propriété des opérations' });
-        return;
-      }
-      if (rowsToCheck.length !== bodyIds.length) {
-        res.status(404).json({ error: 'Une ou plusieurs opérations sont introuvables.' });
         return;
       }
 
@@ -1125,6 +1012,18 @@ const updateOperationsStatusHandler = async (req: express.Request, res: express.
       console.error('Erreur SQL mise à jour statut:', updateErr.message);
       res.status(500).json({ error: 'Erreur lors de la mise à jour du statut des opérations.' });
       return;
+    }
+
+    if (newStatus === 'cancelled') {
+      await Promise.all((updatedRows || []).map((row) => writeAuditLog(adminClient, {
+        userId: callerId,
+        userEmail: authenticatedUser?.email,
+        userRole,
+        action: 'CANCEL_OPERATION',
+        entityId: row.id,
+        details: { piece_comptable: row.piece_comptable, status: 'cancelled' },
+        ipAddress: req.ip || null,
+      })));
     }
 
     const enriched = (updatedRows || []).map((r) => formatPersistedPieceComptable(r));
@@ -1162,8 +1061,12 @@ cashierOperationAliases.forEach((path) => {
 });
 
 cashierOperationAliases.forEach((path) => {
-  app.delete(`${path}/:id`, requireAuth, requirePermission('cashier.delete'), deleteOperationsHandler);
-  app.delete(path, requireAuth, requirePermission('cashier.delete'), deleteOperationsHandler);
+  app.delete(`${path}/:id`, requireAuth, requirePermission('cashier.delete'), (_req, res) => {
+    res.status(410).json({ error: 'La suppression définitive est désactivée. Annulez l’opération pour conserver sa pièce comptable.' });
+  });
+  app.delete(path, requireAuth, requirePermission('cashier.delete'), (_req, res) => {
+    res.status(410).json({ error: 'La suppression définitive est désactivée. Annulez l’opération pour conserver sa pièce comptable.' });
+  });
 });
 
 /**

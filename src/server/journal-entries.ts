@@ -72,12 +72,33 @@ export const getJournalEntriesHandler = async (req: express.Request, res: expres
 
     if (error) {
       console.error(`[JOURNAL_ENTRIES] Erreur lecture des écritures du journal ${journalId}:`, error.message);
-      res.status(500).json({ error: `Erreur lors de la récupération des écritures : ${error.message}` });
+      res.status(500).json({ error: 'Erreur lors de la récupération des écritures du journal.' });
       return;
     }
 
+    let soldeGlobal = 0;
+    try {
+      const { data: summary, error: sumErr } = await adminClient.rpc('get_journal_summary', { p_journal_id: journalId });
+      if (!sumErr && summary && summary.solde_global !== undefined) {
+        soldeGlobal = Number(summary.solde_global);
+      } else {
+        const { data: sumRows } = await adminClient
+          .from('journal_entries')
+          .select('montant')
+          .eq('journal_id', journalId)
+          .eq('status', 'posted');
+        soldeGlobal = (sumRows || []).reduce((acc, row) => acc + (Number(row.montant) || 0), 0);
+      }
+    } catch {
+      const { data: sumRows } = await adminClient
+        .from('journal_entries')
+        .select('montant')
+        .eq('journal_id', journalId)
+        .eq('status', 'posted');
+      soldeGlobal = (sumRows || []).reduce((acc, row) => acc + (Number(row.montant) || 0), 0);
+    }
+
     const entries = (data || []) as JournalEntryRecord[];
-    const currentBalance = entries.reduce((acc, row) => acc + (Number(row.montant) || 0), 0);
 
     res.json({
       success: true,
@@ -86,7 +107,7 @@ export const getJournalEntriesHandler = async (req: express.Request, res: expres
       limit,
       offset,
       count: entries.length,
-      current_balance: currentBalance,
+      current_balance: soldeGlobal,
       entries,
     });
   } catch (err: unknown) {
@@ -126,9 +147,11 @@ export const createJournalEntryHandler = async (req: express.Request, res: expre
     libelle,
     service,
     type_description,
+    typeDescription,
     category,
     status = 'draft',
     no_dossier,
+    noDossier,
     partenaire,
     employee,
     quantity = 1,
@@ -149,6 +172,10 @@ export const createJournalEntryHandler = async (req: express.Request, res: expre
   const effectiveCategory: 'entree' | 'sortie' = category === 'entree' ? 'entree' : 'sortie';
   const signedMontant = effectiveCategory === 'sortie' ? -Math.abs(rawMontant) : Math.abs(rawMontant);
   const entryDate = date && typeof date === 'string' ? String(date).split('T')[0] : new Date().toISOString().split('T')[0];
+  const resolvedTypeDesc = String(type_description ?? typeDescription ?? '').trim();
+  const resolvedNoDossier = String(no_dossier ?? noDossier ?? '').trim();
+  const resolvedEmployee = String(employee ?? partenaire ?? '').trim();
+  const resolvedPartenaire = String(partenaire ?? employee ?? '').trim();
 
   try {
     // 1. Récupération du préfixe de séquence du journal
@@ -176,12 +203,12 @@ export const createJournalEntryHandler = async (req: express.Request, res: expre
         date: entryDate,
         libelle: libelle.trim(),
         service: service ? String(service).trim() : '',
-        type_description: type_description ? String(type_description).trim() : '',
+        type_description: resolvedTypeDesc,
         category: effectiveCategory,
         status: status === 'posted' ? 'posted' : 'draft',
-        no_dossier: no_dossier ? String(no_dossier).trim() : '',
-        partenaire: partenaire ? String(partenaire).trim() : '',
-        employee: employee ? String(employee).trim() : '',
+        no_dossier: resolvedNoDossier,
+        partenaire: resolvedPartenaire,
+        employee: resolvedEmployee,
         quantity: Math.max(1, Number(quantity) || 1),
         montant: signedMontant,
         created_by: userId || null,
@@ -273,12 +300,12 @@ export const updateJournalEntryHandler = async (req: express.Request, res: expre
     allowedUpdates['service'] = String(body.service || '').trim();
   }
 
-  if (body.type_description !== undefined) {
-    allowedUpdates['type_description'] = String(body.type_description || '').trim();
+  if (body.type_description !== undefined || body.typeDescription !== undefined) {
+    allowedUpdates['type_description'] = String(body.type_description ?? body.typeDescription ?? '').trim();
   }
 
-  if (body.no_dossier !== undefined) {
-    allowedUpdates['no_dossier'] = String(body.no_dossier || '').trim();
+  if (body.no_dossier !== undefined || body.noDossier !== undefined) {
+    allowedUpdates['no_dossier'] = String(body.no_dossier ?? body.noDossier ?? '').trim();
   }
 
   if (body.partenaire !== undefined) {
@@ -402,7 +429,8 @@ export const deleteJournalEntryHandler = async (req: express.Request, res: expre
 
     const { error } = await query;
     if (error) {
-      res.status(500).json({ error: `Erreur lors de la suppression : ${error.message}` });
+      console.error('[JOURNAL_ENTRIES] Erreur lors de la suppression d’une écriture:', error.message);
+      res.status(500).json({ error: 'Erreur lors de la suppression de l’écriture comptable.' });
       return;
     }
 
@@ -443,21 +471,53 @@ export const getJournalChartDataHandler = async (req: express.Request, res: expr
     return;
   }
 
+  let soldeGlobal = 0;
   try {
-    const { data, error } = await adminClient
+    const { data: summary, error: sumErr } = await adminClient.rpc('get_journal_summary', { p_journal_id: journalId });
+    if (!sumErr && summary && summary.solde_global !== undefined) {
+      soldeGlobal = Number(summary.solde_global);
+    } else {
+      const { data: sumRows } = await adminClient
+        .from('journal_entries')
+        .select('montant')
+        .eq('journal_id', journalId)
+        .eq('status', 'posted');
+      soldeGlobal = (sumRows || []).reduce((acc, row) => acc + (Number(row.montant) || 0), 0);
+    }
+  } catch {
+    const { data: sumRows } = await adminClient
       .from('journal_entries')
-      .select('date, montant, libelle')
+      .select('montant')
       .eq('journal_id', journalId)
-      .order('date', { ascending: true })
-      .order('sequence_number', { ascending: true })
-      .limit(1000);
+      .eq('status', 'posted');
+    soldeGlobal = (sumRows || []).reduce((acc, row) => acc + (Number(row.montant) || 0), 0);
+  }
 
-    if (error) {
-      res.status(500).json({ error: error.message });
-      return;
+  try {
+
+    const pageSize = 500;
+    const entries: JournalEntryRecord[] = [];
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await adminClient
+        .from('journal_entries')
+        .select('date, montant, libelle, sequence_number')
+        .eq('journal_id', journalId)
+        .eq('status', 'posted')
+        .order('date', { ascending: true })
+        .order('sequence_number', { ascending: true })
+        .range(offset, offset + pageSize - 1);
+
+      if (error) {
+        console.error(`[JOURNAL_ENTRIES] Erreur lecture du graphique du journal ${journalId}:`, error.message);
+        res.status(500).json({ error: 'Erreur lors de la récupération des données du graphique.' });
+        return;
+      }
+
+      const page = (data || []) as JournalEntryRecord[];
+      entries.push(...page);
+      if (page.length < pageSize) break;
     }
 
-    const entries = (data || []) as JournalEntryRecord[];
     entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     let runningBalance = 0;
@@ -480,7 +540,7 @@ export const getJournalChartDataHandler = async (req: express.Request, res: expr
     res.json({
       success: true,
       journal_id: journalId,
-      current_balance: runningBalance,
+      current_balance: soldeGlobal,
       labels,
       balances,
       descriptions,

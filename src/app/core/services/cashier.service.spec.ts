@@ -75,6 +75,7 @@ describe('CashierService - Architecture Hybride & Signals', () => {
       type_transaction: 'Carburant',
       type_description: 'Station Total',
       category: 'sortie' as const,
+      status: 'posted' as const,
       matricule_vehicule: 'LT-5544-AA',
       first_name: 'Samuel',
       employee: 'Samuel Eboa',
@@ -87,8 +88,10 @@ describe('CashierService - Architecture Hybride & Signals', () => {
     let fetchCalledWithInit: RequestInit | undefined;
 
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      fetchCalledWithUrl = String(input);
-      fetchCalledWithInit = init;
+      if (String(input) === '/api/cahier/operations') {
+        fetchCalledWithUrl = String(input);
+        fetchCalledWithInit = init;
+      }
       return new Response(
         JSON.stringify({
           success: true,
@@ -103,6 +106,7 @@ describe('CashierService - Architecture Hybride & Signals', () => {
       typeTransaction: 'Carburant',
       typeDescription: 'Station Total',
       category: 'sortie',
+      status: 'posted',
       matriculeVehicule: 'LT-5544-AA',
       firstName: 'Samuel',
       employee: 'Samuel Eboa',
@@ -150,7 +154,7 @@ describe('CashierService - Architecture Hybride & Signals', () => {
     expect(service.currentBalance()).toBe(0);
   });
 
-  it('devrait récupérer les opérations via l’API rapide dans loadTransactions()', async () => {
+  it('devrait ne compter que les opérations posted dans le solde après chargement', async () => {
     const mockRows = [
       {
         id: 'row-1',
@@ -163,6 +167,23 @@ describe('CashierService - Architecture Hybride & Signals', () => {
         employee: 'Directeur',
         quantity: 1,
         montant: 500000,
+        status: 'posted' as const,
+      },
+      {
+        id: 'row-2',
+        date: '2026-09-07',
+        libelle: 'Brouillon non comptabilisé',
+        category: 'entree' as const,
+        montant: 250000,
+        status: 'draft' as const,
+      },
+      {
+        id: 'row-3',
+        date: '2026-09-08',
+        libelle: 'Opération annulée',
+        category: 'sortie' as const,
+        montant: -100000,
+        status: 'cancelled' as const,
       },
     ];
 
@@ -175,17 +196,25 @@ describe('CashierService - Architecture Hybride & Signals', () => {
 
     await service.loadTransactions();
 
-    expect(service.allTransactions().length).toBe(1);
-    expect(service.allTransactions()[0].libelle).toBe('Versement Caisse');
+    expect(service.allTransactions().length).toBe(3);
+    expect(service.allTransactions().find((tx) => tx.id === 'row-1')?.libelle).toBe('Versement Caisse');
     expect(service.currentBalance()).toBe(500000);
   });
 
-  it('devrait supprimer les éléments sélectionnés et recalculer les soldes', async () => {
-    globalThis.fetch = (async () => {
+  it('devrait annuler les éléments sélectionnés sans supprimer leur pièce comptable', async () => {
+    globalThis.fetch = (async (input) => {
+      if (String(input).endsWith('/status')) {
+        return new Response(JSON.stringify({
+          success: true,
+          count: 1,
+          data: [{ id: 'tx-delete-1', piece_comptable: 'CSH1/2026/00001', status: 'cancelled' }],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
       return new Response(JSON.stringify({
         success: true,
         operation: {
           id: 'tx-delete-1',
+          piece_comptable: 'CSH1/2026/00001',
           date: '2026-09-20',
           libelle: 'Transaction à supprimer',
           category: 'sortie',
@@ -211,8 +240,10 @@ describe('CashierService - Architecture Hybride & Signals', () => {
 
     expect(service.allTransactions()[0].selected).toBe(true);
 
-    await service.deleteSelected();
-    expect(service.allTransactions().length).toBe(0);
+    await service.cancelSelected();
+    expect(service.allTransactions().length).toBe(1);
+    expect(service.allTransactions()[0].status).toBe('cancelled');
+    expect(service.allTransactions()[0].pieceComptable).toBe('CSH1/2026/00001');
     expect(service.currentBalance()).toBe(0);
   });
 
@@ -249,33 +280,6 @@ describe('CashierService - Architecture Hybride & Signals', () => {
 
     service.setSearchQuery('');
     expect(service.filteredTransactions().length).toBe(1);
-  });
-
-  it('devrait calculer la prochaine pièce comptable séquentielle nextPieceComptable (Cas nominal)', async () => {
-    const currentYear = new Date().getFullYear() || 2026;
-    expect(service.nextPieceComptable()).toBe(`CSH1/${currentYear}/00001`);
-
-    globalThis.fetch = (async () => {
-      return new Response(
-        JSON.stringify({
-          operations: [
-            {
-              id: 'row-1',
-              piece_comptable: `CSH1/${currentYear}/00005`,
-              date: new Date().toISOString(),
-              libelle: 'Opération avec pièce',
-              montant: 10000,
-              category: 'entree',
-            },
-          ],
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
-      );
-    }) as typeof globalThis.fetch;
-
-    await service.loadTransactions();
-
-    expect(service.nextPieceComptable()).toBe(`CSH1/${currentYear}/00006`);
   });
 
   it('devrait bloquer immédiatement la création si le numéro de pièce comptable existe déjà (Cas d’erreur)', async () => {
@@ -325,7 +329,6 @@ describe('CashierService - Architecture Hybride & Signals', () => {
     }) as typeof globalThis.fetch;
 
     const result = await service.saveOperationViaApi({
-      pieceComptable: 'CSH1/2026/00099',
       libelle: 'Tentative avec pièce en conflit',
       montant: 12000,
       category: 'sortie',
@@ -334,6 +337,25 @@ describe('CashierService - Architecture Hybride & Signals', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('Erreur d\'unicité');
     expect(service.error()).toContain('CSH1/2026/00099');
+  });
+
+  it('devrait refuser une pièce fournie par le client avant tout appel serveur', async () => {
+    let requestSent = false;
+    globalThis.fetch = (async () => {
+      requestSent = true;
+      return new Response(null, { status: 201 });
+    }) as typeof globalThis.fetch;
+
+    const result = await service.saveOperationViaApi({
+      pieceComptable: 'CSH1/2026/00099',
+      libelle: 'Pièce importée manuellement',
+      montant: 12000,
+      category: 'sortie',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('attribuée par la base');
+    expect(requestSent).toBe(false);
   });
 
   it('devrait initialiser la pagination à 80 éléments minimum et respecter ce plancher via setPageSize', () => {
@@ -380,5 +402,55 @@ describe('CashierService - Architecture Hybride & Signals', () => {
     expect(service.paginationLabel()).toBe('81-95 / 95');
     expect(service.hasNextPage()).toBe(false);
     expect(service.hasPrevPage()).toBe(true);
+  });
+
+  it('devrait rendre visible en première page un nouveau brouillon sans pièce', async () => {
+    const postedRows = Array.from({ length: 80 }, (_, index) => ({
+      id: `posted-${index}`,
+      piece_comptable: `CSH1/2026/${String(index + 1).padStart(5, '0')}`,
+      date: '2026-10-02',
+      libelle: `Opération comptabilisée ${index}`,
+      category: 'entree' as const,
+      status: 'posted' as const,
+      montant: 100,
+    }));
+    const mappedRows = service.mapDatabaseOperations(postedRows);
+    (service as unknown as { _transactions: { set: (value: unknown) => void } })._transactions.set(mappedRows);
+    service.setPageIndex(1);
+
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Response(JSON.stringify({
+          success: true,
+          operation: {
+            id: 'draft-without-piece',
+            piece_comptable: null,
+            date: '2026-10-03',
+            libelle: 'Brouillon sans pièce',
+            service: 'TRANSIT',
+            category: 'entree',
+            status: 'draft',
+            montant: 1,
+            created_at: '2026-10-03T10:00:00.000Z',
+          },
+        }), { status: 201, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ operations: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof globalThis.fetch;
+
+    const result = await service.saveOperationViaApi({
+      libelle: 'Brouillon sans pièce',
+      service: 'TRANSIT',
+      category: 'entree',
+      status: 'draft',
+      montant: 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(service.filterState().pageIndex).toBe(0);
+    expect(service.pagedTransactions()[0].id).toBe('draft-without-piece');
   });
 });
