@@ -46,6 +46,13 @@ Chart.register(
   Filler
 );
 
+// Fonction utilitaire d'extraction du numéro séquentiel de pièce comptable (ex: CSH1/2026/00042 -> 42)
+function extractPieceNumber(piece?: string): number {
+  if (!piece) return 0;
+  const match = piece.match(/(\d+)$/);
+  return match ? parseInt(match[1], 10) : 0;
+}
+
 // Fonction utilitaire de parsing sécurisé de dates (DD/MM/YYYY, YYYY-MM-DD, ISO) inspirée des composants Odoo Owl
 function parseTransactionDate(rawDate: string | undefined | null): Date {
   if (!rawDate) return new Date(0);
@@ -111,25 +118,38 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
   });
 
   private caisseChartInstance: Chart | null = null;
+  private caisseDescriptions: string[] = [];
+  private readonly journalDescriptionsMap = new Map<string, string[]>();
 
   // Préparation réactive des données chronologiques pour Chart.js (Caisse Principale exclusivement)
   public readonly chartData = computed<CaisseTimelineData>(() => {
     const currentBalance = Number(this.caisseBalance()) || 0;
-    const list = this.caisseTransactions().filter((tx) => tx.status === 'posted').sort((a, b) => {
-      const dateA = parseTransactionDate(a.date).getTime();
-      const dateB = parseTransactionDate(b.date).getTime();
-      if (dateA !== dateB) {
-        return dateA - dateB;
-      }
-      const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      if (createdA !== createdB && createdA > 0 && createdB > 0) {
-        return createdA - createdB;
-      }
-      const isEntreeA = a.category === 'entree' || a.montant > 0 ? 1 : 0;
-      const isEntreeB = b.category === 'entree' || b.montant > 0 ? 1 : 0;
-      return isEntreeB - isEntreeA;
-    });
+    // Ne retenir que les opérations comptabilisées (posted)
+    const list = this.caisseTransactions()
+      .filter((tx) => tx.status === 'posted')
+      .sort((a, b) => {
+        const dateA = parseTransactionDate(a.date).getTime();
+        const dateB = parseTransactionDate(b.date).getTime();
+        if (dateA !== dateB) {
+          return dateA - dateB;
+        }
+        const seqA = extractPieceNumber(a.pieceComptable);
+        const seqB = extractPieceNumber(b.pieceComptable);
+        if (seqA !== seqB && seqA > 0 && seqB > 0) {
+          return seqA - seqB;
+        }
+        const isEntreeA = a.category === 'entree' || a.montant > 0 ? 1 : 0;
+        const isEntreeB = b.category === 'entree' || b.montant > 0 ? 1 : 0;
+        if (isEntreeA !== isEntreeB) {
+          return isEntreeB - isEntreeA;
+        }
+        const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (createdA !== createdB && createdA > 0 && createdB > 0) {
+          return createdA - createdB;
+        }
+        return 0;
+      });
 
     if (list.length === 0) {
       return {
@@ -139,25 +159,59 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
       };
     }
 
-    const loadedBalance = list.reduce((total, tx) => total + (Number(tx.montant) || 0), 0);
-    let runningBalance = currentBalance - loadedBalance;
     const labels: string[] = [];
     const balances: number[] = [];
     const descriptions: string[] = [];
 
-    for (const tx of list) {
-      runningBalance += tx.montant;
-      const parsedDate = parseTransactionDate(tx.date);
-      const formattedDate = parsedDate.getTime() > 0
-        ? parsedDate.toLocaleDateString('fr-FR', {
-            day: '2-digit',
-            month: 'short',
-          })
-        : tx.date || 'Opération';
+    // Détermination rigoureuse du solde progressif officiel
+    const hasSoldeApres = list.some((tx) => typeof tx.soldeApres === 'number' && !isNaN(tx.soldeApres));
 
-      labels.push(formattedDate);
-      balances.push(runningBalance);
-      descriptions.push(tx.libelle || tx.typeDescription || 'Mouvement de caisse');
+    if (hasSoldeApres) {
+      let runningSolde = 0;
+      for (const tx of list) {
+        if (typeof tx.soldeApres === 'number' && !isNaN(tx.soldeApres)) {
+          runningSolde = tx.soldeApres;
+        } else {
+          const delta = tx.category === 'sortie' ? -Math.abs(Number(tx.montant) || 0) : Math.abs(Number(tx.montant) || 0);
+          runningSolde += delta;
+        }
+
+        const parsedDate = parseTransactionDate(tx.date);
+        const formattedDate = parsedDate.getTime() > 0
+          ? parsedDate.toLocaleDateString('fr-FR', {
+              day: '2-digit',
+              month: 'short',
+            })
+          : tx.date || 'Opération';
+
+        labels.push(formattedDate);
+        balances.push(runningSolde);
+
+        const typeLabel = tx.typeDescription || (tx.category === 'sortie' ? 'Sortie' : 'Entrée');
+        const piece = tx.pieceComptable ? `[${tx.pieceComptable}] ` : '';
+        descriptions.push(`${piece}${tx.libelle || typeLabel}`);
+      }
+    } else {
+      let runningSolde = 0;
+      for (const tx of list) {
+        const delta = tx.category === 'sortie' ? -Math.abs(Number(tx.montant) || 0) : Math.abs(Number(tx.montant) || 0);
+        runningSolde += delta;
+
+        const parsedDate = parseTransactionDate(tx.date);
+        const formattedDate = parsedDate.getTime() > 0
+          ? parsedDate.toLocaleDateString('fr-FR', {
+              day: '2-digit',
+              month: 'short',
+            })
+          : tx.date || 'Opération';
+
+        labels.push(formattedDate);
+        balances.push(runningSolde);
+
+        const typeLabel = tx.typeDescription || (tx.category === 'sortie' ? 'Sortie' : 'Entrée');
+        const piece = tx.pieceComptable ? `[${tx.pieceComptable}] ` : '';
+        descriptions.push(`${piece}${tx.libelle || typeLabel}`);
+      }
     }
 
     return { labels, balances, descriptions };
@@ -229,6 +283,7 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
     if (!ctx) return;
 
     const data = this.chartData();
+    this.caisseDescriptions = data.descriptions;
     const gradient = ctx.createLinearGradient(0, 0, 0, 240);
     gradient.addColorStop(0, 'rgba(11, 94, 215, 0.22)');
     gradient.addColorStop(1, 'rgba(11, 94, 215, 0.0)');
@@ -257,7 +312,7 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
           },
         ],
       },
-      options: this.getCommonChartOptions(data.descriptions),
+      options: this.getCommonChartOptions(() => this.caisseDescriptions),
     };
 
     this.caisseChartInstance = new Chart(ctx, config);
@@ -286,6 +341,8 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    this.journalDescriptionsMap.set(journalId, data.descriptions);
 
     const existing = this.journalChartsMap.get(journalId);
     if (existing) {
@@ -328,14 +385,14 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
           },
         ],
       },
-      options: this.getCommonChartOptions(data.descriptions),
+      options: this.getCommonChartOptions(() => this.journalDescriptionsMap.get(journalId) || []),
     };
 
     const newChart = new Chart(ctx, config);
     this.journalChartsMap.set(journalId, newChart);
   }
 
-  private getCommonChartOptions(descriptions: string[]): ChartConfiguration<'line'>['options'] {
+  private getCommonChartOptions(getDescriptions: () => string[]): ChartConfiguration<'line'>['options'] {
     return {
       responsive: true,
       maintainAspectRatio: false,
@@ -357,6 +414,7 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
             label: (context) => {
               const val = (context.parsed.y as number) ?? 0;
               const formatted = this.formatCurrency(val);
+              const descriptions = getDescriptions();
               const desc = descriptions[context.dataIndex];
               return desc ? [`${formatted}`, `• ${desc}`] : `${formatted}`;
             },
@@ -395,6 +453,7 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
 
   private updateCaisseChartData(data: CaisseTimelineData): void {
     if (!this.caisseChartInstance) return;
+    this.caisseDescriptions = data.descriptions;
     this.caisseChartInstance.data.labels = data.labels;
     if (this.caisseChartInstance.data.datasets[0]) {
       this.caisseChartInstance.data.datasets[0].data = data.balances;
