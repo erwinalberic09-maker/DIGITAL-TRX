@@ -1,12 +1,14 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
+import { Injectable, computed, effect, inject, signal } from '@angular/core';
 import { AuthService } from './auth.service';
 import { CreateProspectInput, Prospect, ProspectAssignee, ProspectStatus, UpdateProspectInput } from '../models/prospect.model';
+import { getApiErrorMessage } from '../utils/api-error.util';
 
 export interface ProspectPageRequest {
   limit?: number;
   offset?: number;
   search?: string;
   status?: ProspectStatus | '';
+  prospectId?: string;
 }
 
 export interface ProspectApiResult<T> {
@@ -18,6 +20,7 @@ export interface ProspectApiResult<T> {
 @Injectable({ providedIn: 'root' })
 export class ProspectService {
   private readonly authService = inject(AuthService);
+  private dataUserId: string | null | undefined;
 
   private readonly _prospects = signal<Prospect[]>([]);
   private readonly _assignees = signal<ProspectAssignee[]>([]);
@@ -31,16 +34,28 @@ export class ProspectService {
   public readonly isLoading = computed(() => this._isLoading());
   public readonly error = computed(() => this._error());
 
+  constructor() {
+    effect(() => {
+      this.authService.currentUser();
+      this.resetForAccountChange();
+    });
+  }
+
   public async loadProspects(params: ProspectPageRequest = {}): Promise<boolean> {
+    this.resetForAccountChange();
     const query = new URLSearchParams({
       limit: String(params.limit ?? 25),
       offset: String(params.offset ?? 0),
     });
     if (params.search?.trim()) query.set('search', params.search.trim());
     if (params.status) query.set('status', params.status);
+    if (params.prospectId) query.set('prospectId', params.prospectId);
 
     const result = await this.request<{ prospects: Record<string, unknown>[]; total: number }>(`?${query}`);
+    if (!this.isCurrentDataUser()) return false;
     if (!result.success || !result.data) {
+      this._prospects.set([]);
+      this._total.set(0);
       this._error.set(result.error || 'Impossible de charger les prospects.');
       return false;
     }
@@ -52,8 +67,11 @@ export class ProspectService {
   }
 
   public async loadAssignees(): Promise<boolean> {
+    this.resetForAccountChange();
     const result = await this.request<{ assignees: Record<string, unknown>[] }>('/assignees');
+    if (!this.isCurrentDataUser()) return false;
     if (!result.success || !result.data) {
+      this._assignees.set([]);
       this._error.set(result.error || 'Impossible de charger les responsables.');
       return false;
     }
@@ -84,47 +102,123 @@ export class ProspectService {
   }
 
   private async request<T>(path: string, method = 'GET', body?: unknown): Promise<ProspectApiResult<T>> {
+    this.resetForAccountChange();
+    const requestedUserId = this.authService.currentUser()?.id ?? null;
     const token = this.authService.token();
     if (!token) return { success: false, error: 'Session authentifiée introuvable.' };
 
     this._isLoading.set(true);
     try {
-      const response = await fetch(`/api/prospects${path}`, {
+      const sendRequest = (accessToken: string) => fetch(`/api/prospects${path}`, {
         method,
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${accessToken}`,
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
-      const payload = await response.json().catch(() => ({})) as T & { error?: string };
-      if (!response.ok) return { success: false, error: payload.error || `Erreur serveur (${response.status}).` };
-      return { success: true, data: payload };
-    } catch {
-      return { success: false, error: 'Le serveur Prospects est injoignable.' };
+
+      let response = await sendRequest(token);
+      if (response.status === 401) {
+        const refresh = await this.authService.refreshAccessTokenAfterUnauthorized();
+        if (refresh.status === 'refreshed') {
+          response = await sendRequest(refresh.accessToken);
+        } else if (refresh.status === 'unavailable') {
+          return {
+            success: false,
+            error: 'La vérification de session est temporairement indisponible. Réessayez.',
+          };
+        }
+        if (response.status === 401) {
+          this.authService.handleUnauthorizedSession();
+          return { success: false, error: 'Session expirée. Veuillez vous reconnecter.' };
+        }
+      }
+      const payload: unknown = await response.json().catch(() => null);
+      if ((this.authService.currentUser()?.id ?? null) !== requestedUserId) {
+        return { success: false, error: 'La session a changé pendant la requête.' };
+      }
+      if (!response.ok) {
+        const action = method === 'GET'
+          ? (path === '/assignees' ? 'charger la liste des responsables' : 'charger les prospects')
+          : method === 'POST'
+            ? 'créer le prospect'
+            : method === 'PATCH'
+              ? 'modifier le prospect'
+              : 'supprimer le prospect';
+        return {
+          success: false,
+          error: getApiErrorMessage(payload, `Impossible de ${action} (erreur HTTP ${response.status}).`),
+        };
+      }
+      if (typeof payload !== 'object' || payload === null) {
+        return { success: false, error: 'Le service Contacts a renvoyé une réponse invalide.' };
+      }
+      return { success: true, data: payload as T };
+    } catch (requestError: unknown) {
+      console.warn('Erreur pendant la requête au service Contacts:', requestError);
+      const message = requestError instanceof TypeError
+        ? 'Connexion au service Contacts impossible. Vérifiez votre connexion puis réessayez.'
+        : 'Impossible de traiter la demande auprès du service Contacts. Réessayez.';
+      return { success: false, error: message };
     } finally {
       this._isLoading.set(false);
     }
   }
 
+  private resetForAccountChange(): void {
+    const userId = this.authService.currentUser()?.id ?? null;
+    if (this.dataUserId === userId) return;
+
+    this.dataUserId = userId;
+    this._prospects.set([]);
+    this._assignees.set([]);
+    this._total.set(0);
+    this._error.set(null);
+  }
+
+  private isCurrentDataUser(): boolean {
+    return this.dataUserId === (this.authService.currentUser()?.id ?? null);
+  }
+
   private mapProspect(row: Record<string, unknown>): Prospect {
     const rawValue = row['estimated_value'];
     const parsedValue = rawValue === null || rawValue === undefined || rawValue === '' ? null : Number(rawValue);
+    const rawNotes = String(row['notes'] ?? '');
+    let country: string | null = typeof row['country'] === 'string' ? row['country'] : null;
+    let contactRole: string | null = typeof row['contact_role'] === 'string' ? row['contact_role'] : null;
+
+    if (rawNotes.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(rawNotes) as { country?: string; contactRole?: string };
+        if (typeof parsed.country === 'string' && !country) country = parsed.country || null;
+        if (typeof parsed.contactRole === 'string' && !contactRole) contactRole = parsed.contactRole || null;
+      } catch {
+        if (!country) country = rawNotes || null;
+      }
+    } else if (!country && rawNotes) {
+      country = rawNotes;
+    }
+
+    const source = typeof row['source'] === 'string' ? row['source'] : null;
     return {
       id: String(row['id'] ?? ''),
       name: String(row['name'] ?? ''),
       companyName: typeof row['company_name'] === 'string' ? row['company_name'] : null,
       contactName: typeof row['contact_name'] === 'string' ? row['contact_name'] : null,
+      contactRole,
+      country,
+      sector: typeof row['sector'] === 'string' ? row['sector'] : source,
       email: typeof row['email'] === 'string' ? row['email'] : null,
       phone: typeof row['phone'] === 'string' ? row['phone'] : null,
-      source: typeof row['source'] === 'string' ? row['source'] : null,
+      source,
       status: row['status'] as ProspectStatus,
       assignedTo: typeof row['assigned_to'] === 'string' ? row['assigned_to'] : null,
       estimatedValue: parsedValue !== null && Number.isFinite(parsedValue) ? parsedValue : null,
       currency: String(row['currency'] ?? 'XAF'),
       nextFollowUp: typeof row['next_follow_up'] === 'string' ? row['next_follow_up'] : null,
-      notes: String(row['notes'] ?? ''),
+      notes: rawNotes,
       createdBy: typeof row['created_by'] === 'string' ? row['created_by'] : null,
       createdAt: String(row['created_at'] ?? ''),
       updatedAt: String(row['updated_at'] ?? ''),

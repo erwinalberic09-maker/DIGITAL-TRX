@@ -32,6 +32,7 @@ import { AuthService } from '../../../core/services/auth.service';
 import { CashierService } from '../../../core/services/cashier.service';
 import { JournalService } from '../../../core/services/journal.service';
 import { JournalEntryService } from '../../../core/services/journal-entry.service';
+import { DossierService } from '../../../core/services/dossier.service';
 import { Journal } from '../../../core/models/journal.model';
 import { JournalChartData } from '../../../core/models/journal-entry.model';
 
@@ -45,13 +46,6 @@ Chart.register(
   Tooltip,
   Filler
 );
-
-// Fonction utilitaire d'extraction du numéro séquentiel de pièce comptable (ex: CSH1/2026/00042 -> 42)
-function extractPieceNumber(piece?: string): number {
-  if (!piece) return 0;
-  const match = piece.match(/(\d+)$/);
-  return match ? parseInt(match[1], 10) : 0;
-}
 
 // Fonction utilitaire de parsing sécurisé de dates (DD/MM/YYYY, YYYY-MM-DD, ISO) inspirée des composants Odoo Owl
 function parseTransactionDate(rawDate: string | undefined | null): Date {
@@ -76,6 +70,26 @@ export interface CaisseTimelineData {
   descriptions: string[];
 }
 
+interface OperationStatusMetric {
+  key: 'posted' | 'draft' | 'cancelled';
+  label: string;
+  count: number;
+  color: string;
+}
+
+interface ExpenseServiceMetric {
+  name: string;
+  total: number;
+  percent: number;
+}
+
+interface TopExpenseMetric {
+  label: string;
+  operationCount: number;
+  total: number;
+  percent: number;
+}
+
 @Component({
   selector: 'app-dashboard-manager',
   imports: [RouterLink, MatIconModule],
@@ -94,11 +108,89 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
   private readonly cashierService = inject(CashierService);
   private readonly journalService = inject(JournalService, { optional: true });
   private readonly journalEntryService = inject(JournalEntryService);
+  private readonly dossierService = inject(DossierService);
   private readonly platformId = inject(PLATFORM_ID);
 
   public readonly currentUser = this.authService.currentUser;
   public readonly caisseTransactions = this.cashierService.caisseTransactions;
   public readonly caisseBalance = this.cashierService.caisseBalance;
+  public readonly isCaisseLoading = this.cashierService.isLoading;
+  public readonly canViewDossierExpenseSummary = computed(() => this.currentUser()?.role === 'manager');
+  public readonly dossierExpenseSummary = this.dossierService.expenseSummary;
+  public readonly dossierExpenseSummaryError = this.dossierService.expenseSummaryError;
+  public readonly isDossierExpenseSummaryLoading = this.dossierService.isExpenseSummaryLoading;
+  public readonly totalDossierExpenses = computed(() =>
+    this.dossierExpenseSummary().reduce((total, dossier) => total + dossier.totalExpenses, 0)
+  );
+  public readonly totalDossierExpenseCount = computed(() =>
+    this.dossierExpenseSummary().reduce((total, dossier) => total + dossier.expenseCount, 0)
+  );
+  public readonly operationStatusMetrics = computed<OperationStatusMetric[]>(() => {
+    const transactions = this.caisseTransactions();
+    const metrics: OperationStatusMetric[] = [
+      { key: 'posted', label: 'Comptabilisées', count: 0, color: '#292727' },
+      { key: 'draft', label: 'Brouillons', count: 0, color: '#e2b83f' },
+      { key: 'cancelled', label: 'Annulées', count: 0, color: '#e8dfca' },
+    ];
+    return metrics.map((metric) => ({
+      ...metric,
+      count: transactions.filter((transaction) => transaction.status === metric.key).length,
+    }));
+  });
+  public readonly loadedOperationCount = computed(() => this.caisseTransactions().length);
+  public readonly operationStatusRing = computed(() => {
+    const metrics = this.operationStatusMetrics();
+    const total = metrics.reduce((sum, metric) => sum + metric.count, 0);
+    if (total === 0) return 'conic-gradient(#e8dfca 0deg 360deg)';
+
+    let offset = 0;
+    const segments = metrics.map((metric) => {
+      const end = offset + metric.count / total * 360;
+      const segment = `${metric.color} ${offset}deg ${end}deg`;
+      offset = end;
+      return segment;
+    });
+    return `conic-gradient(${segments.join(', ')})`;
+  });
+  public readonly expensesByService = computed<ExpenseServiceMetric[]>(() => {
+    const totals = new Map<string, number>();
+    for (const transaction of this.caisseTransactions()) {
+      if (transaction.status !== 'posted' || transaction.category !== 'sortie') continue;
+      const service = transaction.service?.trim() || 'Sans service';
+      totals.set(service, (totals.get(service) || 0) + Math.abs(Number(transaction.montant) || 0));
+    }
+
+    const sorted = [...totals.entries()]
+      .map(([name, total]) => ({ name, total }))
+      .sort((left, right) => right.total - left.total || left.name.localeCompare(right.name, 'fr'))
+      .slice(0, 4);
+    const maxTotal = sorted[0]?.total || 0;
+    return sorted.map((metric) => ({
+      ...metric,
+      percent: maxTotal > 0 ? metric.total / maxTotal * 100 : 0,
+    }));
+  });
+  public readonly topExpenses = computed<TopExpenseMetric[]>(() => {
+    const expenses = new Map<string, { operationCount: number; total: number }>();
+    for (const transaction of this.caisseTransactions()) {
+      if (transaction.status !== 'posted' || transaction.category !== 'sortie') continue;
+      const label = transaction.libelle.trim() || 'Dépense sans libellé';
+      const metric = expenses.get(label) || { operationCount: 0, total: 0 };
+      metric.operationCount += 1;
+      metric.total += Math.abs(Number(transaction.montant) || 0);
+      expenses.set(label, metric);
+    }
+
+    const sorted = [...expenses.entries()]
+      .map(([label, metric]) => ({ label, ...metric }))
+      .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label, 'fr'))
+      .slice(0, 5);
+    const maxTotal = sorted[0]?.total || 0;
+    return sorted.map((metric) => ({
+      ...metric,
+      percent: maxTotal > 0 ? metric.total / maxTotal * 100 : 0,
+    }));
+  });
 
   // Données de graphiques en cache par journal
   private readonly journalChartsMap = new Map<string, Chart>();
@@ -118,38 +210,26 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
   });
 
   private caisseChartInstance: Chart | null = null;
-  private caisseDescriptions: string[] = [];
-  private readonly journalDescriptionsMap = new Map<string, string[]>();
+  private caisseChartCanvasObserver: MutationObserver | null = null;
 
   // Préparation réactive des données chronologiques pour Chart.js (Caisse Principale exclusivement)
   public readonly chartData = computed<CaisseTimelineData>(() => {
     const currentBalance = Number(this.caisseBalance()) || 0;
-    // Ne retenir que les opérations comptabilisées (posted)
-    const list = this.caisseTransactions()
-      .filter((tx) => tx.status === 'posted')
-      .sort((a, b) => {
-        const dateA = parseTransactionDate(a.date).getTime();
-        const dateB = parseTransactionDate(b.date).getTime();
-        if (dateA !== dateB) {
-          return dateA - dateB;
-        }
-        const seqA = extractPieceNumber(a.pieceComptable);
-        const seqB = extractPieceNumber(b.pieceComptable);
-        if (seqA !== seqB && seqA > 0 && seqB > 0) {
-          return seqA - seqB;
-        }
-        const isEntreeA = a.category === 'entree' || a.montant > 0 ? 1 : 0;
-        const isEntreeB = b.category === 'entree' || b.montant > 0 ? 1 : 0;
-        if (isEntreeA !== isEntreeB) {
-          return isEntreeB - isEntreeA;
-        }
-        const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        if (createdA !== createdB && createdA > 0 && createdB > 0) {
-          return createdA - createdB;
-        }
-        return 0;
-      });
+    const list = this.caisseTransactions().filter((tx) => tx.status === 'posted').sort((a, b) => {
+      const dateA = parseTransactionDate(a.date).getTime();
+      const dateB = parseTransactionDate(b.date).getTime();
+      if (dateA !== dateB) {
+        return dateA - dateB;
+      }
+      const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      if (createdA !== createdB && createdA > 0 && createdB > 0) {
+        return createdA - createdB;
+      }
+      const isEntreeA = a.category === 'entree' || a.montant > 0 ? 1 : 0;
+      const isEntreeB = b.category === 'entree' || b.montant > 0 ? 1 : 0;
+      return isEntreeB - isEntreeA;
+    });
 
     if (list.length === 0) {
       return {
@@ -159,59 +239,25 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
       };
     }
 
+    const loadedBalance = list.reduce((total, tx) => total + (Number(tx.montant) || 0), 0);
+    let runningBalance = currentBalance - loadedBalance;
     const labels: string[] = [];
     const balances: number[] = [];
     const descriptions: string[] = [];
 
-    // Détermination rigoureuse du solde progressif officiel
-    const hasSoldeApres = list.some((tx) => typeof tx.soldeApres === 'number' && !isNaN(tx.soldeApres));
+    for (const tx of list) {
+      runningBalance += tx.montant;
+      const parsedDate = parseTransactionDate(tx.date);
+      const formattedDate = parsedDate.getTime() > 0
+        ? parsedDate.toLocaleDateString('fr-FR', {
+            day: '2-digit',
+            month: 'short',
+          })
+        : tx.date || 'Opération';
 
-    if (hasSoldeApres) {
-      let runningSolde = 0;
-      for (const tx of list) {
-        if (typeof tx.soldeApres === 'number' && !isNaN(tx.soldeApres)) {
-          runningSolde = tx.soldeApres;
-        } else {
-          const delta = tx.category === 'sortie' ? -Math.abs(Number(tx.montant) || 0) : Math.abs(Number(tx.montant) || 0);
-          runningSolde += delta;
-        }
-
-        const parsedDate = parseTransactionDate(tx.date);
-        const formattedDate = parsedDate.getTime() > 0
-          ? parsedDate.toLocaleDateString('fr-FR', {
-              day: '2-digit',
-              month: 'short',
-            })
-          : tx.date || 'Opération';
-
-        labels.push(formattedDate);
-        balances.push(runningSolde);
-
-        const typeLabel = tx.typeDescription || (tx.category === 'sortie' ? 'Sortie' : 'Entrée');
-        const piece = tx.pieceComptable ? `[${tx.pieceComptable}] ` : '';
-        descriptions.push(`${piece}${tx.libelle || typeLabel}`);
-      }
-    } else {
-      let runningSolde = 0;
-      for (const tx of list) {
-        const delta = tx.category === 'sortie' ? -Math.abs(Number(tx.montant) || 0) : Math.abs(Number(tx.montant) || 0);
-        runningSolde += delta;
-
-        const parsedDate = parseTransactionDate(tx.date);
-        const formattedDate = parsedDate.getTime() > 0
-          ? parsedDate.toLocaleDateString('fr-FR', {
-              day: '2-digit',
-              month: 'short',
-            })
-          : tx.date || 'Opération';
-
-        labels.push(formattedDate);
-        balances.push(runningSolde);
-
-        const typeLabel = tx.typeDescription || (tx.category === 'sortie' ? 'Sortie' : 'Entrée');
-        const piece = tx.pieceComptable ? `[${tx.pieceComptable}] ` : '';
-        descriptions.push(`${piece}${tx.libelle || typeLabel}`);
-      }
+      labels.push(formattedDate);
+      balances.push(runningBalance);
+      descriptions.push(tx.libelle || tx.typeDescription || 'Mouvement de caisse');
     }
 
     return { labels, balances, descriptions };
@@ -248,6 +294,9 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
 
   public ngOnInit(): void {
     void this.cashierService.loadTransactions();
+    if (this.canViewDossierExpenseSummary()) {
+      void this.dossierService.loadExpenseSummary();
+    }
     if (this.journalService) {
       void this.journalService.loadJournals();
     }
@@ -255,9 +304,15 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
 
   public ngAfterViewInit(): void {
     if (isPlatformBrowser(this.platformId)) {
-      if (this.caisseChartCanvas?.nativeElement) {
-        this.initCaisseChart();
-      }
+      this.caisseChartCanvasObserver = new MutationObserver(() => {
+        const canvas = document.getElementById('caisse-chart-canvas');
+        if (canvas instanceof HTMLCanvasElement && this.caisseChartInstance?.canvas !== canvas) {
+          this.initCaisseChart(canvas);
+        }
+      });
+      this.caisseChartCanvasObserver.observe(document.body, { childList: true, subtree: true });
+      this.initCaisseChart();
+
       const journals = this.additionalJournals();
       if (journals.length > 0) {
         void this.loadAllJournalCharts(journals);
@@ -266,6 +321,8 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
   }
 
   public ngOnDestroy(): void {
+    this.caisseChartCanvasObserver?.disconnect();
+    this.caisseChartCanvasObserver = null;
     if (this.caisseChartInstance) {
       this.caisseChartInstance.destroy();
       this.caisseChartInstance = null;
@@ -273,17 +330,19 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
     this.journalChartsMap.forEach((chart) => chart.destroy());
     this.journalChartsMap.clear();
   }
-
   // Initialisation du graphique Caisse Principale
-  private initCaisseChart(): void {
-    const canvas = this.caisseChartCanvas?.nativeElement;
-    if (!canvas) return;
+  private initCaisseChart(canvas = this.caisseChartCanvas?.nativeElement): void {
+    if (!canvas?.isConnected) return;
+
+    if (this.caisseChartInstance) {
+      this.caisseChartInstance.destroy();
+      this.caisseChartInstance = null;
+    }
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     const data = this.chartData();
-    this.caisseDescriptions = data.descriptions;
     const gradient = ctx.createLinearGradient(0, 0, 0, 240);
     gradient.addColorStop(0, 'rgba(11, 94, 215, 0.22)');
     gradient.addColorStop(1, 'rgba(11, 94, 215, 0.0)');
@@ -312,22 +371,36 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
           },
         ],
       },
-      options: this.getCommonChartOptions(() => this.caisseDescriptions),
+      options: this.getCommonChartOptions(data.descriptions),
     };
 
     this.caisseChartInstance = new Chart(ctx, config);
   }
 
-  // Charge et affiche les graphiques pour tous les journaux bancaires/additionnels
+  // Charge et affiche les graphiques pour tous les journaux bancaires/additionnels en parallèle
   private async loadAllJournalCharts(journals: Journal[]): Promise<void> {
-    for (const journal of journals) {
-      const chartData = await this.journalEntryService.getChartData(journal.id);
-      if (chartData) {
-        this.journalChartDataMap.update((map) => ({
-          ...map,
-          [journal.id]: chartData,
-        }));
-        this.renderOrUpdateJournalChart(journal.id, chartData);
+    if (journals.length === 0) return;
+    const results = await Promise.all(
+      journals.map(async (journal) => {
+        const chartData = await this.journalEntryService.getChartData(journal.id);
+        return { journalId: journal.id, chartData };
+      })
+    );
+
+    const updates: Record<string, JournalChartData> = {};
+    for (const item of results) {
+      if (item.chartData) {
+        updates[item.journalId] = item.chartData;
+      }
+    }
+
+    if (Object.keys(updates).length > 0) {
+      this.journalChartDataMap.update((map) => ({
+        ...map,
+        ...updates,
+      }));
+      for (const [journalId, chartData] of Object.entries(updates)) {
+        this.renderOrUpdateJournalChart(journalId, chartData);
       }
     }
   }
@@ -341,8 +414,6 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
-    this.journalDescriptionsMap.set(journalId, data.descriptions);
 
     const existing = this.journalChartsMap.get(journalId);
     if (existing) {
@@ -385,14 +456,14 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
           },
         ],
       },
-      options: this.getCommonChartOptions(() => this.journalDescriptionsMap.get(journalId) || []),
+      options: this.getCommonChartOptions(data.descriptions),
     };
 
     const newChart = new Chart(ctx, config);
     this.journalChartsMap.set(journalId, newChart);
   }
 
-  private getCommonChartOptions(getDescriptions: () => string[]): ChartConfiguration<'line'>['options'] {
+  private getCommonChartOptions(descriptions: string[]): ChartConfiguration<'line'>['options'] {
     return {
       responsive: true,
       maintainAspectRatio: false,
@@ -401,6 +472,9 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
         intersect: false,
       },
       plugins: {
+        legend: {
+          display: false,
+        },
         tooltip: {
           backgroundColor: 'rgba(15, 23, 42, 0.95)',
           titleColor: '#cbd5e1',
@@ -414,7 +488,6 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
             label: (context) => {
               const val = (context.parsed.y as number) ?? 0;
               const formatted = this.formatCurrency(val);
-              const descriptions = getDescriptions();
               const desc = descriptions[context.dataIndex];
               return desc ? [`${formatted}`, `• ${desc}`] : `${formatted}`;
             },
@@ -453,7 +526,6 @@ export class DashboardManager implements OnInit, AfterViewInit, OnDestroy {
 
   private updateCaisseChartData(data: CaisseTimelineData): void {
     if (!this.caisseChartInstance) return;
-    this.caisseDescriptions = data.descriptions;
     this.caisseChartInstance.data.labels = data.labels;
     if (this.caisseChartInstance.data.datasets[0]) {
       this.caisseChartInstance.data.datasets[0].data = data.balances;

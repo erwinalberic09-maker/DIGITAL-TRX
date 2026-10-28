@@ -1,30 +1,62 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { AuthService } from './auth.service';
 import { SupabaseService } from './supabase.service';
 import { UserProfile } from '../models/auth.model';
 
 describe('AuthService', () => {
   let service: AuthService;
-  let routerSpy: { navigate: ReturnType<typeof vi.fn> };
+  let routerSpy: { navigate: ReturnType<typeof vi.fn>; url: string };
+  let supabaseServiceMock: {
+    supabase: unknown;
+    isConfigured: ReturnType<typeof signal<boolean>>;
+    ensureInitialized: ReturnType<typeof vi.fn>;
+  };
+
+  const configureSupabaseAuth = (
+    session: unknown,
+    userResult: { data: { user: unknown }; error: unknown }
+  ) => {
+    const auth = {
+      getSession: vi.fn().mockResolvedValue({ data: { session }, error: null }),
+      getUser: vi.fn().mockResolvedValue(userResult),
+      onAuthStateChange: vi.fn(),
+      refreshSession: vi.fn().mockResolvedValue({ data: { session: null }, error: { status: 400 } }),
+      signInWithPassword: vi.fn(),
+      signUp: vi.fn(),
+      signOut: vi.fn().mockResolvedValue({ error: null }),
+    };
+    supabaseServiceMock.supabase = { auth };
+    supabaseServiceMock.isConfigured.set(true);
+    supabaseServiceMock.ensureInitialized = vi.fn().mockResolvedValue(true);
+    return auth;
+  };
+
+  const createCachedUser = (): UserProfile => ({
+    id: 'usr-123',
+    email: 'test@transmex.com',
+    firstName: 'Jean',
+    lastName: 'Dupont',
+    role: 'employe',
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  });
 
   beforeEach(() => {
-    routerSpy = { navigate: vi.fn() };
+    routerSpy = { navigate: vi.fn(), url: '/dossiers' };
+    supabaseServiceMock = {
+      supabase: null,
+      isConfigured: signal(false),
+      ensureInitialized: vi.fn().mockResolvedValue(false),
+    };
 
     TestBed.configureTestingModule({
       providers: [
         AuthService,
         { provide: Router, useValue: routerSpy },
-        {
-          provide: SupabaseService,
-          useValue: {
-            supabase: null,
-            isConfigured: signal(false),
-            ensureInitialized: vi.fn().mockResolvedValue(false),
-          },
-        },
+        { provide: SupabaseService, useValue: supabaseServiceMock },
       ],
     });
 
@@ -32,6 +64,10 @@ describe('AuthService', () => {
       localStorage.clear();
     }
     service = TestBed.inject(AuthService);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('devrait être créé avec un état non authentifié par défaut sans fausses données', () => {
@@ -79,11 +115,228 @@ describe('AuthService', () => {
     expect(service.authError()).toBeTruthy();
   });
 
+  it('indique une indisponibilité réseau lors de la connexion', async () => {
+    const auth = configureSupabaseAuth(null, { data: { user: null }, error: null });
+    auth.signInWithPassword = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+
+    const result = await service.login({
+      email: 'test@transmex.com',
+      password: 'password123',
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Connexion au service d’authentification impossible. Vérifiez votre connexion puis réessayez.',
+    });
+    expect(service.authError()).toBe(result.error);
+  });
+
+  it('refuse l’inscription lorsque Supabase n’est pas configuré', async () => {
+    const result = await service.signUp('test@transmex.com', 'password123', {});
+
+    expect(result).toEqual({
+      success: false,
+      error: 'L’inscription est indisponible : le service Supabase n’est pas configuré.',
+    });
+    expect(service.isLoading()).toBe(false);
+  });
+
+  it('affiche le motif métier renvoyé par le service de profil pendant la connexion', async () => {
+    const auth = configureSupabaseAuth(null, { data: { user: null }, error: null });
+    auth.signInWithPassword = vi.fn().mockResolvedValue({
+      data: {
+        user: { id: 'usr-123', email: 'test@transmex.com' },
+        session: { access_token: 'valid-token' },
+      },
+      error: null,
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: 'Le profil est temporairement verrouillé.' }),
+    }));
+
+    const result = await service.login({
+      email: 'test@transmex.com',
+      password: 'password123',
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Le profil est temporairement verrouillé.',
+    });
+    expect(service.authError()).toBe(result.error);
+  });
+
   it('devrait vider la session en mémoire et rediriger vers le login lors de la déconnexion', async () => {
     await service.logout();
     expect(service.currentUser()).toBeNull();
     expect(service.token()).toBeNull();
     expect(service.isAuthenticated()).toBe(false);
     expect(routerSpy.navigate).toHaveBeenCalledWith(['/auth/login']);
+  });
+
+  it('efface le profil en cache quand Supabase ne retrouve aucune session', async () => {
+    const user = createCachedUser();
+    service.setLocalSession(user, 'stale-token');
+    const auth = configureSupabaseAuth(null, { data: { user: null }, error: null });
+
+    await service.restoreSession();
+
+    expect(service.currentUser()).toBeNull();
+    expect(service.token()).toBeNull();
+    expect(auth.getUser).not.toHaveBeenCalled();
+  });
+
+  it('efface la session locale si la validation distante renvoie 401', async () => {
+    const user = createCachedUser();
+    service.setLocalSession(user, 'stale-token');
+    const auth = configureSupabaseAuth(
+      { access_token: 'stale-token' },
+      { data: { user: null }, error: { status: 401 } }
+    );
+
+    await service.restoreSession();
+
+    expect(service.currentUser()).toBeNull();
+    expect(service.token()).toBeNull();
+    expect(auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+  });
+
+  it('charge le rôle d’accès dynamique et son libellé dans le profil de session', async () => {
+    const user = createCachedUser();
+    configureSupabaseAuth(
+      { access_token: 'valid-token' },
+      { data: { user: { id: user.id, email: user.email, app_metadata: { role: 'employe' } } }, error: null }
+    );
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        profile: {
+          id: user.id,
+          role: 'employe',
+          is_active: true,
+          first_name: user.firstName,
+          last_name: user.lastName,
+          email: user.email,
+        },
+        role: 'employe',
+        customRole: 'daf',
+        roleLabel: 'DAF',
+      }),
+    }));
+
+    await service.restoreSession();
+
+    expect(service.currentUser()?.role).toBe('daf');
+    expect(service.currentUser()?.customRole).toBe('daf');
+    expect(service.currentUser()?.roleLabel).toBe('DAF');
+  });
+
+  it('mutualise les lectures de profil simultanées pour le même compte et le même jeton', async () => {
+    const user = createCachedUser();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        profile: {
+          id: user.id,
+          role: user.role,
+          is_active: true,
+          first_name: user.firstName,
+          last_name: user.lastName,
+          email: user.email,
+        },
+        role: user.role,
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const profileLoader = service['loadUserProfileFromSupabase'].bind(service);
+    const [first, concurrent] = await Promise.all([
+      profileLoader(user.id, user.email, 'same-token'),
+      profileLoader(user.id, user.email, 'same-token'),
+    ]);
+
+    expect(first?.id).toBe(user.id);
+    expect(concurrent?.id).toBe(user.id);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('conserve la session en mémoire sur une panne réseau transitoire', async () => {
+    const user = createCachedUser();
+    service.setLocalSession(user, 'possibly-valid-token');
+    const auth = configureSupabaseAuth(
+      { access_token: 'possibly-valid-token' },
+      { data: { user: null }, error: { status: 0, name: 'AuthRetryableFetchError' } }
+    );
+
+    await service.restoreSession();
+
+    expect(service.currentUser()).toEqual(user);
+    expect(service.token()).toBe('possibly-valid-token');
+    expect(auth.signOut).not.toHaveBeenCalled();
+  });
+
+  it('efface la session si le serveur rejette le token lors de la lecture du profil', async () => {
+    const user = createCachedUser();
+    service.setLocalSession(user, 'server-rejected-token');
+    const auth = configureSupabaseAuth(
+      { access_token: 'server-rejected-token' },
+      { data: { user: { id: user.id, email: user.email } }, error: null }
+    );
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }));
+
+    await service.restoreSession();
+
+    expect(auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+    expect(service.currentUser()).toBeNull();
+    expect(service.token()).toBeNull();
+    expect(routerSpy.navigate).toHaveBeenCalledWith(['/auth/login'], {
+      queryParams: { returnUrl: '/dossiers' },
+    });
+  });
+
+  it('rafraîchit le token après un 401 confirmé par une API', async () => {
+    const auth = configureSupabaseAuth(null, { data: { user: null }, error: null });
+    service.setLocalSession(createCachedUser(), 'expired-token');
+    auth.refreshSession.mockResolvedValue({
+      data: { session: { access_token: 'fresh-token' } },
+      error: null,
+    });
+
+    await expect(service.refreshAccessTokenAfterUnauthorized()).resolves.toEqual({
+      status: 'refreshed',
+      accessToken: 'fresh-token',
+    });
+    expect(service.token()).toBe('fresh-token');
+  });
+
+  it('distingue un refresh invalide d’une indisponibilité réseau', async () => {
+    const auth = configureSupabaseAuth(null, { data: { user: null }, error: null });
+    service.setLocalSession(createCachedUser(), 'expired-token');
+    auth.refreshSession.mockResolvedValueOnce({
+      data: { session: null },
+      error: { status: 0, name: 'AuthRetryableFetchError' },
+    });
+
+    await expect(service.refreshAccessTokenAfterUnauthorized()).resolves.toEqual({ status: 'unavailable' });
+    expect(service.token()).toBe('expired-token');
+
+    auth.refreshSession.mockResolvedValueOnce({ data: { session: null }, error: { status: 400 } });
+    await expect(service.refreshAccessTokenAfterUnauthorized()).resolves.toEqual({ status: 'invalid' });
+  });
+
+  it('invalide uniquement la session locale quand une API rejette le token', () => {
+    const auth = configureSupabaseAuth(null, { data: { user: null }, error: null });
+    service.setLocalSession(createCachedUser(), 'stale-token');
+
+    service.handleUnauthorizedSession();
+
+    expect(auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+    expect(service.currentUser()).toBeNull();
+    expect(service.token()).toBeNull();
+    expect(routerSpy.navigate).toHaveBeenCalledWith(['/auth/login'], {
+      queryParams: { returnUrl: '/dossiers' },
+    });
   });
 });

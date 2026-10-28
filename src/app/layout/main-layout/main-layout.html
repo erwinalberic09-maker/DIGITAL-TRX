@@ -34,71 +34,177 @@
         <div class="hidden sm:block h-5 w-[1px] bg-slate-300 dark:bg-slate-700"></div>
 
         <!-- Navigation Métier Horizontale (overflow-visible pour laisser flotter les menus déroulants) -->
-        <nav class="hidden md:flex items-center gap-3 lg:gap-4 overflow-visible select-none" id="topbar-main-nav">
-          @for (item of visibleMenuItems(); track item.id) {
-            @if (item.id === 'configuration') {
-              <!-- Menu Déroulant Configuration (Style Odoo : Paramètre & Journal) -->
-              <div class="relative overflow-visible" id="config-dropdown-container">
-                <button
-                  type="button"
-                  (click)="toggleConfigDropdown($event)"
-                  [class.text-slate-900]="isConfigActive() || isConfigDropdownOpen()"
-                  [class.dark:text-white]="isConfigActive() || isConfigDropdownOpen()"
-                  [class.font-semibold]="isConfigActive()"
-                  class="nav-link flex items-center text-xs lg:text-sm text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white transition-colors py-1 cursor-pointer bg-transparent border-0 outline-none"
-                  id="nav-configuration-dropdown-trigger"
-                  [attr.aria-expanded]="isConfigDropdownOpen()"
-                  aria-haspopup="true">
-                  <span class="whitespace-nowrap">{{ item.label }}</span>
-                </button>
-
-                <!-- Liste Déroulante Odoo : Paramètre et Journal -->
-                @if (isConfigDropdownOpen()) {
-                  <div
-                    class="config-dropdown-panel absolute left-0 top-full mt-1.5 w-48 bg-white dark:bg-[#282d33] border border-slate-200 dark:border-[#343a40] rounded-lg shadow-2xl py-1.5 z-[9999]"
-                    id="nav-configuration-dropdown-menu"
-                    role="menu"
-                    aria-orientation="vertical">
-                    <!-- 1. Paramètre -->
-                    <a
-                      routerLink="/configuration/parametres"
-                      routerLinkActive="font-bold text-[#0b5ed7] dark:text-[#8cc2ff] bg-slate-100 dark:bg-white/10"
-                      (click)="closeConfigDropdown()"
-                      class="flex items-center px-4 py-2.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-                      id="menu-item-config-parametres"
-                      role="menuitem">
-                      <span>Paramètre</span>
-                    </a>
-
-                    <!-- 2. Journal -->
-                    <a
-                      routerLink="/configuration/journal"
-                      routerLinkActive="font-bold text-[#0b5ed7] dark:text-[#8cc2ff] bg-slate-100 dark:bg-white/10"
-                      (click)="closeConfigDropdown()"
-                      class="flex items-center px-4 py-2.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-                      id="menu-item-config-journal"
-                      role="menuitem">
-                      <span>Journal</span>
-                    </a>
-                  </div>
-                }
-              </div>
-            } @else {
+        @if (isCrmRoute()) {
+          <nav class="flex items-center gap-1 sm:gap-2 overflow-visible select-none" id="topbar-crm-nav" aria-label="Navigation du CRM Commercial">
+            @for (item of crmMenuItems; track item.id) {
               <a
-                [routerLink]="item.route"
-                routerLinkActive="active"
-                [routerLinkActiveOptions]="{ exact: item.route === '/dashboard' }"
-                class="nav-link flex items-center gap-1.5 text-xs lg:text-sm text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white transition-colors py-1 cursor-pointer"
-                [id]="item.id">
+                [routerLink]="['/crm-commercial']"
+                [queryParams]="{ view: item.id }"
+                [class.active]="activeCrmView() === item.id"
+                [attr.aria-current]="activeCrmView() === item.id ? 'page' : null"
+                class="nav-link flex items-center text-xs lg:text-sm transition-colors py-1 cursor-pointer"
+                [id]="'crm-nav-' + item.id">
                 <span class="whitespace-nowrap">{{ item.label }}</span>
               </a>
             }
-          }
-        </nav>
+          </nav>
+        } @else {
+          <nav class="flex items-center gap-2 sm:gap-3 lg:gap-4 overflow-visible select-none" id="topbar-main-nav">
+            @for (item of visibleMenuItems(); track item.id) {
+              @if (item.id === 'configuration') {
+                <div class="relative overflow-visible" id="config-dropdown-container">
+                  <button
+                    type="button"
+                    (click)="toggleConfigDropdown($event)"
+                    [class.text-slate-900]="isConfigActive() || isConfigDropdownOpen()"
+                    [class.dark:text-white]="isConfigActive() || isConfigDropdownOpen()"
+                    [class.font-semibold]="isConfigActive()"
+                    class="nav-link flex items-center text-xs lg:text-sm text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white transition-colors py-1 cursor-pointer bg-transparent border-0 outline-none"
+                    id="nav-configuration-dropdown-trigger"
+                    [attr.aria-expanded]="isConfigDropdownOpen()"
+                    aria-haspopup="true">
+                    <span class="whitespace-nowrap">{{ item.label }}</span>
+                  </button>
+
+                  @if (isConfigDropdownOpen()) {
+                    <div
+                      class="config-dropdown-panel absolute left-0 top-full mt-1.5 w-48 bg-white dark:bg-[#282d33] border border-slate-200 dark:border-[#343a40] rounded-lg shadow-2xl py-1.5 z-[9999]"
+                      id="nav-configuration-dropdown-menu"
+                      role="menu"
+                      aria-orientation="vertical">
+                      <a
+                        routerLink="/configuration/parametres"
+                        routerLinkActive="font-bold text-[#0b5ed7] dark:text-[#8cc2ff] bg-slate-100 dark:bg-white/10"
+                        (click)="closeConfigDropdown()"
+                        class="flex items-center px-4 py-2.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                        id="menu-item-config-parametres"
+                        role="menuitem">
+                        <span>Paramètre</span>
+                      </a>
+                      <a
+                        routerLink="/configuration/journal"
+                        routerLinkActive="font-bold text-[#0b5ed7] dark:text-[#8cc2ff] bg-slate-100 dark:bg-white/10"
+                        (click)="closeConfigDropdown()"
+                        class="flex items-center px-4 py-2.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                        id="menu-item-config-journal"
+                        role="menuitem">
+                        <span>Journal</span>
+                      </a>
+                    </div>
+                  }
+                </div>
+              } @else {
+                <a
+                  [routerLink]="item.route"
+                  routerLinkActive="active"
+                  [routerLinkActiveOptions]="{ exact: item.route === '/dashboard' || item.route === '/dashboard/crm' }"
+                  class="nav-link flex items-center gap-1.5 text-xs lg:text-sm text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white transition-colors py-1 cursor-pointer"
+                  [id]="item.id">
+                  <span class="whitespace-nowrap">{{ item.label }}</span>
+                </a>
+              }
+            }
+          </nav>
+        }
       </div>
 
       <!-- DROITE : Utilitaires, Bascule Thème, Profil & Actions -->
       <div class="topbar-right flex items-center gap-2 sm:gap-3.5 shrink-0" id="topbar-utilities-section">
+
+        @if (currentUser()) {
+          <div class="relative" id="notifications-container">
+            <button
+              type="button"
+              (click)="toggleNotifications($event)"
+              class="utility-icon-btn relative inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-white cursor-pointer"
+              aria-label="Notifications"
+              title="Notifications"
+              [attr.aria-expanded]="isNotificationsOpen()"
+              aria-haspopup="dialog">
+              <mat-icon class="!text-[18px] !w-4.5 !h-4.5">notifications</mat-icon>
+              @if (appNotificationService.unreadCount() > 0) {
+                <span class="absolute -right-0.5 -top-0.5 inline-flex min-w-4 h-4 items-center justify-center rounded-full bg-red-600 px-1 text-[9px] font-bold leading-none text-white ring-2 ring-white dark:ring-[#212529]">
+                  {{ appNotificationService.unreadCount() > 99 ? '99+' : appNotificationService.unreadCount() }}
+                </span>
+              }
+            </button>
+
+            @if (isNotificationsOpen()) {
+              <section
+                class="shadcn-notification-popover absolute right-0 top-full z-[9999] mt-2 w-[min(24rem,calc(100vw-1.5rem))] overflow-hidden rounded-xl border border-zinc-200 bg-white text-zinc-950 shadow-xl dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50"
+                role="dialog"
+                aria-label="Centre de notifications">
+                <!-- CardHeader Shadcn UI -->
+                <header class="flex items-center justify-between border-b border-zinc-100 px-4 py-3.5 dark:border-zinc-800/80">
+                  <div class="grid gap-0.5">
+                    <div class="flex items-center gap-2">
+                      <h2 class="text-sm font-semibold leading-none tracking-tight text-zinc-950 dark:text-zinc-50">Notifications</h2>
+                      @if (appNotificationService.unreadCount() > 0) {
+                        <span class="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
+                          {{ appNotificationService.unreadCount() }} non lue(s)
+                        </span>
+                      }
+                    </div>
+                    <p class="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Vous avez {{ appNotificationService.unreadCount() }} notification(s) non lue(s).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    class="inline-flex items-center justify-center rounded-md px-2.5 py-1 text-xs font-medium text-[#0b5ed7] transition-colors hover:bg-zinc-100 disabled:pointer-events-none disabled:opacity-40 dark:text-[#8cc2ff] dark:hover:bg-zinc-800/70 cursor-pointer"
+                    [disabled]="appNotificationService.unreadCount() === 0"
+                    (click)="markAllNotificationsRead()">
+                    Tout lire
+                  </button>
+                </header>
+
+                @if (appNotificationService.error()) {
+                  <div class="m-3 shadcn-alert shadcn-alert-destructive" role="alert">
+                    {{ appNotificationService.error() }}
+                  </div>
+                }
+
+                <!-- CardContent : Liste des notifications Shadcn UI -->
+                <div class="max-h-[min(26rem,68vh)] overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800/70">
+                  @for (notification of appNotificationService.notifications(); track notification.id) {
+                    <button
+                      type="button"
+                      class="group flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/60 cursor-pointer"
+                      [class.bg-sky-50/50]="!notification.readAt"
+                      [class.dark:bg-sky-950/20]="!notification.readAt"
+                      (click)="openNotification(notification)">
+                      <span
+                        class="mt-1.5 flex h-2 w-2 shrink-0 rounded-full transition-transform group-hover:scale-110"
+                        [class.bg-sky-500]="!notification.readAt"
+                        [class.bg-transparent]="!!notification.readAt"
+                        aria-hidden="true"></span>
+                      <span class="min-w-0 flex-1 grid gap-1">
+                        <span class="flex items-center justify-between gap-2">
+                          <span class="text-xs font-semibold leading-snug text-zinc-900 dark:text-zinc-100 truncate">
+                            {{ notification.title }}
+                          </span>
+                          <span class="shrink-0 text-[10px] font-medium text-zinc-400 dark:text-zinc-500">
+                            {{ notification.createdAt | date:'short' }}
+                          </span>
+                        </span>
+                        <span class="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+                          {{ notification.message }}
+                        </span>
+                      </span>
+                    </button>
+                  } @empty {
+                    <div class="flex flex-col items-center justify-center gap-1.5 px-4 py-10 text-center">
+                      <mat-icon class="!h-6 !w-6 !text-[22px] text-zinc-300 dark:text-zinc-600" aria-hidden="true">notifications_none</mat-icon>
+                      <p class="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                        Aucune notification pour le moment.
+                      </p>
+                    </div>
+                  }
+                </div>
+              </section>
+            }
+          </div>
+        }
         
         <!-- Bouton direct Mode Clair / Sombre (Soleil / Lune) -->
         <button
@@ -111,44 +217,6 @@
             {{ isDarkMode() ? 'dark_mode' : 'light_mode' }}
           </mat-icon>
         </button>
-
-        <!-- Icônes utilitaires (IA, Chat avec badge, Historique, Outils) -->
-        <div class="hidden lg:flex items-center gap-1 text-slate-600 dark:text-slate-300" id="topbar-utility-icons">
-          <!-- Icône IA Sparkles -->
-          <button type="button" class="utility-icon-btn p-1.5 rounded hover:bg-slate-100 dark:hover:bg-white/10 text-amber-500 dark:text-amber-400 transition-colors" title="Assistant IA">
-            <mat-icon class="!text-[17px] !w-4.5 !h-4.5">auto_awesome</mat-icon>
-          </button>
-
-          <!-- Icône Chat / Notifications avec badge 4 -->
-          <button type="button" class="utility-icon-btn relative p-1.5 rounded hover:bg-slate-100 dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 transition-colors" title="Messages & Notifications">
-            <mat-icon class="!text-[17px] !w-4.5 !h-4.5">chat</mat-icon>
-            <span class="notification-badge absolute -top-0.5 -right-0.5 bg-red-600 text-white text-[9px] font-bold px-1 rounded-full flex items-center justify-center min-w-[14px] h-[14px]">
-              4
-            </span>
-          </button>
-
-          <!-- Icône Horloge / Activités -->
-          <button type="button" class="utility-icon-btn p-1.5 rounded hover:bg-slate-100 dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 transition-colors" title="Historique & Horloge">
-            <mat-icon class="!text-[17px] !w-4.5 !h-4.5">schedule</mat-icon>
-          </button>
-
-          <!-- Icône Outils / Configuration -->
-          <button type="button" class="utility-icon-btn p-1.5 rounded hover:bg-slate-100 dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 transition-colors" title="Outils système">
-            <mat-icon class="!text-[17px] !w-4.5 !h-4.5">build</mat-icon>
-          </button>
-
-          <!-- Bouton direct Administration réservé aux administrateurs -->
-          @if (currentUser()?.role === 'admin') {
-            <a
-              routerLink="/admin/view"
-              class="utility-icon-btn p-1.5 rounded hover:bg-amber-400/20 text-amber-600 dark:text-amber-300 transition-colors flex items-center gap-1 text-xs font-semibold"
-              id="topbar-admin-shortcut"
-              title="Accès Panneau d'Administration">
-              <mat-icon class="!text-[17px] !w-4.5 !h-4.5 text-amber-500 dark:text-amber-400">admin_panel_settings</mat-icon>
-              <span class="hidden xl:inline">Admin</span>
-            </a>
-          }
-        </div>
 
         @if (currentUser(); as user) {
           <!-- Menu Déroulant Profil Utilisateur avec Avatar & Badges -->
@@ -211,7 +279,7 @@
                   <div class="mt-2 flex items-center gap-1.5">
                     <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide uppercase" [class]="roleBadgeColor(user.role)" id="dropdown-user-role-badge">
                       <mat-icon class="!text-[12px] !w-3 !h-3">verified_user</mat-icon>
-                      {{ roleLabel(user.role) }}
+                      {{ user.roleLabel || roleLabel(user.role) }}
                     </span>
                   </div>
                 </div>
@@ -314,286 +382,59 @@
     <!-- MENU DÉROULANT MOBILE -->
     @if (isMenuOpen()) {
       <div class="md:hidden border-t border-slate-200 dark:border-[#343a40] bg-white dark:bg-[#212529] px-4 py-3 space-y-1 shadow-xl" id="topbar-mobile-dropdown">
-        @for (item of visibleMenuItems(); track item.id) {
-          @if (item.id === 'configuration') {
-            <div class="pt-2 pb-1 border-t border-slate-100 dark:border-white/5 space-y-1">
-              <div class="px-3 py-1 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                Configuration
-              </div>
-              <a
-                routerLink="/configuration/parametres"
-                routerLinkActive="font-bold text-[#0b5ed7] dark:text-[#8cc2ff] bg-slate-100 dark:bg-white/5"
-                (click)="closeMenu()"
-                class="nav-link flex items-center pl-6 pr-3 py-2 rounded text-sm text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-colors"
-                id="configuration-parametres-mobile">
-                <span>Paramètre</span>
-              </a>
-              <a
-                routerLink="/configuration/journal"
-                routerLinkActive="font-bold text-[#0b5ed7] dark:text-[#8cc2ff] bg-slate-100 dark:bg-white/5"
-                (click)="closeMenu()"
-                class="nav-link flex items-center pl-6 pr-3 py-2 rounded text-sm text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-colors"
-                id="configuration-journal-mobile">
-                <span>Journal</span>
-              </a>
-            </div>
-          } @else {
+        @if (isCrmRoute()) {
+          @for (item of crmMenuItems; track item.id) {
             <a
-              [routerLink]="item.route"
-              routerLinkActive="active"
-              [routerLinkActiveOptions]="{ exact: item.route === '/dashboard' }"
+              [routerLink]="['/crm-commercial']"
+              [queryParams]="{ view: item.id }"
               (click)="closeMenu()"
               class="nav-link flex items-center gap-3 px-3 py-2 rounded text-sm text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-colors"
-              [id]="item.id + '-mobile'">
+              [class.active]="activeCrmView() === item.id"
+              [attr.aria-current]="activeCrmView() === item.id ? 'page' : null"
+              [id]="'crm-nav-' + item.id + '-mobile'">
               <span>{{ item.label }}</span>
             </a>
+          }
+        } @else {
+          @for (item of visibleMenuItems(); track item.id) {
+            @if (item.id === 'configuration') {
+              <div class="pt-2 pb-1 border-t border-slate-100 dark:border-white/5 space-y-1">
+                <div class="px-3 py-1 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                  Configuration
+                </div>
+                <a
+                  routerLink="/configuration/parametres"
+                  routerLinkActive="font-bold text-[#0b5ed7] dark:text-[#8cc2ff] bg-slate-100 dark:bg-white/5"
+                  (click)="closeMenu()"
+                  class="nav-link flex items-center pl-6 pr-3 py-2 rounded text-sm text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-colors"
+                  id="configuration-parametres-mobile">
+                  <span>Paramètre</span>
+                </a>
+                <a
+                  routerLink="/configuration/journal"
+                  routerLinkActive="font-bold text-[#0b5ed7] dark:text-[#8cc2ff] bg-slate-100 dark:bg-white/5"
+                  (click)="closeMenu()"
+                  class="nav-link flex items-center pl-6 pr-3 py-2 rounded text-sm text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-colors"
+                  id="configuration-journal-mobile">
+                  <span>Journal</span>
+                </a>
+              </div>
+            } @else {
+              <a
+                [routerLink]="item.route"
+                routerLinkActive="active"
+                [routerLinkActiveOptions]="{ exact: item.route === '/dashboard' || item.route === '/dashboard/crm' }"
+                (click)="closeMenu()"
+                class="nav-link flex items-center gap-3 px-3 py-2 rounded text-sm text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-colors"
+                [id]="item.id + '-mobile'">
+                <span>{{ item.label }}</span>
+              </a>
+            }
           }
         }
       </div>
     }
   </header>
-
-  <!-- ========================================================================= -->
-  <!-- LIGNE 2 : CONTROL PANEL & ACTIONS (Style Odoo Actions Bar Adaptatif)      -->
-  <!-- Affiché EXCLUSIVEMENT dans le module Caisse                              -->
-  <!-- ========================================================================= -->
-  @if (isCashierRoute()) {
-    <div class="control-panel sticky top-[50px] z-30 w-full bg-[#f4f6f9] dark:bg-[#2b2f33] border-b border-[#d5dce5] dark:border-white/10 transition-colors" id="app-control-panel">
-      <div class="w-full px-3 sm:px-5 flex flex-wrap lg:flex-nowrap items-center justify-between min-h-[48px] py-1.5 gap-3">
-
-        <!-- GAUCHE : Boutons d'Action & Fil d'Ariane -->
-        <div class="cp-left flex items-center gap-2 sm:gap-3 shrink-0" id="cp-actions-left">
-          @if (canEditCaisse()) {
-            <!-- Action principale Transimex -->
-            <button
-              type="button"
-              (click)="onNouveau()"
-              class="btn-primary flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded transition-all cursor-pointer shadow-xs active:scale-95 bg-[#0b5ed7] hover:bg-[#084db1] dark:bg-[#1d4ed8] dark:hover:bg-[#2563eb] text-white"
-              id="cp-btn-nouveau">
-              <span>Nouveau</span>
-            </button>
-
-            <!-- Bouton Secondaire Uploader -->
-            <button
-              type="button"
-              (click)="onOpenImportModal()"
-              class="btn-secondary flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded transition-all cursor-pointer bg-white dark:bg-white/10 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-transparent hover:bg-slate-50 dark:hover:bg-white/15"
-              id="cp-btn-uploader">
-              <span>Uploader</span>
-            </button>
-          }
-
-          <!-- Fil d'Ariane / Titre contextuel -->
-          <div class="breadcrumbs hidden sm:flex flex-col ml-1 leading-tight" id="cp-breadcrumbs">
-            <a
-              routerLink="/dashboard"
-              class="title text-xs font-bold text-[#0b5ed7] dark:text-[#8cc2ff] hover:underline hover:text-[#084db1] dark:hover:text-[#a6ccff] transition-colors cursor-pointer inline-flex items-center gap-1 focus:outline-hidden focus:ring-1 focus:ring-[#0b5ed7] dark:focus:ring-[#8cc2ff] rounded-xs"
-              id="cp-breadcrumb-dashboard-link"
-              title="Retour au Tableau de bord">
-              Tableau de bord
-            </a>
-            <span class="subtitle text-[11px] text-slate-500 dark:text-slate-400">
-              Opérations Caisse
-            </span>
-          </div>
-        </div>
-
-        <!-- CENTRE : Soit Barre d'Actions Odoo (si sélection), soit Barre de Recherche (si 0 sélection) -->
-        <div class="cp-center flex-1 max-w-[560px] min-w-[200px]" id="cp-search-center">
-          @if (selectedTransactionsCount() > 0) {
-            <!-- BARRE DE SÉLECTION ODOO STYLE (Badge sélection + Bouton Actions) -->
-            <div class="flex items-center gap-2 animate-in fade-in zoom-in-95 duration-150" id="cp-odoo-selection-bar">
-              <!-- Badge [ N sélectionné(s) ✕ ] -->
-              <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded text-xs font-semibold bg-[#0b5ed7]/10 text-[#0b5ed7] dark:bg-[#7cb3ff]/15 dark:text-[#a6ccff] border border-[#0b5ed7]/30 dark:border-[#7cb3ff]/40 shadow-2xs select-none" id="cp-selection-badge">
-                <span>{{ selectedTransactionsCount() }} sélectionné(s)</span>
-                <button
-                  type="button"
-                  (click)="clearSelection()"
-                  class="ml-0.5 p-0.5 rounded-full hover:bg-[#0b5ed7]/15 dark:hover:bg-[#7cb3ff]/20 text-[#0b5ed7] dark:text-[#a6ccff] transition-colors cursor-pointer flex items-center justify-center font-bold"
-                  title="Annuler la sélection"
-                  aria-label="Annuler la sélection">
-                  <mat-icon class="!text-[13px] !w-3.5 !h-3.5 leading-none">close</mat-icon>
-                </button>
-              </div>
-
-              <!-- Bouton [ ⚙ Actions ] avec Dropdown Odoo -->
-              <div class="relative" id="cp-actions-dropdown-container">
-                <button
-                  type="button"
-                  (click)="toggleActionsMenu($event)"
-                  class="inline-flex items-center gap-1.5 px-3 py-1 rounded text-xs font-semibold transition-all cursor-pointer shadow-2xs active:scale-95 bg-white dark:bg-[#0d1f3a] text-slate-800 dark:text-white border border-[#0b5ed7] dark:border-[#7cb3ff] hover:bg-slate-50 dark:hover:bg-white/5"
-                  [class.ring-2]="isActionsMenuOpen()"
-                  [class.ring-[#0b5ed7]/40]="isActionsMenuOpen()"
-                  id="cp-btn-odoo-actions">
-                  <mat-icon class="!text-[15px] !w-4 !h-4 text-[#0b5ed7] dark:text-[#8cc2ff]">settings</mat-icon>
-                  <span>Actions</span>
-                </button>
-
-                <!-- DROPDOWN MENU ODOO OWL -->
-                @if (isActionsMenuOpen()) {
-                  <div
-                    class="absolute top-full left-0 mt-1.5 w-56 bg-white dark:bg-[#212529] rounded-lg shadow-2xl border border-slate-200 dark:border-white/10 py-1.5 z-50 text-xs text-slate-700 dark:text-slate-200 animate-in fade-in zoom-in-95 duration-100"
-                    id="cp-caisse-actions-menu"
-                    role="menu">
-                    
-                    <!-- 1. Exporter -->
-                    <button
-                      type="button"
-                      (click)="onExportAction()"
-                      class="w-full flex items-center gap-3 px-3.5 py-2 text-left transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 font-medium"
-                      id="cp-action-export-csv"
-                      role="menuitem">
-                      <mat-icon class="!text-[17px] !w-4.5 !h-4.5 text-slate-500 dark:text-slate-400">upload</mat-icon>
-                      <span>Exporter</span>
-                    </button>
-
-                    <!-- 2. Insérer dans la feuille de calcul -->
-                    <button
-                      type="button"
-                      (click)="onExportSpreadsheetAction()"
-                      class="w-full flex items-center gap-3 px-3.5 py-2 text-left transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 font-medium"
-                      id="cp-action-spreadsheet"
-                      role="menuitem">
-                      <mat-icon class="!text-[17px] !w-4.5 !h-4.5 text-slate-500 dark:text-slate-400">table_view</mat-icon>
-                      <span>Insérer dans la feuille de calcul</span>
-                    </button>
-
-                    <!-- 3. Dupliquer -->
-                    @if (canEditCaisse()) {
-                      <button
-                        type="button"
-                        (click)="onDuplicateAction()"
-                        class="w-full flex items-center gap-3 px-3.5 py-2 text-left transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 font-medium"
-                        id="cp-action-duplicate"
-                        role="menuitem">
-                        <mat-icon class="!text-[17px] !w-4.5 !h-4.5 text-slate-500 dark:text-slate-400">content_copy</mat-icon>
-                        <span>Dupliquer</span>
-                      </button>
-                    }
-
-                    <!-- 4. Annuler en conservant la pièce comptable -->
-                    @if (canCancelCashierOperations()) {
-                      <button
-                        type="button"
-                        (click)="onCancelSelectedAction()"
-                        [disabled]="isCancelling()"
-                        class="w-full flex items-center gap-3 px-3.5 py-2 text-left transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-600 dark:text-rose-400 font-medium"
-                        id="cp-action-cancel-selected"
-                        role="menuitem">
-                        <mat-icon class="!text-[17px] !w-4.5 !h-4.5 text-rose-500">cancel</mat-icon>
-                        <span>Annuler</span>
-                      </button>
-                    }
-
-                    <div class="my-1 border-t border-slate-200 dark:border-white/10"></div>
-
-                    <!-- 5. Remettre en brouillon -->
-                    @if (canCancelCashierOperations()) {
-                      <button
-                        type="button"
-                        (click)="onResetToDraftAction()"
-                        class="w-full flex items-center gap-3 px-3.5 py-2 text-left transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-normal"
-                        id="cp-action-reset-draft"
-                        role="menuitem">
-                        <span>Remettre en brouillon</span>
-                      </button>
-                    }
-
-                    <!-- 6. Télécharger les pièces jointes -->
-                    <button
-                      type="button"
-                      (click)="onDownloadAttachmentsAction()"
-                      class="w-full flex items-center gap-3 px-3.5 py-2 text-left transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-normal"
-                      id="cp-action-download-attachments"
-                      role="menuitem">
-                      <span>Télécharger les pièces jointes</span>
-                    </button>
-
-                  </div>
-                }
-              </div>
-            </div>
-          } @else {
-            <!-- BARRE DE RECHERCHE STANDARD QUAND 0 SÉLECTION -->
-            <div class="search-bar flex items-center rounded px-2.5 py-1 text-xs transition-all bg-white dark:bg-[#0d1f3a] border border-slate-300 dark:border-white/10 focus-within:border-[#0b5ed7] dark:focus-within:border-[#7cb3ff]" id="cp-search-bar-wrapper">
-              <!-- Loupe -->
-              <mat-icon class="search-icon !text-[15px] !w-4 !h-4 text-slate-400 mr-2 shrink-0">search</mat-icon>
-
-              <!-- Input natif -->
-              <input
-                type="text"
-                [value]="searchQuery()"
-                (input)="onSearchInput($event)"
-                placeholder="Rechercher..."
-                class="bg-transparent text-slate-900 dark:text-white placeholder-slate-400 outline-none flex-grow min-w-[60px] text-xs"
-                id="cp-search-input" />
-
-              <!-- Flèche menu déroulant filtres -->
-              <button type="button" class="text-slate-400 hover:text-slate-600 dark:hover:text-white ml-1 p-0.5 shrink-0 cursor-pointer" title="Options de recherche">
-                <mat-icon class="!text-[16px] !w-4 !h-4">arrow_drop_down</mat-icon>
-              </button>
-            </div>
-          }
-        </div>
-
-        <!-- DROITE : Pagination & Commutateurs de Vue -->
-        <div class="cp-right flex items-center gap-3 shrink-0" id="cp-controls-right">
-          <!-- Pagination -->
-          <span class="pagination text-xs text-slate-600 dark:text-slate-300 select-none font-medium" id="cp-pagination-label">
-            {{ paginationLabel() }}
-          </span>
-
-          <!-- Groupe de boutons Flèches Pagination -->
-          <div class="btn-group flex items-center bg-white dark:bg-white/5 rounded border border-slate-300 dark:border-[#343A40] overflow-hidden" id="cp-pagination-buttons">
-            <button
-              type="button"
-              (click)="prevPage()"
-              [disabled]="!hasPrevPage()"
-              [class.opacity-40]="!hasPrevPage()"
-              [class.cursor-not-allowed]="!hasPrevPage()"
-              class="btn-icon p-1 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 transition-colors cursor-pointer"
-              title="Précédent">
-              <mat-icon class="!text-[15px] !w-4 !h-4 flex items-center justify-center">chevron_left</mat-icon>
-            </button>
-            <button
-              type="button"
-              (click)="nextPage()"
-              [disabled]="!hasNextPage()"
-              [class.opacity-40]="!hasNextPage()"
-              [class.cursor-not-allowed]="!hasNextPage()"
-              class="btn-icon p-1 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 transition-colors cursor-pointer border-l border-slate-300 dark:border-[#343A40]"
-              title="Suivant">
-              <mat-icon class="!text-[15px] !w-4 !h-4 flex items-center justify-center">chevron_right</mat-icon>
-            </button>
-          </div>
-
-          <!-- Sélecteurs de Vue (Graphique / Liste) -->
-          <div class="view-switchers flex items-center gap-1" id="cp-view-switchers">
-            <!-- Vue Graphique -->
-            <button
-              type="button"
-              (click)="activeView.set('graph')"
-              [class.active]="activeView() === 'graph'"
-              class="btn-icon p-1 rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-              title="Vue Graphique">
-              <mat-icon class="!text-[16px] !w-4 !h-4">bar_chart</mat-icon>
-            </button>
-
-            <!-- Vue Liste (Active) -->
-            <button
-              type="button"
-              (click)="activeView.set('list')"
-              [class.active]="activeView() === 'list'"
-              class="btn-icon p-1 rounded text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-              title="Vue Liste">
-              <mat-icon class="!text-[16px] !w-4 !h-4">view_list</mat-icon>
-            </button>
-          </div>
-        </div>
-
-      </div>
-    </div>
-  }
 
   <!-- ========================================================================= -->
   <!-- ZONE DE CONTENU PRINCIPAL (ROUTER-OUTLET)                                 -->
@@ -611,7 +452,3 @@
   }
 
 </div>
-
-
-
-

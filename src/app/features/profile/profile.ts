@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { AbstractControl, FormControl, FormGroup, ReactiveFormsModule, ValidationErrors, ValidatorFn, Validators } from '@angular/forms';
 import { SlicePipe } from '@angular/common';
-import { ROLE_DEFINITIONS } from '../../core/models/auth.model';
+import { ROLE_DEFINITIONS, UserProfile } from '../../core/models/auth.model';
 import { AuthService } from '../../core/services/auth.service';
 import { UserService } from '../../core/services/user.service';
 
@@ -82,6 +82,16 @@ export class Profile {
     }),
   });
 
+  /**
+   * Retourne le libellé du rôle à afficher dans le badge :
+   * Priorise le libellé attribué par les rôles d'accès RBAC (ex: "DAF"),
+   * puis l'identifiant personnalisé de rôle, puis enfin le rôle canonique (ex: "Employé").
+   */
+  public getRoleDisplay(user: UserProfile | undefined): string {
+    if (!user) return '';
+    return user.roleLabel || user.customRole || this.getRoleLabel(user.role);
+  }
+
   public getRoleLabel(role: string | undefined): string {
     if (!role) return '';
     return ROLE_DEFINITIONS[role as keyof typeof ROLE_DEFINITIONS]?.label || role;
@@ -126,7 +136,7 @@ export class Profile {
 
     this.profileError.set(null);
     this.isSavedSuccess.set(true);
-    setTimeout(() => this.isSavedSuccess.set(false), 3000);
+    setTimeout(() => this.isSavedSuccess.set(false), 15000);
   }
 
   public async onSavePassword(): Promise<void> {
@@ -154,6 +164,6 @@ export class Profile {
     this.passwordError.set(null);
     this.isPasswordSuccess.set(true);
     this.passwordForm.reset();
-    setTimeout(() => this.isPasswordSuccess.set(false), 3000);
+    setTimeout(() => this.isPasswordSuccess.set(false), 15000);
   }
 }

@@ -4,13 +4,15 @@ import {
   isMainModule,
   writeResponseToNodeResponse,
 } from '@angular/ssr/node';
-import express from 'express';
+import express, { type Request } from 'express';
 import {join} from 'node:path';
 import { SupabaseClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
-import { rateLimit } from 'express-rate-limit';
+import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
 import helmet from 'helmet';
-import { getSupabaseAdmin, requireAuth } from './server/auth';
+import jwt from 'jsonwebtoken';
+import { UpstashRateLimitStore } from './server/upstash-rate-limit.store';
+import { getSupabaseAdmin, requireAuth, updateExistingUserProfileRole } from './server/auth';
 import { getSupabaseConfigHandler } from './server/config';
 import { syncUserAccessRole } from './server/access-role-sync';
 import { formatPersistedPieceComptable, normalizeDateToDay, requiresCashierDraftBeforeEdit } from './server/cashier.utils';
@@ -18,7 +20,18 @@ import { getCurrentUserProfileHandler, updateCurrentUserProfileHandler } from '.
 import { createCollaboratorHandler } from './server/collaborators.create';
 import { getCollaboratorsHandler } from './server/collaborators.list';
 import { deleteCollaboratorHandler, updateCollaboratorHandler } from './server/collaborators.manage';
-import { getOperationsHandler } from './server/cashier.read';
+import { getDossierExpenseSummaryHandler, getOperationsHandler } from './server/cashier.read';
+import {
+  assignDossierHandler,
+  createDossierHandler,
+  listDossierAssigneesHandler,
+  listDossiersHandler,
+} from './server/dossiers';
+import {
+  listAppNotificationsHandler,
+  markAllAppNotificationsReadHandler,
+  markAppNotificationReadHandler,
+} from './server/notifications';
 import { writeAuditLog } from './server/audit-log';
 import {
   createProspectHandler,
@@ -27,6 +40,36 @@ import {
   listProspectsHandler,
   updateProspectHandler,
 } from './server/prospects';
+import {
+  createQuoteHandler,
+  createQuoteProspectHandler,
+  createQuoteTemplateHandler,
+  deleteQuoteHandler,
+  deleteQuoteTemplateHandler,
+  getQuoteTimingAnalyticsHandler,
+  listQuoteAssigneesHandler,
+  listQuoteProspectsHandler,
+  listQuoteContactsHandler,
+  listQuoteTemplatesHandler,
+  listQuotesHandler,
+  resolveQuoteCollectionContext,
+  resolveQuoteOwnerContext,
+  resolveQuoteTemplateOwnerContext,
+  updateQuoteHandler,
+  updateQuoteTemplateHandler,
+} from './server/quotes';
+import {
+  createCrmActivityHandler,
+  createCrmCampaignHandler,
+  createCrmClientHandler,
+  createCrmContactHandler,
+  createCrmDossierHandler,
+  createCrmOpportunityHandler,
+  getCrmOverviewHandler,
+  prepareCrmCampaignHandler,
+  updateCrmActivityHandler,
+  updateCrmOpportunityHandler,
+} from './server/crm';
 import {
   createJournalHandler,
   deleteJournalHandler,
@@ -57,7 +100,7 @@ import {
   setUserPermissionOverrideHandler,
   updateAccessRoleHandler,
 } from './server/access-control.handlers';
-import { hasPermission, requirePermission, resolveJournalOwnerContext } from './server/access-control';
+import { requirePermission, resolveJournalOwnerContext } from './server/access-control';
 
 // Charger les variables d'environnement depuis le fichier `.env` (si présent)
 dotenv.config();
@@ -65,7 +108,24 @@ dotenv.config();
 const browserDistFolder = join(import.meta.dirname, '../browser');
 
 const app = express();
-const angularApp = new AngularNodeAppEngine();
+const angularApp = new AngularNodeAppEngine({ trustProxyHeaders: true });
+
+const readPositiveIntegerEnv = (name: string, defaultValue: number): number => {
+  const value = process.env[name];
+  if (!value) return defaultValue;
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${name} doit être un entier supérieur à zéro.`);
+  }
+  return parsed;
+};
+
+const createRateLimitStore = (prefix: string): UpstashRateLimitStore | undefined =>
+  process.env['UPSTASH_REDIS_REST_URL'] && process.env['UPSTASH_REDIS_REST_TOKEN']
+    ? new UpstashRateLimitStore(prefix)
+    : undefined;
+const slowApiRequestThresholdMs = readPositiveIntegerEnv('API_SLOW_REQUEST_LOG_MS', 1000);
 
 // Configuration du reverse proxy pour Cloud Run / Nginx (gestion sécurisée de l'en-tête X-Forwarded-For)
 app.set('trust proxy', 1);
@@ -81,7 +141,12 @@ app.use(
         fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
         imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
         connectSrc: ["'self'", 'https:', 'wss:'],
-        frameAncestors: ["'self'", 'https://ai.studio', 'https://*.google.com', 'https://*.run.app'],
+        frameAncestors: [
+          "'self'",
+          'https://ai.studio',
+          'https://*.google.com',
+          ...(process.env['APP_URL'] ? [process.env['APP_URL']] : []),
+        ],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],
@@ -105,30 +170,122 @@ app.use(
 // Parsing JSON pour les requêtes d'API avec limite explicite de payload
 app.use(express.json({ limit: '256kb' }));
 
+app.use('/api', (req, res, next): void => {
+  const startedAt = performance.now();
+  res.once('finish', () => {
+    const durationMs = performance.now() - startedAt;
+    if (durationMs < slowApiRequestThresholdMs) return;
+
+    const route = typeof req.route?.path === 'string' ? req.route.path : 'unmatched';
+    console.warn(JSON.stringify({
+      event: 'slow_api_request',
+      method: req.method,
+      route,
+      status: res.statusCode,
+      durationMs: Math.round(durationMs),
+    }));
+  });
+  next();
+});
+
 /**
  * ==============================================================================
  * RATE LIMITING STRATIFIÉ (SÉCURITÉ & PROTECTION CONTRE LE BRUTE-FORCE / ABUS)
  * ==============================================================================
  */
 
-// 1. Limiteur global sur toutes les routes de l'API /api/* (200 requêtes / 15 minutes par IP)
+/**
+ * Extrait l'identifiant de l'utilisateur (`sub`) depuis un jeton JWT Supabase valide.
+ * La signature HMAC-SHA256 est impérativement vérifiée avec SUPABASE_JWT_SECRET.
+ * S11: Aucun décodage permissif (jwt.decode) sans validation cryptographique.
+ * Permet d'isoler les quotas de requêtes par compte utilisateur plutôt que de
+ * pénaliser l'ensemble des utilisateurs partageant une même adresse IP publique en production.
+ */
+const extractAuthenticatedUserId = (req: express.Request): string | null => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || typeof authHeader !== 'string') return null;
+
+  const token = authHeader.startsWith('Bearer ')
+    ? authHeader.substring(7).trim()
+    : authHeader.replace(/^Bearer\s+/i, '').trim();
+
+  if (!token) return null;
+
+  try {
+    const jwtSecret = process.env['SUPABASE_JWT_SECRET'];
+    if (!jwtSecret) {
+      // S11: Refus par défaut : sans secret de signature configuré, aucun jeton n'est accepté.
+      return null;
+    }
+    const payload = jwt.verify(token, jwtSecret, { algorithms: ['HS256'] }) as Record<string, unknown>;
+
+    if (
+      payload &&
+      typeof payload['sub'] === 'string' &&
+      payload['sub'].length > 0
+    ) {
+      return payload['sub'];
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+};
+
+/**
+ * Exemptions pour le développement local et les adresses de bouclage (127.0.0.1 / ::1).
+ * V1: Vérification stricte basée uniquement sur req.ip (dérivé du reverse proxy de confiance).
+ * L'en-tête Host/hostname n'est JAMAIS utilisé pour une décision de sécurité ou d'exemption.
+ */
+const isLocalOrDevelopment = (req: express.Request): boolean => {
+  if (process.env['NODE_ENV'] !== 'production') return true;
+  const ip = req.ip || '';
+  return (
+    ip === '127.0.0.1' ||
+    ip === '::1' ||
+    ip === '::ffff:127.0.0.1' ||
+    ip.startsWith('127.')
+  );
+};
+
+// S11: Rate limiting conservateur (non auth 100/15min, auth 1000/15min, auth/sync 50/15min, mutations 200/15min)
+const apiRateLimitWindowMs = readPositiveIntegerEnv('API_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000);
+const apiRateLimitMax = readPositiveIntegerEnv('API_RATE_LIMIT_MAX', 100);
+const apiRateLimitAuthMax = readPositiveIntegerEnv('API_RATE_LIMIT_AUTH_MAX', 1000);
+const authSyncRateLimitMax = readPositiveIntegerEnv('AUTH_SYNC_RATE_LIMIT_MAX', 50);
+
+// 1. Limiteur global sur toutes les routes de l'API /api/* (discriminé par utilisateur connecté ou IP)
 const apiGlobalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 200,
+  windowMs: apiRateLimitWindowMs,
+  limit: (req: Request) => (extractAuthenticatedUserId(req) ? apiRateLimitAuthMax : apiRateLimitMax),
+  keyGenerator: (req: Request) => {
+    const userId = extractAuthenticatedUserId(req);
+    return userId ? `usr:${userId}` : ipKeyGenerator(req.ip || '');
+  },
+  skip: (req: Request) => isLocalOrDevelopment(req),
+  store: createRateLimitStore('transmex:api:global:'),
+  passOnStoreError: false,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   statusCode: 429,
-  message: {
-    error: 'Trop de requêtes envoyées depuis cette adresse IP. Veuillez patienter avant de réessayer.',
-    retryAfterMinutes: 15,
-  },
+  message: (req: Request) => ({
+    error: extractAuthenticatedUserId(req)
+      ? 'Quota de requêtes dépassé pour votre compte utilisateur. Veuillez patienter avant de réessayer.'
+      : 'Trop de requêtes envoyées depuis cette adresse IP. Veuillez patienter avant de réessayer.',
+    retryAfterMinutes: Math.ceil(apiRateLimitWindowMs / 60000),
+  }),
 });
 app.use('/api', apiGlobalLimiter);
 
-// 2. Limiteur strict sur les endpoints de configuration et d'authentification (40 requêtes / 15 minutes)
+// 2. Limiteur sur les endpoints de configuration et de synchronisation d'authentification
 const authSyncLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 40,
+  limit: authSyncRateLimitMax,
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip || ''),
+  skip: (req: Request) => isLocalOrDevelopment(req),
+  store: createRateLimitStore('transmex:api:auth:'),
+  passOnStoreError: false,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   statusCode: 429,
@@ -140,10 +297,17 @@ const authSyncLimiter = rateLimit({
 app.use(['/api/auth/sync-role', '/api/supabase-config', '/api/config'], authSyncLimiter);
 
 // 3. Limiteur renforcé sur les opérations d'écriture et de mutation (POST, PUT, PATCH, DELETE)
-// Prévient l'inondation de la base de données, la création massive de comptes ou de transactions (100 mutations / 15 minutes)
+// Prévient l'inondation de la base de données, la création massive de comptes ou de transactions
 const mutationsLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 100,
+  limit: readPositiveIntegerEnv('MUTATIONS_RATE_LIMIT_MAX', 200),
+  keyGenerator: (req: Request) => {
+    const userId = extractAuthenticatedUserId(req);
+    return userId ? `usr_mut:${userId}` : ipKeyGenerator(req.ip || '');
+  },
+  skip: (req: Request) => isLocalOrDevelopment(req),
+  store: createRateLimitStore('transmex:api:mutations:'),
+  passOnStoreError: false,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   statusCode: 429,
@@ -160,6 +324,12 @@ app.use(
     '/api/cashier/transactions',
     '/api/system/operations',
     '/api/prospects',
+    '/api/crm',
+    '/api/quotes',
+    '/api/dossiers',
+    '/api/journals',
+    '/api/access-control',
+    '/api/profile/me',
   ],
   (req, res, next): void => {
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
@@ -176,24 +346,7 @@ app.get('/api/config', getSupabaseConfigHandler);
 const collaboratorCollectionAliases = ['/api/system/collaborators', '/api/admin/users'];
 
 collaboratorCollectionAliases.forEach((path) => {
-  app.get(path, requireAuth, async (req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> => {
-    const user = (req as unknown as Record<string, unknown>)['user'] as { id?: string } | undefined;
-    if (!user?.id) {
-      res.status(401).json({ error: 'Utilisateur non authentifié.' });
-      return;
-    }
-
-    try {
-      const canRead = (await hasPermission(user.id, 'hr.read', undefined)) || (await hasPermission(user.id, 'users.read', undefined));
-      if (canRead) {
-        next();
-        return;
-      }
-      requirePermission('users.read')(req, res, next);
-    } catch {
-      requirePermission('users.read')(req, res, next);
-    }
-  }, getCollaboratorsHandler);
+  app.get(path, requireAuth, requirePermission('users.read'), getCollaboratorsHandler);
 });
 
 /**
@@ -225,18 +378,15 @@ app.post('/api/auth/sync-role', requireAuth, async (req: express.Request, res: e
     });
 
     // Scellement dans public.profiles
-    const { error: profileUpsertError } = await supabaseAdmin.from('profiles').upsert(
-      {
-        id: user.id,
-        email: user.email,
-        role: targetRole,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'id' }
+    const { error: profileUpdateError } = await updateExistingUserProfileRole(
+      supabaseAdmin,
+      user.id,
+      targetRole,
+      user.email
     );
 
-    if (profileUpsertError) {
-      console.error('Erreur upsert profile dans sync-role:', profileUpsertError.message);
+    if (profileUpdateError) {
+      console.error('Erreur mise à jour profile dans sync-role:', profileUpdateError.message);
       res.status(500).json({ error: 'Échec de synchronisation du profil utilisateur.' });
       return;
     }
@@ -269,6 +419,9 @@ collaboratorCollectionAliases.forEach((path) => {
  */
 app.get('/api/profile/me', requireAuth, getCurrentUserProfileHandler);
 app.patch('/api/profile/me', requireAuth, requirePermission('profile.update'), updateCurrentUserProfileHandler);
+app.get('/api/notifications', requireAuth, listAppNotificationsHandler);
+app.post('/api/notifications/read-all', requireAuth, markAllAppNotificationsReadHandler);
+app.post('/api/notifications/:id/read', requireAuth, markAppNotificationReadHandler);
 
 collaboratorCollectionAliases.forEach((path) => {
   app.patch(`${path}/:id`, requireAuth, requirePermission('users.update'), updateCollaboratorHandler);
@@ -1097,12 +1250,52 @@ app.put('/api/journals/:journalId/entries/:id', requireAuth, requirePermission('
 app.patch('/api/journals/:journalId/entries/:id', requireAuth, requirePermission('journal_entries.update', resolveJournalOwnerContext), updateJournalEntryHandler);
 app.delete('/api/journals/:journalId/entries/:id', requireAuth, requirePermission('journal_entries.delete', resolveJournalOwnerContext), deleteJournalEntryHandler);
 
+// Module Cotations : l'API applique en plus les règles de propriété des commerciaux.
+app.get('/api/quotes/timing-analytics', requireAuth, requirePermission('quotes.timing.read'), getQuoteTimingAnalyticsHandler);
+app.get('/api/quotes/assignees', requireAuth, requirePermission('quotes.assign'), listQuoteAssigneesHandler);
+app.get('/api/quotes/prospects', requireAuth, requirePermission('quotes.read', resolveQuoteCollectionContext), listQuoteProspectsHandler);
+app.get('/api/quotes/contacts', requireAuth, requirePermission('quotes.read', resolveQuoteCollectionContext), listQuoteContactsHandler);
+app.post('/api/quotes/prospects', requireAuth, requirePermission('quotes.create', resolveQuoteCollectionContext), createQuoteProspectHandler);
+app.get('/api/quotes/templates', requireAuth, requirePermission('quotes.templates.read'), listQuoteTemplatesHandler);
+app.post('/api/quotes/templates', requireAuth, requirePermission('quotes.templates.create'), createQuoteTemplateHandler);
+app.patch('/api/quotes/templates/:id', requireAuth, requirePermission('quotes.templates.update', resolveQuoteTemplateOwnerContext), updateQuoteTemplateHandler);
+app.delete('/api/quotes/templates/:id', requireAuth, requirePermission('quotes.templates.delete', resolveQuoteTemplateOwnerContext), deleteQuoteTemplateHandler);
+app.get('/api/quotes', requireAuth, requirePermission('quotes.read', resolveQuoteCollectionContext), listQuotesHandler);
+app.post('/api/quotes', requireAuth, requirePermission('quotes.create', resolveQuoteCollectionContext), createQuoteHandler);
+app.patch('/api/quotes/:id', requireAuth, requirePermission('quotes.update', resolveQuoteOwnerContext), updateQuoteHandler);
+app.delete('/api/quotes/:id', requireAuth, requirePermission('quotes.delete', resolveQuoteOwnerContext), deleteQuoteHandler);
+
+// Module CRM Commercial : isolation des données par commercial, sauf permission d’équipe explicite.
+app.get('/api/crm/overview', requireAuth, requirePermission('crm.read'), getCrmOverviewHandler);
+app.post('/api/crm/clients', requireAuth, requirePermission('crm.create'), createCrmClientHandler);
+app.post('/api/crm/clients/:prospectId/contacts', requireAuth, requirePermission('crm.create'), createCrmContactHandler);
+app.post('/api/crm/opportunities', requireAuth, requirePermission('crm.create'), createCrmOpportunityHandler);
+app.patch('/api/crm/opportunities/:id', requireAuth, requirePermission('crm.update'), updateCrmOpportunityHandler);
+app.post(
+  '/api/crm/opportunities/:id/dossier',
+  requireAuth,
+  requirePermission('crm.create'),
+  requirePermission('dossiers.create'),
+  createCrmDossierHandler
+);
+app.post('/api/crm/activities', requireAuth, requirePermission('crm.create'), createCrmActivityHandler);
+app.patch('/api/crm/activities/:id', requireAuth, requirePermission('crm.update'), updateCrmActivityHandler);
+app.post('/api/crm/campaigns', requireAuth, requirePermission('crm.campaigns.manage'), createCrmCampaignHandler);
+app.post('/api/crm/campaigns/:id/prepare', requireAuth, requirePermission('crm.campaigns.manage'), prepareCrmCampaignHandler);
+
 // Module Prospects : contrôles serveur dédiés à chaque capacité.
 app.get('/api/prospects/assignees', requireAuth, requirePermission('prospects.read'), listProspectAssigneesHandler);
 app.get('/api/prospects', requireAuth, requirePermission('prospects.read'), listProspectsHandler);
 app.post('/api/prospects', requireAuth, requirePermission('prospects.create'), createProspectHandler);
 app.patch('/api/prospects/:id', requireAuth, requirePermission('prospects.update'), updateProspectHandler);
 app.delete('/api/prospects/:id', requireAuth, requirePermission('prospects.delete'), deleteProspectHandler);
+
+// Module Dossiers : chaque opération possède une permission métier dédiée.
+app.get('/api/dossiers', requireAuth, requirePermission('dossiers.read'), listDossiersHandler);
+app.get('/api/dossiers/expenses', requireAuth, requirePermission('dossiers.read'), getDossierExpenseSummaryHandler);
+app.get('/api/dossiers/assignees', requireAuth, requirePermission('crm.team.manage'), listDossierAssigneesHandler);
+app.post('/api/dossiers', requireAuth, requirePermission('dossiers.create'), createDossierHandler);
+app.patch('/api/dossiers/:id/assignment', requireAuth, requirePermission('crm.team.manage'), assignDossierHandler);
 
 // Centre de gestion des accès : contrôles serveur dédiés à chaque capacité.
 app.get('/api/access-control/me', requireAuth, getMyAccessPermissionsHandler);
@@ -1154,6 +1347,17 @@ app.use(
     redirect: false,
   }),
 );
+
+// Garde-fou pour les ressources statiques introuvables (.js, .css, .ico, etc.) :
+// Évite qu'Angular SSR ne serve une page HTML 200 à la place d'un chunk manquant,
+// ce qui provoquerait l'erreur "TypeError: Failed to fetch dynamically imported module".
+app.use((req, res, next) => {
+  if (/\.(?:js|mjs|css|map|ico|png|jpg|jpeg|svg|woff2?|ttf|eot)$/i.test(req.path)) {
+    res.status(404).type('text/plain').send('Asset introuvable');
+    return;
+  }
+  next();
+});
 
 /**
  * Traite les requêtes de rendu Angular SSR :

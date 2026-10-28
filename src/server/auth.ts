@@ -2,6 +2,13 @@ import express from 'express';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { normalizeUserRole } from '../app/core/utils/role.utils';
 import { UserRole } from '../app/core/models/auth.model';
+import { BoundedCache } from './cache.utils';
+
+let cachedAdminClient: {
+  url: string;
+  serviceRoleKey: string;
+  client: SupabaseClient;
+} | null = null;
 
 export function getSupabaseAdmin(): SupabaseClient | null {
   const url = process.env['SUPABASE_URL'] || '';
@@ -9,13 +16,134 @@ export function getSupabaseAdmin(): SupabaseClient | null {
   if (!url || !serviceRoleKey) {
     return null;
   }
-  return createClient(url, serviceRoleKey, {
+
+  if (cachedAdminClient?.url === url && cachedAdminClient.serviceRoleKey === serviceRoleKey) {
+    return cachedAdminClient.client;
+  }
+
+  const client = createClient(url, serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
     },
   });
+  cachedAdminClient = { url, serviceRoleKey, client };
+  return client;
 }
+
+export const AUTH_TOKEN_CACHE_TTL_MS = 60_000;
+export const SERVER_PROFILE_CACHE_TTL_MS = 60_000;
+
+// Caches bornés LRU (règle S11 : taille max 500 pour protection anti-DoS OOM)
+const verifiedTokenCache = new BoundedCache<string, Awaited<ReturnType<SupabaseClient['auth']['getUser']>>>({
+  maxSize: 500,
+  defaultTtlMs: AUTH_TOKEN_CACHE_TTL_MS,
+});
+
+export const clearVerifiedTokenCache = (): void => {
+  verifiedTokenCache.clear();
+};
+
+export interface ServerUserProfile {
+  role: string;
+  is_active: boolean;
+}
+
+const serverProfileCache = new BoundedCache<string, ServerUserProfile | null>({
+  maxSize: 500,
+  defaultTtlMs: SERVER_PROFILE_CACHE_TTL_MS,
+});
+
+export const clearServerProfileCache = (userId?: string): void => {
+  if (userId) {
+    serverProfileCache.delete(userId);
+  } else {
+    serverProfileCache.clear();
+  }
+};
+
+export async function updateExistingUserProfileRole(
+  adminClient: SupabaseClient,
+  userId: string,
+  role: UserRole,
+  email?: string | null
+) {
+  clearServerProfileCache(userId);
+  const profileUpdates: { role: UserRole; email?: string; updated_at: string } = {
+    role,
+    updated_at: new Date().toISOString(),
+  };
+  if (email) profileUpdates.email = email;
+
+  return adminClient.from('profiles').update(profileUpdates).eq('id', userId);
+}
+
+export async function loadServerUserProfile(
+  supabaseAdmin: SupabaseClient,
+  userId: string,
+  skipCache = false
+): Promise<ServerUserProfile | null> {
+  if (!skipCache) {
+    const cached = serverProfileCache.get(userId);
+    if (cached !== undefined) {
+      return cached;
+    }
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('profiles')
+    .select('role, is_active')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) {
+    return null;
+  }
+
+  const profile = !data ? null : data;
+  serverProfileCache.set(userId, profile, SERVER_PROFILE_CACHE_TTL_MS);
+  return profile;
+}
+
+export const createInFlightTokenLookup = <T>(
+  lookup: (token: string) => Promise<T>
+): ((token: string) => Promise<T>) => {
+  const requests = new Map<string, Promise<T>>();
+  return (token) => {
+    const pending = requests.get(token);
+    if (pending) return pending;
+
+    const request = lookup(token).finally(() => {
+      if (requests.get(token) === request) requests.delete(token);
+    });
+    requests.set(token, request);
+    return request;
+  };
+};
+
+const rawLookupVerifiedUser = createInFlightTokenLookup((token: string) => {
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) throw new Error('Service d’authentification indisponible.');
+  return supabaseAdmin.auth.getUser(token);
+});
+
+export const lookupVerifiedUser = async (
+  token: string,
+  skipCache = false
+): Promise<Awaited<ReturnType<SupabaseClient['auth']['getUser']>>> => {
+  if (!skipCache) {
+    const cached = verifiedTokenCache.get(token);
+    if (cached !== undefined) {
+      return cached;
+    }
+  }
+
+  const result = await rawLookupVerifiedUser(token);
+  if (!result.error && result.data?.user) {
+    verifiedTokenCache.set(token, result, AUTH_TOKEN_CACHE_TTL_MS);
+  }
+  return result;
+};
 
 const getAdminEmailsFromEnv = (): string[] => {
   return (process.env['ADMIN_EMAILS'] || '')
@@ -31,20 +159,21 @@ const getBearerToken = (req: express.Request): string => {
 
 export async function resolveServerRole(
   supabaseAdmin: SupabaseClient,
-  user: { id: string; email?: string | null; app_metadata?: Record<string, unknown> }
+  user: { id: string; email?: string | null; app_metadata?: Record<string, unknown>; email_confirmed_at?: string | null },
+  preloadedProfile?: ServerUserProfile | null
 ): Promise<UserRole | null> {
-  const { data: profile, error: profileError } = await supabaseAdmin
-    .from('profiles')
-    .select('role, is_active')
-    .eq('id', user.id)
-    .maybeSingle();
+  const profile = preloadedProfile === undefined
+    ? await loadServerUserProfile(supabaseAdmin, user.id)
+    : preloadedProfile;
 
-  if (profileError || !profile || profile.is_active !== true) {
+  if (!profile || profile.is_active !== true) {
     return null;
   }
 
   const email = (user.email || '').toLowerCase().trim();
-  if (email && getAdminEmailsFromEnv().includes(email)) {
+  // Sécurité S1/S6 : refuser si l'email est explicitement non confirmé dans auth.users
+  const isEmailUnconfirmed = user.email_confirmed_at === null || user.email_confirmed_at === '';
+  if (email && !isEmailUnconfirmed && getAdminEmailsFromEnv().includes(email)) {
     return 'admin';
   }
 
@@ -66,14 +195,15 @@ export async function requireAuth(req: express.Request, res: express.Response, n
   }
 
   try {
-    const { data, error } = await supabaseAdmin.auth.getUser(token);
+    const { data, error } = await lookupVerifiedUser(token);
     if (error || !data.user) {
       res.status(401).json({ error: 'Jeton d’authentification invalide ou expiré' });
       return;
     }
 
     const user = data.user;
-    const resolvedRole = await resolveServerRole(supabaseAdmin, user);
+    const profile = await loadServerUserProfile(supabaseAdmin, user.id);
+    const resolvedRole = await resolveServerRole(supabaseAdmin, user, profile);
     if (!resolvedRole) {
       res.status(403).json({ error: 'Compte inactif ou profil utilisateur indisponible.' });
       return;
@@ -86,6 +216,7 @@ export async function requireAuth(req: express.Request, res: express.Response, n
       app_metadata: user.app_metadata,
       user_metadata: user.user_metadata,
     };
+    (req as unknown as Record<string, unknown>)['authProfile'] = profile;
     next();
   } catch (err: unknown) {
     console.error('Échec de la validation de session:', err);
@@ -124,7 +255,7 @@ export async function requireAdmin(req: express.Request, res: express.Response, 
   }
 
   try {
-    const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(token);
+    const { data: authData, error: authError } = await lookupVerifiedUser(token);
     const user = authData?.user;
     if (authError || !user) {
       res.status(401).json({ error: 'Session invalide ou expirée' });
@@ -139,25 +270,8 @@ export async function requireAdmin(req: express.Request, res: express.Response, 
       return;
     }
 
-    const appRole = normalizeUserRole(user.app_metadata?.['role'] as string);
-    if (appRole !== 'admin') {
-      try {
-        await supabaseAdmin.auth.admin.updateUserById(user.id, {
-          app_metadata: { ...user.app_metadata, role: 'admin' },
-        });
-        await supabaseAdmin.from('profiles').upsert(
-          {
-            id: user.id,
-            email: user.email,
-            role: 'admin',
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'id' }
-        );
-      } catch (syncErr) {
-        console.warn('Auto-réparation du rôle admin (non-bloquante) :', syncErr);
-      }
-    }
+    // Règle S11 : Aucun auto-heal (UPDATE) dans un middleware ou handler GET.
+    // La synchronisation de métadonnées s'effectue via l'endpoint dédié POST /api/auth/sync-role.
 
     (req as unknown as Record<string, unknown>)['user'] = {
       id: user.id,

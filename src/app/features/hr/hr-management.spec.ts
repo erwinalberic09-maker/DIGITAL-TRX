@@ -2,9 +2,10 @@ import { TestBed } from '@angular/core/testing';
 import { HrManagement } from './hr-management';
 import { UserService } from '../../core/services/user.service';
 import { AuthService } from '../../core/services/auth.service';
+import { AccessControlService } from '../../core/services/access-control.service';
 import { SupabaseService } from '../../core/services/supabase.service';
 import { UserProfile } from '../../core/models/auth.model';
-import { signal } from '@angular/core';
+import { signal, WritableSignal } from '@angular/core';
 import { vi } from 'vitest';
 
 describe('HrManagement Component', () => {
@@ -15,9 +16,17 @@ describe('HrManagement Component', () => {
     error: () => string | null;
     createUser: ReturnType<typeof vi.fn>;
     updateUser: ReturnType<typeof vi.fn>;
+    loadInitialUsers: ReturnType<typeof vi.fn>;
+    clearAllUsers: ReturnType<typeof vi.fn>;
   };
   let mockAuthService: {
-    isAdmin: () => boolean;
+    isAdmin: WritableSignal<boolean>;
+  };
+  let mockAccessControlService: {
+    roles: () => { id: string; roleKey: string; label: string; description: string | null; isActive: boolean }[];
+    hasPermission: ReturnType<typeof vi.fn>;
+    loadRoles: ReturnType<typeof vi.fn>;
+    assignRole: ReturnType<typeof vi.fn>;
   };
 
   const sampleUsers: UserProfile[] = [
@@ -52,10 +61,27 @@ describe('HrManagement Component', () => {
       error: () => null,
       createUser: vi.fn().mockResolvedValue({ success: true, user: sampleUsers[1] }),
       updateUser: vi.fn().mockResolvedValue({ success: true, user: sampleUsers[1] }),
+      loadInitialUsers: vi.fn().mockResolvedValue(undefined),
+      clearAllUsers: vi.fn(),
     };
 
     mockAuthService = {
       isAdmin: signal(true),
+    };
+
+    mockAccessControlService = {
+      roles: signal([
+        {
+          id: 'role-daf',
+          roleKey: 'daf',
+          label: 'Directeur Administratif & Financier',
+          description: 'Supervision financière et administrative',
+          isActive: true,
+        },
+      ]),
+      hasPermission: vi.fn((permission: string) => permission === 'users.read'),
+      loadRoles: vi.fn().mockResolvedValue(undefined),
+      assignRole: vi.fn().mockResolvedValue({ success: true }),
     };
 
     TestBed.configureTestingModule({
@@ -63,6 +89,7 @@ describe('HrManagement Component', () => {
       providers: [
         { provide: UserService, useValue: mockUserService },
         { provide: AuthService, useValue: mockAuthService },
+        { provide: AccessControlService, useValue: mockAccessControlService },
         { provide: SupabaseService, useValue: { isConfigured: false, supabase: null } },
       ],
     });
@@ -71,10 +98,24 @@ describe('HrManagement Component', () => {
     component = fixture.componentInstance;
   });
 
-  it('devrait être créé avec succès et charger les collaborateurs', () => {
+  it('devrait être créé avec succès et charger les collaborateurs ainsi que les rôles', () => {
     expect(component).toBeTruthy();
     expect(component.users().length).toBe(2);
     expect(component.isAdmin()).toBe(true);
+    const available = component.availableRoles();
+    expect(available.some((r) => r.id === 'daf')).toBe(true);
+  });
+
+  it('n’affiche ni ne charge les collaborateurs sans users.read', () => {
+    mockAccessControlService.hasPermission.mockReturnValue(false);
+    mockAuthService.isAdmin.set(false);
+
+    component.ngOnInit();
+
+    expect(component.canReadUsers()).toBe(false);
+    expect(mockUserService.clearAllUsers).toHaveBeenCalledOnce();
+    expect(mockUserService.loadInitialUsers).not.toHaveBeenCalled();
+    expect(mockAccessControlService.loadRoles).not.toHaveBeenCalled();
   });
 
   it('devrait extraire les départements uniques avec "all"', () => {
@@ -103,6 +144,31 @@ describe('HrManagement Component', () => {
     expect(component.userForm.controls.firstName.value).toBe(user.firstName);
     expect(component.userForm.controls.lastName.value).toBe(user.lastName);
     expect(component.userForm.controls.role.value).toBe(user.role);
+  });
+
+  it('devrait préserver le rôle personnalisé lors de l’ouverture de la modale d’édition', () => {
+    const userWithCustomRole: UserProfile = {
+      ...sampleUsers[1],
+      customRole: 'daf',
+      roleLabel: 'Directeur Administratif & Financier',
+    };
+
+    component.openEditModal(userWithCustomRole);
+
+    expect(component.userForm.controls.role.value).toBe('daf');
+    expect(component.getRoleLabel(component.userForm.controls.role.value)).toBe('Directeur Administratif & Financier');
+  });
+
+  it('devrait affecter un rôle personnalisé via le service d’accès sans l’envoyer au endpoint RH', async () => {
+    component.openEditModal(sampleUsers[1]);
+    component.userForm.controls.role.setValue('daf');
+
+    await component.onSubmit();
+
+    expect(mockUserService.updateUser).toHaveBeenCalledWith('usr-2', expect.not.objectContaining({ role: 'daf' }));
+    expect(mockAccessControlService.assignRole).toHaveBeenCalledWith({ userId: 'usr-2', roleId: 'role-daf' });
+    expect(mockUserService.loadInitialUsers).toHaveBeenCalledOnce();
+    expect(component.successMessage()).toContain('Directeur Administratif & Financier');
   });
 
   it('devrait invalider le formulaire si les champs requis sont vides', () => {

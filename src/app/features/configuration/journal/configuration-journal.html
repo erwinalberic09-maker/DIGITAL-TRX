@@ -19,8 +19,8 @@
               title="Créer un nouveau journal comptable">
               <span>Nouveau</span>
             </button>
-          } @else if (isManagerReadOnly()) {
-            <!-- Indicateur de consultation seule pour les Managers -->
+          } @else if (isReadOnly()) {
+            <!-- Indicateur de consultation seule -->
             <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-slate-200/80 dark:bg-white/10 text-slate-700 dark:text-slate-300 select-none" id="journal-manager-readonly-badge">
               <mat-icon class="!text-[14px] !w-3.5 !h-3.5 text-slate-500">visibility</mat-icon>
               <span>Consultation seule</span>
@@ -88,7 +88,7 @@
                       <span>Exporter (CSV)</span>
                     </button>
 
-                    @if (canCreateJournal()) {
+                    @if (canUpdateJournal()) {
                       <div class="my-1 border-t border-slate-200 dark:border-white/10"></div>
 
                       <!-- 2. Supprimer les éléments sélectionnés -->
@@ -173,7 +173,7 @@
               type="button"
               class="view-btn-list-active p-1.5 rounded transition-all cursor-pointer shadow-xs"
               title="Vue Liste">
-              <mat-icon class="!text-[17px] !w-4.5 !h-4.5 text-white flex items-center justify-center">view_list</mat-icon>
+              <mat-icon class="!text-[17px] !w-4.5 !h-4.5 text-white flex items-center justify-center">reorder</mat-icon>
             </button>
 
             <!-- Bouton Kanban INACTIF -->
@@ -181,7 +181,7 @@
               type="button"
               class="view-btn-kanban p-1.5 rounded transition-colors cursor-pointer"
               title="Vue Kanban">
-              <mat-icon class="!text-[17px] !w-4.5 !h-4.5 flex items-center justify-center">view_kanban</mat-icon>
+              <i class="oi oi-view-kanban" aria-hidden="true"></i>
             </button>
           </div>
         </div>

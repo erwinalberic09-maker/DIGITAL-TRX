@@ -1,6 +1,8 @@
 import express from 'express';
 import { AccessScope, EffectivePermission, PermissionEffect } from '../app/core/models/access-control.model';
-import { getSupabaseAdmin } from './auth';
+import { getSupabaseAdmin, loadServerUserProfile } from './auth';
+import type { ServerUserProfile } from './auth';
+import { BoundedCache } from './cache.utils';
 
 export interface AccessResourceContext {
   subjectUserId?: string;
@@ -21,10 +23,46 @@ interface AccessRule {
   sourceRoleKey?: string;
 }
 
-interface LoadedAccessRules {
+export interface LoadedAccessRules {
   roleKeys: string[];
   rules: AccessRule[];
+  hasActiveRoleAssignments?: boolean;
 }
+
+export const MODULE_CAPABILITY_PREFIXES: Readonly<Record<string, readonly string[]>> = {
+  'module.dashboard.view': ['dashboard.'],
+  'module.accounting.view': ['cashier.', 'journals.', 'journal_entries.'],
+  'module.hr.view': ['hr.', 'users.'],
+  'module.prospects.view': ['prospects.'],
+  'module.quotes.view': ['quotes.'],
+  'module.crm.view': ['crm.'],
+  'module.crm_performance.view': ['quotes.timing.'],
+  'module.dossiers.view': ['dossiers.'],
+  'module.configuration.view': ['configuration.', 'journals.create', 'journals.update', 'journals.delete'],
+  'module.access_control.view': ['access.'],
+};
+
+export const legacyModuleVisibilityPermissions = (roleKeys?: readonly string[]): string[] => {
+  void roleKeys;
+  return [];
+};
+
+export const deriveModuleVisibilityFromCapabilities = (
+  grantedPermissions: readonly string[]
+): string[] => {
+  const visibleModules: string[] = [];
+  for (const [moduleKey, prefixes] of Object.entries(MODULE_CAPABILITY_PREFIXES)) {
+    const hasCapability = prefixes.some((prefix) =>
+      prefix.endsWith('.')
+        ? grantedPermissions.some((perm) => perm.startsWith(prefix))
+        : grantedPermissions.includes(prefix)
+    );
+    if (hasCapability && !visibleModules.includes(moduleKey)) {
+      visibleModules.push(moduleKey);
+    }
+  }
+  return visibleModules;
+};
 
 type ScopeEvaluator = (
   scope: AccessScope,
@@ -86,17 +124,47 @@ const isUnexpired = (expiresAt: unknown, currentTime: number): boolean => {
   return Number.isFinite(expirationTime) && expirationTime > currentTime;
 };
 
-const loadAccessRules = async (userId: string): Promise<LoadedAccessRules | null> => {
+export const resolveEffectiveRoleKeys = (
+  assignedRoleKeys: readonly string[],
+  legacyProfileRole: unknown
+): string[] => {
+  if (assignedRoleKeys.length > 0) return [...new Set(assignedRoleKeys)];
+  return typeof legacyProfileRole === 'string' && legacyProfileRole
+    ? [legacyProfileRole]
+    : [];
+};
+
+export const createAccessRulesLoader = (
+  loadFromDatabase: (
+    userId: string,
+    profile?: ServerUserProfile | null
+  ) => Promise<LoadedAccessRules | null>
+): ((userId: string, profile?: ServerUserProfile | null) => Promise<LoadedAccessRules | null>) => {
+  const requests = new Map<string, Promise<LoadedAccessRules | null>>();
+  return (userId, profile) => {
+    const pending = requests.get(userId);
+    if (pending) return pending;
+
+    const request = loadFromDatabase(userId, profile).finally(() => {
+      if (requests.get(userId) === request) requests.delete(userId);
+    });
+    requests.set(userId, request);
+    return request;
+  };
+};
+
+const loadAccessRulesFromDatabase = async (
+  userId: string,
+  preloadedProfile?: ServerUserProfile | null
+): Promise<LoadedAccessRules | null> => {
   const adminClient = getSupabaseAdmin();
   if (!adminClient) return null;
 
-  const { data: profile, error: profileError } = await adminClient
-    .from('profiles')
-    .select('is_active, role')
-    .eq('id', userId)
-    .maybeSingle();
+  const profile = preloadedProfile === undefined
+    ? await loadServerUserProfile(adminClient, userId)
+    : preloadedProfile;
 
-  if (profileError || !profile || profile.is_active !== true) return null;
+  if (!profile || profile.is_active !== true) return null;
 
   const currentTime = Date.now();
   const [assignmentsResult, overridesResult] = await Promise.all([
@@ -115,7 +183,20 @@ const loadAccessRules = async (userId: string): Promise<LoadedAccessRules | null
   const roleAssignments = (assignmentsResult.data || []).filter((assignment) =>
     isUnexpired(assignment.expires_at, currentTime)
   );
-  const roleIds = [...new Set(roleAssignments.map((assignment) => String(assignment.role_id)))];
+  let roleIds = [...new Set(roleAssignments.map((assignment) => String(assignment.role_id)))];
+
+  if (roleIds.length === 0 && profile.role) {
+    const roleLookupResult = await adminClient
+      .from('access_roles')
+      .select('id, role_key')
+      .eq('role_key', profile.role)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (roleLookupResult.data?.id) {
+      roleIds = [String(roleLookupResult.data.id)];
+    }
+  }
+
   const roleRowsResult = roleIds.length > 0
     ? await adminClient
         .from('access_roles')
@@ -154,19 +235,68 @@ const loadAccessRules = async (userId: string): Promise<LoadedAccessRules | null
       isUserOverride: true,
     }));
 
-  const resolvedRoleKeys = roleRows.map((role) => role.role_key);
-  if (profile?.role && !resolvedRoleKeys.includes(String(profile.role))) {
-    resolvedRoleKeys.push(String(profile.role));
-  }
+  const resolvedRoleKeys = resolveEffectiveRoleKeys(
+    roleRows.map((role) => role.role_key),
+    profile.role
+  );
 
   return {
     roleKeys: resolvedRoleKeys,
     rules: [...roleRules, ...userRules],
+    hasActiveRoleAssignments: activeRoleIds.length > 0,
   };
 };
 
-export const resolveEffectivePermissions = async (userId: string): Promise<EffectivePermission[] | null> => {
-  const accessRules = await loadAccessRules(userId);
+export const ACCESS_RULES_CACHE_TTL_MS = 60_000;
+
+// Cache borné LRU (règle S11 : taille max 500 pour protection anti-DoS OOM)
+const accessRulesCache = new BoundedCache<string, LoadedAccessRules | null>({
+  maxSize: 500,
+  defaultTtlMs: ACCESS_RULES_CACHE_TTL_MS,
+});
+
+export const clearAccessRulesCache = (userId?: string): void => {
+  if (userId) {
+    accessRulesCache.delete(userId);
+  } else {
+    accessRulesCache.clear();
+  }
+};
+
+const rawLoadAccessRules = createAccessRulesLoader(loadAccessRulesFromDatabase);
+
+export const loadAccessRules = async (
+  userId: string,
+  profile?: ServerUserProfile | null,
+  skipCache = false
+): Promise<LoadedAccessRules | null> => {
+  if (!skipCache) {
+    const cached = accessRulesCache.get(userId);
+    if (cached !== undefined) {
+      return cached;
+    }
+  }
+
+  try {
+    const rules = await rawLoadAccessRules(userId, profile);
+    if (rules !== null) {
+      accessRulesCache.set(userId, rules, ACCESS_RULES_CACHE_TTL_MS);
+    }
+    return rules;
+  } catch (error) {
+    const existing = accessRulesCache.get(userId);
+    if (existing !== undefined) {
+      return existing;
+    }
+    throw error;
+  }
+};
+
+export const resolveEffectivePermissions = async (
+  userId: string,
+  profile?: ServerUserProfile | null
+): Promise<EffectivePermission[] | null> => {
+  const accessRules = await loadAccessRules(userId, profile);
   if (!accessRules) return null;
 
   const effective = accessRules.rules.map((rule) => ({
@@ -181,24 +311,35 @@ export const resolveEffectivePermissions = async (userId: string): Promise<Effec
   if (!effective.some((p) => p.permissionKey === 'apps.view')) {
     effective.push({ permissionKey: 'apps.view', scope: { type: 'all', version: 1 }, effect: 'allow', sourceRoleKey: primaryRole });
   }
-  if (!effective.some((p) => p.permissionKey === 'dashboard.view')) {
-    effective.push({ permissionKey: 'dashboard.view', scope: { type: 'all', version: 1 }, effect: 'allow', sourceRoleKey: primaryRole });
-  }
   if (!effective.some((p) => p.permissionKey === 'profile.read')) {
     effective.push({ permissionKey: 'profile.read', scope: { type: 'all', version: 1 }, effect: 'allow', sourceRoleKey: primaryRole });
+  }
+
+  // Déduire automatiquement la visibilité de module pour tout rôle ayant au moins une capacité métier
+  const grantedPermissionKeys = effective
+    .filter((p) => p.effect === 'allow')
+    .map((p) => p.permissionKey);
+  const derivedModules = deriveModuleVisibilityFromCapabilities(grantedPermissionKeys);
+  for (const moduleKey of derivedModules) {
+    if (!effective.some((p) => p.permissionKey === moduleKey)) {
+      effective.push({
+        permissionKey: moduleKey,
+        scope: { type: 'all', version: 1 },
+        effect: 'allow',
+        sourceRoleKey: primaryRole,
+      });
+    }
   }
 
   return effective;
 };
 
-export const hasPermission = async (
+const evaluatePermission = (
   userId: string,
   permissionKey: string,
   resource: AccessResourceContext | undefined,
-  loadedRules?: LoadedAccessRules
-): Promise<boolean> => {
-  const accessRules = loadedRules || await loadAccessRules(userId);
-  if (!accessRules) return false;
+  accessRules: LoadedAccessRules
+): boolean => {
 
   // 1. Règle d'or : le rôle admin possède tous les droits sans exception
   if (accessRules.roleKeys.includes('admin')) {
@@ -206,7 +347,7 @@ export const hasPermission = async (
   }
 
   // 2. Accès garanti aux modules universels pour tout collaborateur actif
-  if (['apps.view', 'dashboard.view', 'profile.read'].includes(permissionKey)) {
+  if (['apps.view', 'profile.read'].includes(permissionKey)) {
     return true;
   }
 
@@ -226,39 +367,33 @@ export const hasPermission = async (
   if (matchingRules.some((rule) => !rule.isUserOverride && scopeAllows(rule.scope, actor, resource))) {
     return true;
   }
+  if (matchingRules.some((rule) => !rule.isUserOverride)) {
+    return false;
+  }
 
-  // 3. Repli métier par rôle canonique côté serveur
-  const hasRole = (role: string) => accessRules.roleKeys.includes(role);
-  if (hasRole('manager') && ['cashier.read', 'cashier.write', 'hr.read', 'hr.write', 'prospects.read', 'prospects.write'].includes(permissionKey)) {
-    return true;
-  }
-  if ((hasRole('tresorier') || hasRole('comptable')) && [
-    'cashier.read',
-    'cashier.write',
-    'cashier.update',
-    'cashier.status_update',
-    'cashier.duplicate',
-    'journals.read',
-    'journals.write',
-    'journals.create',
-    'journals.update',
-    'journals.delete',
-    'journal_entries.read',
-    'journal_entries.chart_read',
-    'journal_entries.create',
-    'journal_entries.update',
-    'journal_entries.delete',
-  ].includes(permissionKey)) {
-    return true;
-  }
-  if (hasRole('caissiere') && ['cashier.read', 'cashier.write', 'cashier.status_update', 'cashier.update'].includes(permissionKey)) {
-    return true;
-  }
-  if (hasRole('employe') && ['hr.read'].includes(permissionKey)) {
+  // Déduction automatique de module.*.view depuis les capacités accordées au rôle
+  const grantedRoleKeys = accessRules.rules
+    .filter((r) => !r.isUserOverride && r.effect === 'allow')
+    .map((r) => r.permissionKey);
+  if (deriveModuleVisibilityFromCapabilities(grantedRoleKeys).includes(permissionKey)) {
     return true;
   }
 
+  // 3. Souveraineté stricte des choix de l'administrateur :
+  // Si la permission n'est ni universelle, ni dérivée pour la visibilité du module,
+  // ni expressément accordée dans les règles de rôle ou surcharges configurées par l'administrateur,
+  // elle est STRICTEMENT refusée (aucun repli permissif implicite).
   return false;
+};
+
+export const hasPermission = async (
+  userId: string,
+  permissionKey: string,
+  resource: AccessResourceContext | undefined,
+  loadedRules?: LoadedAccessRules
+): Promise<boolean> => {
+  const accessRules = loadedRules || await loadAccessRules(userId);
+  return accessRules ? evaluatePermission(userId, permissionKey, resource, accessRules) : false;
 };
 
 export type AccessResourceResolver = (
@@ -294,7 +429,8 @@ export const requirePermission = (
   }
 
   try {
-    const accessRules = await loadAccessRules(user.id);
+    const authProfile = (req as unknown as Record<string, unknown>)['authProfile'] as ServerUserProfile | null | undefined;
+    const accessRules = await loadAccessRules(user.id, authProfile);
     if (!accessRules) {
       res.status(503).json({ error: 'Les autorisations ne sont pas disponibles.' });
       return;
@@ -325,13 +461,7 @@ export const requestHasPermission = (
   const actor = (req as unknown as Record<string, unknown>)['user'] as { id?: string } | undefined;
   if (!actor?.id) return false;
 
-  const matchingRules = accessRules.rules.filter((rule) => rule.permissionKey === permissionKey);
-  const matchingOverrides = matchingRules.filter((rule) => rule.isUserOverride);
-  if (matchingOverrides.some((rule) => rule.effect === 'deny' && scopeAllows(rule.scope, { userId: actor.id! }, resource))) {
-    return false;
-  }
-  if (matchingOverrides.some((rule) => rule.effect === 'allow' && scopeAllows(rule.scope, { userId: actor.id! }, resource))) {
-    return true;
-  }
-  return matchingRules.some((rule) => !rule.isUserOverride && scopeAllows(rule.scope, { userId: actor.id! }, resource));
+  return evaluatePermission(actor.id, permissionKey, resource, accessRules);
 };
+
+

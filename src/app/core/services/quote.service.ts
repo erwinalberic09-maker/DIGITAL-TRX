@@ -1,0 +1,437 @@
+import { Injectable, computed, effect, inject, signal } from '@angular/core';
+import {
+  QuoteAssignee,
+  QuoteColumn,
+  QuoteContact,
+  QuoteRow,
+  QuoteStatus,
+  QuoteTemplate,
+  QuoteTimingAnalyticsResponse,
+  QuoteTimingFilter,
+  SalesQuote,
+  SeaFreightDetails,
+} from '../models/quote.model';
+import { Prospect } from '../models/prospect.model';
+import { AuthService } from './auth.service';
+import { getApiErrorMessage } from '../utils/api-error.util';
+
+export interface QuoteInput {
+  prospectId: string;
+  opportunityId?: string | null;
+  contactId?: string | null;
+  assignedTo?: string;
+  title: string;
+  currency: string;
+  columns: QuoteColumn[];
+  rows: QuoteRow[];
+  totalColumnId: string;
+  status: QuoteStatus;
+  validUntil: string | null;
+  seaFreight: SeaFreightDetails;
+}
+
+export interface QuoteApiResult<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+@Injectable({ providedIn: 'root' })
+export class QuoteService {
+  private static readonly GET_CACHE_TTL_MS = 30_000;
+  private readonly authService = inject(AuthService);
+  private dataUserId: string | null | undefined;
+  private readonly getCache = new Map<string, { cachedAt: number; data: unknown }>();
+  private readonly _quotes = signal<SalesQuote[]>([]);
+  private readonly _prospects = signal<Prospect[]>([]);
+  private readonly _contacts = signal<QuoteContact[]>([]);
+  private readonly _assignees = signal<QuoteAssignee[]>([]);
+  private readonly _templates = signal<QuoteTemplate[]>([]);
+  private readonly _isLoading = signal(false);
+  private readonly _error = signal<string | null>(null);
+  private readonly _timingAnalytics = signal<QuoteTimingAnalyticsResponse | null>(null);
+  private readonly _isTimingLoading = signal(false);
+  private readonly _timingError = signal<string | null>(null);
+
+  public readonly quotes = computed(() => this._quotes());
+  public readonly prospects = computed(() => this._prospects());
+  public readonly contacts = computed(() => this._contacts());
+  public readonly assignees = computed(() => this._assignees());
+  public readonly templates = computed(() => this._templates());
+  public readonly isLoading = computed(() => this._isLoading());
+  public readonly error = computed(() => this._error());
+  public readonly timingAnalytics = computed(() => this._timingAnalytics());
+  public readonly isTimingLoading = computed(() => this._isTimingLoading());
+  public readonly timingError = computed(() => this._timingError());
+
+  constructor() {
+    effect(() => {
+      this.authService.currentUser();
+      this.resetForAccountChange();
+    });
+  }
+
+  public async loadTimingAnalytics(filter?: Partial<QuoteTimingFilter>): Promise<boolean> {
+    this.resetForAccountChange();
+    this._isTimingLoading.set(true);
+    this._timingError.set(null);
+
+    const query = new URLSearchParams();
+    if (filter?.period) query.set('period', filter.period);
+    if (filter?.date) query.set('date', filter.date);
+    if (filter?.repId && filter.repId !== 'all') query.set('repId', filter.repId);
+
+    const result = await this.request<QuoteTimingAnalyticsResponse>(
+      `/api/quotes/timing-analytics${query.size ? `?${query.toString()}` : ''}`,
+      'GET',
+      undefined,
+      false
+    );
+
+    this._isTimingLoading.set(false);
+
+    if (!this.isCurrentDataUser()) return false;
+    if (!result.success || !result.data) {
+      this._timingAnalytics.set(null);
+      this._timingError.set(result.error || 'Impossible de charger les métriques des cotations.');
+      return false;
+    }
+
+    this._timingAnalytics.set(result.data);
+    this._timingError.set(null);
+    return true;
+  }
+
+  public async loadQuotes(status = ''): Promise<boolean> {
+    this.resetForAccountChange();
+    const query = new URLSearchParams();
+    if (status) query.set('status', status);
+    const result = await this.request<{ quotes: Record<string, unknown>[] }>(
+      `/api/quotes${query.size ? `?${query.toString()}` : ''}`,
+      'GET',
+      undefined,
+      true
+    );
+    if (!this.isCurrentDataUser()) return false;
+    if (!result.success || !result.data) {
+      this._quotes.set([]);
+      this._error.set(result.error || 'Impossible de charger les cotations.');
+      return false;
+    }
+    this._quotes.set((result.data.quotes || []).map((row) => this.mapQuote(row)));
+    this._error.set(null);
+    return true;
+  }
+
+  public async loadProspects(): Promise<boolean> {
+    this.resetForAccountChange();
+    const result = await this.request<{ prospects: Record<string, unknown>[] }>('/api/quotes/prospects');
+    if (!this.isCurrentDataUser()) return false;
+    if (!result.success || !result.data) {
+      this._prospects.set([]);
+      this._error.set(result.error || 'Impossible de charger les clients.');
+      return false;
+    }
+    this._prospects.set((result.data.prospects || []).map((row) => ({
+      id: String(row['id'] ?? ''),
+      name: String(row['name'] ?? ''),
+      companyName: typeof row['company_name'] === 'string' ? row['company_name'] : null,
+      contactName: typeof row['contact_name'] === 'string' ? row['contact_name'] : null,
+      contactRole: null,
+      email: typeof row['email'] === 'string' ? row['email'] : null,
+      phone: typeof row['phone'] === 'string' ? row['phone'] : null,
+      source: null,
+      status: String(row['status'] ?? 'new') as Prospect['status'],
+      assignedTo: typeof row['assigned_to'] === 'string' ? row['assigned_to'] : null,
+      estimatedValue: null,
+      currency: 'XAF',
+      nextFollowUp: null,
+      notes: '',
+      createdBy: null,
+      createdAt: '',
+      updatedAt: '',
+    })));
+    this._error.set(null);
+    return true;
+  }
+
+  public async loadAssignees(): Promise<boolean> {
+    this.resetForAccountChange();
+    const result = await this.request<{ assignees: Record<string, unknown>[] }>('/api/quotes/assignees');
+    if (!this.isCurrentDataUser()) return false;
+    if (!result.success || !result.data) {
+      this._assignees.set([]);
+      this._error.set(result.error || 'Impossible de charger les commerciaux.');
+      return false;
+    }
+
+    this._assignees.set((result.data.assignees || []).map((row) => ({
+      id: String(row['id'] ?? ''),
+      firstName: String(row['first_name'] ?? ''),
+      lastName: String(row['last_name'] ?? ''),
+      email: String(row['email'] ?? ''),
+    })));
+    this._error.set(null);
+    return true;
+  }
+
+  public async loadContacts(prospectId: string): Promise<boolean> {
+    this.resetForAccountChange();
+    if (!prospectId) {
+      this._contacts.set([]);
+      return true;
+    }
+    const query = new URLSearchParams({ prospectId });
+    const result = await this.request<{ contacts: Record<string, unknown>[] }>(
+      `/api/quotes/contacts?${query.toString()}`
+    );
+    if (!this.isCurrentDataUser()) return false;
+    if (!result.success || !result.data) {
+      this._contacts.set([]);
+      this._error.set(result.error || 'Impossible de charger les contacts du client.');
+      return false;
+    }
+    this._contacts.set((result.data.contacts || []).map((row) => ({
+      id: String(row['id'] ?? ''),
+      prospectId: String(row['prospect_id'] ?? ''),
+      fullName: String(row['full_name'] ?? ''),
+      jobTitle: typeof row['job_title'] === 'string' ? row['job_title'] : null,
+      email: typeof row['email'] === 'string' ? row['email'] : null,
+      phone: typeof row['phone'] === 'string' ? row['phone'] : null,
+    })));
+    this._error.set(null);
+    return true;
+  }
+
+  public async loadTemplates(): Promise<boolean> {
+    this.resetForAccountChange();
+    const result = await this.request<{ templates: Record<string, unknown>[] }>('/api/quotes/templates');
+    if (!this.isCurrentDataUser()) return false;
+    if (!result.success || !result.data) {
+      this._templates.set([]);
+      this._error.set(result.error || 'Impossible de charger les modèles.');
+      return false;
+    }
+    this._templates.set((result.data.templates || []).map((row) => this.mapTemplate(row)));
+    this._error.set(null);
+    return true;
+  }
+
+  public async createQuote(input: QuoteInput): Promise<QuoteApiResult<SalesQuote>> {
+    return this.mutate<{ quote: Record<string, unknown> }>('/api/quotes', 'POST', input)
+      .then((result) => result.success && result.data
+        ? { success: true, data: this.mapQuote(result.data.quote) }
+        : { success: false, error: result.error });
+  }
+
+  public async updateQuote(id: string, input: QuoteInput): Promise<QuoteApiResult<SalesQuote>> {
+    return this.mutate<{ quote: Record<string, unknown> }>(`/api/quotes/${encodeURIComponent(id)}`, 'PATCH', input)
+      .then((result) => result.success && result.data
+        ? { success: true, data: this.mapQuote(result.data.quote) }
+        : { success: false, error: result.error });
+  }
+
+  public deleteQuote(id: string): Promise<QuoteApiResult<{ deleted: boolean }>> {
+    return this.mutate(`/api/quotes/${encodeURIComponent(id)}`, 'DELETE');
+  }
+
+  public async createProspect(input: {
+    companyName: string;
+    contactName?: string;
+    email?: string;
+    phone?: string;
+    assignedTo?: string;
+  }): Promise<QuoteApiResult<Prospect>> {
+    const result = await this.mutate<{ prospect: Record<string, unknown> }>('/api/quotes/prospects', 'POST', input);
+    if (!result.success || !result.data) return { success: false, error: result.error };
+    const row = result.data.prospect;
+    const prospect = this._prospects()[0] && String(this._prospects()[0].id) === String(row['id'])
+      ? this._prospects()[0]
+      : {
+        id: String(row['id'] ?? ''),
+        name: String(row['name'] ?? input.companyName),
+        companyName: typeof row['company_name'] === 'string' ? row['company_name'] : input.companyName,
+        contactName: typeof row['contact_name'] === 'string' ? row['contact_name'] : null,
+        email: typeof row['email'] === 'string' ? row['email'] : null,
+        phone: typeof row['phone'] === 'string' ? row['phone'] : null,
+        status: String(row['status'] ?? 'new') as Prospect['status'],
+        assignedTo: typeof row['assigned_to'] === 'string' ? row['assigned_to'] : null,
+        contactRole: null,
+        source: null,
+        estimatedValue: null,
+        currency: 'XAF',
+        nextFollowUp: null,
+        notes: '',
+        createdBy: null,
+        createdAt: '',
+        updatedAt: '',
+      };
+    this._prospects.update((prospects) => [prospect, ...prospects.filter((item) => item.id !== prospect.id)]);
+    return { success: true, data: prospect };
+  }
+
+  public async createTemplate(input: {
+    name: string;
+    columns: QuoteColumn[];
+    totalColumnId: string;
+  }): Promise<QuoteApiResult<QuoteTemplate>> {
+    const result = await this.mutate<{ template: Record<string, unknown> }>('/api/quotes/templates', 'POST', input);
+    return result.success && result.data
+      ? { success: true, data: this.mapTemplate(result.data.template) }
+      : { success: false, error: result.error };
+  }
+
+  public deleteTemplate(id: string): Promise<QuoteApiResult<{ deleted: boolean }>> {
+    return this.mutate(`/api/quotes/templates/${encodeURIComponent(id)}`, 'DELETE');
+  }
+
+  private async mutate<T>(path: string, method: string, body?: unknown): Promise<QuoteApiResult<T>> {
+    return this.request<T>(path, method, body);
+  }
+
+  private resetForAccountChange(): void {
+    const userId = this.authService.currentUser()?.id ?? null;
+    if (this.dataUserId === userId) return;
+
+    this.dataUserId = userId;
+    this._quotes.set([]);
+    this._prospects.set([]);
+    this._contacts.set([]);
+    this._assignees.set([]);
+    this._templates.set([]);
+    this._error.set(null);
+    this.getCache.clear();
+  }
+
+  private isCurrentDataUser(): boolean {
+    return this.dataUserId === (this.authService.currentUser()?.id ?? null);
+  }
+
+  private async request<T>(
+    path: string,
+    method = 'GET',
+    body?: unknown,
+    showLoading = false
+  ): Promise<QuoteApiResult<T>> {
+    this.resetForAccountChange();
+    const requestedUserId = this.authService.currentUser()?.id ?? null;
+    const token = this.authService.token();
+    if (!token) return { success: false, error: 'Session authentifiée introuvable.' };
+
+    const cacheKey = `${requestedUserId}:${path}`;
+    if (method === 'GET') {
+      const cached = this.getCache.get(cacheKey);
+      if (cached && Date.now() - cached.cachedAt < QuoteService.GET_CACHE_TTL_MS) {
+        return { success: true, data: cached.data as T };
+      }
+    }
+
+    const action = method === 'GET'
+      ? path.endsWith('/prospects')
+        ? 'charger les clients des cotations'
+        : path.endsWith('/assignees')
+          ? 'charger les commerciaux'
+          : path.includes('/contacts?')
+            ? 'charger les contacts du client'
+            : path.endsWith('/templates')
+              ? 'charger les modèles de cotation'
+              : 'charger les cotations'
+      : method === 'POST'
+        ? 'créer la cotation'
+        : method === 'PATCH'
+          ? 'modifier la cotation'
+          : 'supprimer la cotation';
+
+    if (showLoading) this._isLoading.set(true);
+    try {
+      const response = await fetch(path, {
+        method,
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      const payload: unknown = await response.json().catch(() => null);
+      if ((this.authService.currentUser()?.id ?? null) !== requestedUserId) {
+        return { success: false, error: 'La session a changé pendant la requête.' };
+      }
+      if (!response.ok) {
+        return {
+          success: false,
+          error: getApiErrorMessage(payload, `Impossible de ${action} (erreur HTTP ${response.status}).`),
+        };
+      }
+      if (typeof payload !== 'object' || payload === null) {
+        return { success: false, error: 'Le service Cotations a renvoyé une réponse invalide.' };
+      }
+      if (method === 'GET') this.getCache.set(cacheKey, { cachedAt: Date.now(), data: payload });
+      else this.getCache.clear();
+      return { success: true, data: payload as T };
+    } catch (requestError: unknown) {
+      console.warn('Erreur pendant la requête au service Cotations:', requestError);
+      const message = requestError instanceof TypeError
+        ? `Connexion au service Cotations impossible pour ${action}. Vérifiez votre connexion puis réessayez.`
+        : `Impossible de traiter la demande pour ${action}. Réessayez.`;
+      return { success: false, error: message };
+    } finally {
+      if (showLoading) this._isLoading.set(false);
+    }
+  }
+
+  private mapQuote(row: Record<string, unknown>): SalesQuote {
+    return {
+      id: String(row['id'] ?? ''),
+      quoteNumber: String(row['quoteNumber'] ?? row['quote_number'] ?? ''),
+      prospectId: String(row['prospectId'] ?? row['prospect_id'] ?? ''),
+      opportunityId: typeof row['opportunityId'] === 'string' ? row['opportunityId']
+        : typeof row['opportunity_id'] === 'string' ? row['opportunity_id'] : null,
+      contactId: typeof row['contactId'] === 'string' ? row['contactId']
+        : typeof row['contact_id'] === 'string' ? row['contact_id'] : null,
+      contactName: typeof row['contactName'] === 'string' ? row['contactName'] : null,
+      opportunityTitle: typeof row['opportunityTitle'] === 'string' ? row['opportunityTitle'] : null,
+      dossierId: typeof row['dossierId'] === 'string' ? row['dossierId'] : null,
+      dossierNumber: typeof row['dossierNumber'] === 'string' ? row['dossierNumber'] : null,
+      prospectName: String(row['prospectName'] ?? ''),
+      assignedTo: typeof row['assignedTo'] === 'string' ? row['assignedTo']
+        : typeof row['assigned_to'] === 'string' ? row['assigned_to'] : null,
+      assignedToName: typeof row['assignedToName'] === 'string' ? row['assignedToName'] : null,
+      createdBy: typeof row['createdBy'] === 'string' ? row['createdBy']
+        : typeof row['created_by'] === 'string' ? row['created_by'] : null,
+      title: String(row['title'] ?? 'Cotation'),
+      currency: String(row['currency'] ?? 'XAF'),
+      columns: Array.isArray(row['columns']) ? row['columns'] as QuoteColumn[] : [],
+      rows: Array.isArray(row['rows']) ? row['rows'] as QuoteRow[] : [],
+      totalColumnId: String(row['totalColumnId'] ?? row['total_column_id'] ?? ''),
+      totalAmount: Number(row['totalAmount'] ?? row['total_amount'] ?? 0),
+      status: String(row['status'] ?? 'draft') as QuoteStatus,
+      validUntil: typeof row['validUntil'] === 'string' ? row['validUntil']
+        : typeof row['valid_until'] === 'string' ? row['valid_until'] : null,
+      seaFreight: row['seaFreight'] && typeof row['seaFreight'] === 'object'
+        ? row['seaFreight'] as import('../models/quote.model').SeaFreightDetails
+        : row['sea_freight'] && typeof row['sea_freight'] === 'object'
+          ? row['sea_freight'] as import('../models/quote.model').SeaFreightDetails
+          : undefined,
+      sentAt: typeof row['sentAt'] === 'string' ? row['sentAt']
+        : typeof row['sent_at'] === 'string' ? row['sent_at'] : null,
+      respondedAt: typeof row['respondedAt'] === 'string' ? row['respondedAt']
+        : typeof row['responded_at'] === 'string' ? row['responded_at'] : null,
+      createdAt: String(row['createdAt'] ?? row['created_at'] ?? ''),
+      updatedAt: String(row['updatedAt'] ?? row['updated_at'] ?? ''),
+    };
+  }
+
+  private mapTemplate(row: Record<string, unknown>): QuoteTemplate {
+    return {
+      id: String(row['id'] ?? ''),
+      name: String(row['name'] ?? ''),
+      columns: Array.isArray(row['columns']) ? row['columns'] as QuoteColumn[] : [],
+      totalColumnId: String(row['totalColumnId'] ?? row['total_column_id'] ?? ''),
+      createdBy: typeof row['createdBy'] === 'string' ? row['createdBy']
+        : typeof row['created_by'] === 'string' ? row['created_by'] : null,
+      createdAt: String(row['createdAt'] ?? row['created_at'] ?? ''),
+      updatedAt: String(row['updatedAt'] ?? row['updated_at'] ?? ''),
+    };
+  }
+}

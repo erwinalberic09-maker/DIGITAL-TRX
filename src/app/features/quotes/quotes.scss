@@ -1,0 +1,1197 @@
+:host {
+  display: block;
+  width: 100%;
+  --quote-accent: var(--brand-accent, #0b5ed7);
+  --quote-accent-dark: var(--brand-accent-hover, #084db1);
+  --quote-action: var(--brand-action, #0b5ed7);
+  --quote-action-hover: var(--brand-action-hover, #084db1);
+  --quote-focus: var(--brand-focus, #0b5ed7);
+  --quote-bg: var(--app-bg, #f4f6f9);
+  --quote-surface: var(--app-surface, #ffffff);
+  --quote-surface-muted: var(--app-surface-muted, #eef2f7);
+  --quote-surface-hover: var(--app-surface-hover, #f8fafd);
+  --quote-border: var(--app-border, #d2dbe5);
+  --quote-separator: var(--app-border-subtle, var(--app-border, #e2e8f0));
+  --quote-text: var(--app-text, #172b4d);
+  --quote-muted: var(--app-text-muted, #495d78);
+  --quote-subtle: var(--app-text-subtle, #7a8fa8);
+  --quote-danger: var(--brand-red, #dc2626);
+  --quote-success: var(--odoo-status-green, #15803d);
+  --quote-brand-red: var(--brand-red, #dc2626);
+  --quote-info-bg: #e0f2fe;
+  --quote-info-text: #0b5ed7;
+  --quote-success-bg: #f0fdf4;
+  --quote-success-border: #bbf7d0;
+  --quote-success-text: #166534;
+  --quote-error-bg: #fef2f2;
+  --quote-error-border: #fecaca;
+  --quote-error-text: #991b1b;
+  --quote-draft-bg: #e2e8f0;
+  --quote-draft-text: #475569;
+  --quote-sent-bg: #dbeafe;
+  --quote-sent-text: #1d4ed8;
+  --quote-accepted-bg: #dcfce7;
+  --quote-accepted-text: #15803d;
+  --quote-rejected-bg: #fee2e2;
+  --quote-rejected-text: #b91c1c;
+  --quote-expired-bg: #fef3c7;
+  --quote-expired-text: #b45309;
+  --quote-backdrop: rgba(15, 23, 42, .6);
+  --quote-shadow: 0 20px 45px rgba(15, 23, 42, .25);
+  --quote-control-shadow: 0 1px 3px rgba(18, 60, 109, .14);
+  --quote-success-action: #166534;
+  --quote-success-action-hover: #14532d;
+  --quote-success-action-border: #15803d;
+
+  --odoo-banner-bg: var(--quote-surface-muted);
+  --odoo-banner-text: var(--quote-text);
+  --odoo-header-primary: var(--quote-accent);
+  --odoo-header-red: var(--quote-brand-red);
+  --odoo-sheet-bg: var(--quote-surface);
+  --odoo-border: var(--quote-border);
+}
+
+:host-context(html.dark),
+:host-context(.dark),
+:host-context([data-theme="dark"]) {
+  --quote-bg: var(--app-bg, #1e2227);
+  --quote-surface: var(--app-surface, #2b2f33);
+  --quote-surface-muted: var(--app-surface-muted, #24282d);
+  --quote-surface-hover: var(--app-surface-hover, #343a40);
+  --quote-border: var(--app-border, #383f45);
+  --quote-separator: var(--app-border, #383f45);
+  --quote-text: var(--app-text, #f8fafc);
+  --quote-muted: var(--app-text-muted, #cbd5e1);
+  --quote-subtle: var(--app-text-subtle, #94a3b8);
+
+  --odoo-banner-bg: var(--app-surface-muted, #24282d);
+  --odoo-banner-text: var(--app-text, #f8fafc);
+  --odoo-sheet-bg: var(--app-surface, #2b2f33);
+  --odoo-border: var(--app-border, #383f45);
+
+  --quote-info-bg: rgba(56, 189, 248, .12);
+  --quote-info-text: #bae6fd;
+  --quote-success-bg: rgba(34, 197, 94, .12);
+  --quote-success-border: rgba(34, 197, 94, .32);
+  --quote-success-text: #bbf7d0;
+  --quote-error-bg: rgba(248, 113, 113, .12);
+  --quote-error-border: rgba(248, 113, 113, .32);
+  --quote-error-text: #fecaca;
+  --quote-draft-bg: var(--quote-surface-hover);
+  --quote-draft-text: var(--quote-text);
+  --quote-danger: #ff8b82;
+  --quote-brand-red: #ff8b82;
+  --quote-sent-bg: rgba(59, 130, 246, .18);
+  --quote-sent-text: #bfdbfe;
+  --quote-accepted-bg: rgba(34, 197, 94, .16);
+  --quote-accepted-text: #bbf7d0;
+  --quote-rejected-bg: rgba(248, 113, 113, .16);
+  --quote-rejected-text: #fecaca;
+  --quote-expired-bg: rgba(245, 158, 11, .16);
+  --quote-expired-text: #fde68a;
+  --quote-backdrop: rgba(3, 10, 20, .76);
+  --quote-shadow: 0 20px 45px rgba(0, 0, 0, .48);
+  --quote-control-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+}
+
+.quotes-page {
+  min-height: calc(100vh - 50px);
+  padding: 0 0 36px;
+  color: var(--quote-text);
+  background: var(--quote-bg);
+}
+
+h1, h2, h3, p { margin-top: 0; }
+
+.section-heading,
+.editor-header,
+.modal-actions,
+.column-heading,
+.template-card {
+  display: flex;
+  align-items: center;
+}
+
+.quotes-eyebrow {
+  margin: 0 0 4px;
+  color: var(--quote-accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+}
+
+.primary-action,
+.secondary-action {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+
+.primary-action {
+  color: #fff;
+  background: var(--quote-action);
+}
+.primary-action:hover {
+  background: var(--quote-action-hover);
+}
+
+.secondary-action {
+  color: var(--quote-text);
+  border-color: var(--quote-border);
+  background: var(--quote-surface);
+}
+.secondary-action:hover {
+  border-color: var(--quote-border);
+  background: var(--quote-surface-hover);
+}
+
+.mini-action {
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+.mini-btn {
+  width: 22px;
+  height: 22px;
+}
+.mini-btn mat-icon {
+  width: 14px;
+  height: 14px;
+  font-size: 14px;
+}
+
+.primary-action mat-icon,
+.secondary-action mat-icon {
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+select,
+input:not([type="checkbox"]),
+textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid var(--quote-border);
+  border-radius: 4px;
+  color: var(--quote-text);
+  background: var(--quote-surface);
+  color-scheme: inherit;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+select:focus,
+input:focus,
+textarea:focus {
+  border-color: var(--quote-focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--quote-focus) 22%, transparent);
+}
+
+:host-context(html.dark) .quote-editor input:not([type="checkbox"]):not([type="radio"]),
+:host-context(.dark) .quote-editor input:not([type="checkbox"]):not([type="radio"]),
+:host-context([data-theme="dark"]) .quote-editor input:not([type="checkbox"]):not([type="radio"]),
+:host-context(html.dark) .quote-editor select,
+:host-context(.dark) .quote-editor select,
+:host-context([data-theme="dark"]) .quote-editor select,
+:host-context(html.dark) .quote-editor textarea,
+:host-context(.dark) .quote-editor textarea,
+:host-context([data-theme="dark"]) .quote-editor textarea {
+  border-color: var(--quote-border) !important;
+  color: var(--quote-text) !important;
+  background-color: var(--quote-surface) !important;
+}
+
+.quote-editor input::placeholder,
+.quote-editor textarea::placeholder {
+  color: var(--quote-subtle);
+  opacity: 1;
+}
+
+.feedback {
+  margin: 12px 18px;
+  padding: 10px 14px;
+  border: 1px solid var(--quote-success-border);
+  border-radius: 6px;
+  color: var(--quote-success-text);
+  background: var(--quote-success-bg);
+  font-size: 12px;
+}
+.feedback-error {
+  color: var(--quote-error-text);
+  border-color: var(--quote-error-border);
+  background: var(--quote-error-bg);
+}
+
+.loading-state,
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 270px;
+  padding: 24px;
+  color: var(--quote-muted);
+  text-align: center;
+}
+.loading-state { flex-direction: row; }
+.empty-state h2 { margin: 8px 0 0; color: var(--quote-text); font-size: 18px; }
+.empty-state p { max-width: 440px; margin: 0 0 8px; font-size: 13px; }
+.empty-icon, .template-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--quote-info-text);
+  background: var(--quote-info-bg);
+}
+.empty-icon mat-icon { width: 26px; height: 26px; font-size: 26px; }
+
+/* Table cotations page principale */
+/* Tableau Cotations style Odoo Tree View (harmonisé avec le module Caisse) */
+.quotes-table-container {
+  padding: 0;
+  margin: 0;
+  width: 100%;
+}
+
+.reference-link {
+  color: var(--quote-accent);
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.15s ease;
+  &:hover {
+    color: var(--quote-accent-dark);
+    text-decoration: underline;
+  }
+}
+
+.odoo-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0;
+  border: none;
+  background: var(--quote-surface);
+
+  .odoo-head-row {
+    border-bottom: 2px solid var(--quote-border);
+    background-color: var(--quote-surface-muted);
+
+    th {
+      color: var(--quote-text);
+      font-weight: 700;
+      font-size: 0.8125rem;
+      letter-spacing: 0;
+      padding: 0.625rem 0.75rem;
+      white-space: nowrap;
+
+      button, span {
+        color: inherit;
+      }
+    }
+  }
+
+  tbody {
+    .odoo-data-row {
+      border-bottom: 1px solid var(--quote-border);
+      transition: background-color 0.12s ease;
+      background-color: var(--quote-surface);
+
+      &:hover {
+        background-color: var(--quote-surface-hover, #f2f7ff);
+      }
+
+      &.odoo-row-selected {
+        background-color: #e8f1ff;
+      }
+
+      td {
+        vertical-align: middle;
+        padding: 0.625rem 0.75rem;
+        font-size: 0.8125rem;
+        color: var(--quote-text);
+        border: none;
+      }
+    }
+  }
+}
+
+:host-context(html.dark),
+:host-context(.dark),
+:host-context([data-theme="dark"]) {
+  .odoo-table {
+    tbody {
+      .odoo-data-row {
+        &:hover {
+          background-color: rgba(124, 179, 255, 0.12);
+        }
+
+        &.odoo-row-selected {
+          background-color: rgba(124, 179, 255, 0.22);
+        }
+      }
+    }
+  }
+}
+
+/* Checkbox fine Odoo identique au module Caisse */
+.odoo-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--quote-border, #cbd5e1);
+  border-radius: 3px;
+  background-color: var(--quote-surface, #ffffff);
+  cursor: pointer;
+  display: inline-grid;
+  place-content: center;
+  margin: 0 auto;
+  transition: all 0.12s ease;
+
+  &:hover {
+    border-color: var(--quote-accent, #0b5ed7);
+  }
+
+  &:checked {
+    background-color: var(--quote-accent, #0b5ed7);
+    border-color: var(--quote-accent, #0b5ed7);
+    &::after {
+      content: '';
+      width: 4px;
+      height: 8px;
+      border: solid #ffffff;
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg) translate(-0.5px, -1px);
+    }
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--quote-focus, #0b5ed7);
+    outline-offset: 1px;
+  }
+}
+.quotes-table tbody tr:last-child td { border-bottom: 0; }
+.quotes-table tbody tr:hover { background: var(--quote-surface-hover); }
+.quote-related-link {
+  display: inline-block;
+  color: var(--quote-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.quotes-table td small { display: block; margin-top: 3px; }
+.amount-cell {
+  color: var(--quote-text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.route-hint {
+  display: block;
+  color: var(--quote-subtle);
+  font-size: 11px;
+  font-weight: 400;
+}
+.status-pill {
+  display: inline-flex;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+.status-draft { color: var(--quote-draft-text); background: var(--quote-draft-bg); }
+.status-sent { color: var(--quote-sent-text); background: var(--quote-sent-bg); }
+.status-accepted { color: var(--quote-accepted-text); background: var(--quote-accepted-bg); }
+.status-rejected { color: var(--quote-rejected-text); background: var(--quote-rejected-bg); }
+.status-expired { color: var(--quote-expired-text); background: var(--quote-expired-bg); }
+
+/* Boutons d'action du bandeau de contrôle (identiques à la Caisse) */
+.cashier-action-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #ffffff;
+  background-color: var(--quote-accent, #0b5ed7);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+
+  &:hover {
+    background-color: var(--quote-accent-dark, #084db1);
+  }
+
+  mat-icon {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.cashier-action-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #ffffff;
+  background-color: #dc2626;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+
+  &:hover {
+    background-color: #b91c1c;
+  }
+
+  mat-icon {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+  }
+}
+
+/* Badges de statut Odoo (identiques à la Caisse) */
+.odoo-badge-posted {
+  background-color: #dcfce7;
+  color: #15803d;
+  border: 1px solid #86efac;
+  font-weight: 600;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.75rem;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.odoo-badge-sent {
+  background-color: #dbeafe;
+  color: #123c6d;
+  border: 1px solid #93c5fd;
+  font-weight: 600;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.75rem;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.odoo-badge-draft {
+  background-color: #f1f5f9;
+  color: #1e293b;
+  border: 1px solid #cbd5e1;
+  font-weight: 600;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.65rem;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.odoo-badge-cancelled {
+  background-color: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+  font-weight: 600;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.65rem;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.odoo-badge-expired {
+  background-color: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+  font-weight: 600;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.65rem;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.icon-action {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--quote-muted);
+  background: transparent;
+  cursor: pointer;
+}
+.icon-action:hover {
+  border-color: var(--quote-border);
+  color: var(--quote-accent);
+  background: var(--quote-surface-hover);
+}
+.icon-action mat-icon { width: 16px; height: 16px; font-size: 16px; }
+.danger-action:hover { color: var(--quote-danger); background: var(--quote-error-bg); }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+/* Kanban */
+.quotes-kanban {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  padding: 0 16px;
+}
+.quotes-kanban-column {
+  border: 1px solid var(--quote-border);
+  border-radius: 6px;
+  background: var(--quote-surface-muted);
+  padding: 10px;
+}
+.quotes-kanban-column header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.quotes-kanban-column header h2 { font-size: 12px; font-weight: 700; margin: 0; }
+.quotes-kanban-column header span {
+  font-size: 11px;
+  color: var(--quote-muted);
+  background: var(--quote-surface-hover);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+.quote-kanban-card {
+  padding: 10px;
+  margin-bottom: 8px;
+  background: var(--quote-surface);
+  border: 1px solid var(--quote-border);
+  border-radius: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.quote-kanban-card-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.quote-kanban-card-heading h3 { font-size: 12px; margin: 0; color: var(--quote-accent); }
+.quote-kanban-title { font-weight: 600; font-size: 12px; }
+.quote-kanban-details {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  margin-top: 4px;
+}
+.quote-kanban-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--quote-separator);
+  padding-top: 6px;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--quote-muted);
+}
+
+/* Templates list */
+.templates-section { margin: 24px 16px 0; }
+.templates-section h2 { margin: 0 0 10px; font-size: 14px; }
+.template-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+.template-card {
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--quote-border);
+  border-radius: 6px;
+  background: var(--quote-surface);
+}
+.template-icon { flex: 0 0 34px; width: 34px; height: 34px; border-radius: 6px; }
+.template-info {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.template-info strong { font-size: 12px; }
+.template-info span { color: var(--quote-muted); font-size: 11px; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   MODALE ODOO : FICHE DE DEMANDE DE COTATION MARITIME (TRANSIMEX)
+   ═══════════════════════════════════════════════════════════════════ */
+.modal-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: var(--quote-backdrop);
+  backdrop-filter: blur(2px);
+}
+
+.odoo-sheet-container {
+  display: flex;
+  width: min(1080px, 98vw);
+  max-height: min(94vh, 960px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--quote-border);
+  border-radius: 8px;
+  color: var(--quote-text);
+  background: var(--odoo-sheet-bg);
+  box-shadow: var(--quote-shadow);
+}
+
+/* En-tête style document officiel Transimex */
+.odoo-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 2px solid var(--quote-accent);
+  background: var(--quote-surface-muted);
+}
+
+.transimex-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.transimex-brand-box {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.transimex-logo-title {
+  color: var(--odoo-header-primary);
+  font-family: sans-serif;
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+
+.transimex-logo-subtitle {
+  color: var(--odoo-header-red);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .3px;
+}
+
+.odoo-sheet-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.odoo-doc-title {
+  margin: 0;
+  color: var(--quote-text);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: .3px;
+}
+
+.odoo-doc-subtitle {
+  color: var(--quote-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .4px;
+}
+
+.odoo-sheet-body {
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+  background: var(--odoo-sheet-bg);
+}
+
+/* Barre de gestion rapide Odoo */
+.odoo-control-strip {
+  display: grid;
+  grid-template-columns: minmax(200px, 2fr) 90px 140px minmax(180px, 1.5fr);
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  background: var(--quote-surface-muted);
+  border: 1px solid var(--quote-border);
+  border-radius: 6px;
+}
+
+.strip-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.strip-field label {
+  color: var(--quote-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.strip-field input,
+.strip-field select {
+  min-height: 30px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+/* Section bannières Odoo conformes au document */
+.odoo-section {
+  margin-bottom: 16px;
+  border: 1px solid var(--odoo-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.odoo-section-banner {
+  margin: 0;
+  padding: 7px 12px;
+  background: var(--odoo-banner-bg);
+  color: var(--odoo-banner-text);
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: .3px;
+  border-bottom: 1px solid var(--odoo-border);
+}
+
+.odoo-section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  padding: 12px 14px;
+  background: var(--odoo-sheet-bg);
+}
+
+.col-span-2 {
+  grid-column: 1 / -1;
+}
+
+.odoo-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.odoo-field label {
+  color: var(--quote-text);
+  font-size: 11px;
+  font-weight: 650;
+}
+.odoo-field input,
+.odoo-field select {
+  min-height: 32px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+/* Sélection Client & Nouveau Prospect */
+.client-picker-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(180px, 1.4fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.new-prospect-panel {
+  padding: 10px 12px;
+  background: var(--quote-surface-muted);
+  border: 1px dashed var(--quote-border);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.new-prospect-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+/* Cases à cocher Odoo conformes aux sections 4, 5 et 6 */
+.odoo-checkbox-options-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  padding: 12px 14px;
+  background: var(--odoo-sheet-bg);
+}
+
+.odoo-checkbox-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--quote-border);
+  border-radius: 4px;
+  background: var(--quote-surface-muted);
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.odoo-checkbox-pill:hover {
+  background: var(--quote-surface-hover);
+  border-color: var(--quote-border);
+}
+.odoo-checkbox-pill input[type="checkbox"] {
+  accent-color: var(--quote-accent);
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+}
+.odoo-checkbox-pill .box-label {
+  color: var(--quote-text);
+  font-size: 11px;
+  user-select: none;
+}
+
+.odoo-other-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--quote-border);
+  border-radius: 4px;
+  background: var(--quote-surface-muted);
+}
+.odoo-other-input-row .box-label {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.odoo-other-input-row input {
+  min-height: 28px;
+  padding: 4px 8px;
+}
+
+/* Chiffrage Odoo */
+.pricing-header-row {
+  display: flex;
+  align-items: center;
+  background: var(--odoo-banner-bg);
+  border-bottom: 1px solid var(--odoo-border);
+}
+.pricing-header-row .odoo-section-banner {
+  border-bottom: 0;
+}
+.pricing-actions-inline {
+  padding-right: 10px;
+}
+
+.compact-add-column {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--quote-surface-muted);
+  border-bottom: 1px solid var(--quote-border);
+}
+.field-label-sm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--quote-muted);
+}
+.field-label-sm input,
+.field-label-sm select {
+  min-height: 28px;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+.ml-auto { margin-left: auto; }
+
+.odoo-table-wrapper {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  max-height: 280px;
+}
+
+.odoo-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.odoo-table th {
+  background: var(--quote-surface-muted);
+  border-bottom: 2px solid var(--quote-border);
+  padding: 7px 10px;
+  font-size: 11px;
+  color: var(--quote-text);
+}
+.odoo-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--quote-separator);
+}
+.odoo-table td input:not([type="checkbox"]) {
+  min-height: 28px;
+  padding: 4px 6px;
+  font-size: 12px;
+  border-color: var(--quote-border);
+}
+.odoo-table tfoot th {
+  padding: 8px 12px;
+  text-align: right;
+  background: var(--quote-surface-muted);
+  color: var(--quote-text);
+  font-weight: 750;
+  font-size: 11px;
+}
+.odoo-table tfoot td {
+  padding: 8px 12px;
+  background: var(--quote-surface-muted);
+  color: var(--quote-accent);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.checkbox-label-odoo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--quote-text);
+  cursor: pointer;
+}
+.checkbox-label-odoo input {
+  accent-color: var(--quote-accent);
+}
+.mt-1 { margin-top: 4px; }
+.mt-3 { margin-top: 10px; }
+
+/* Note officielle de pied de fiche Transimex */
+.transimex-official-footer-note {
+  margin-top: 18px;
+  padding: 12px 16px;
+  background: var(--quote-surface-muted);
+  border: 1px solid var(--quote-border);
+  border-left: 4px solid var(--quote-accent);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--quote-muted);
+  line-height: 1.5;
+}
+.transimex-official-footer-note p { margin: 2px 0; }
+.transimex-official-footer-note a {
+  color: var(--quote-accent);
+  text-decoration: underline;
+}
+
+/* Pied d'actions modal Odoo */
+.odoo-footer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-top: 1px solid var(--quote-border);
+  background: var(--quote-surface-muted);
+}
+
+.footer-summary-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--quote-muted);
+}
+.total-display {
+  font-size: 16px;
+  color: var(--quote-accent);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.odoo-btn-save {
+  background: var(--quote-success-action);
+  border-color: var(--quote-success-action-border);
+}
+.odoo-btn-save:hover {
+  background: var(--quote-success-action-hover);
+}
+
+/* Commandes du panneau de contrôle */
+.quotes-control-start,
+.quotes-control-center,
+.quotes-control-end {
+  display: flex;
+  align-items: center;
+}
+.quotes-control-start {
+  flex: 0 1 auto;
+  gap: 8px;
+}
+.quotes-breadcrumb {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.2;
+}
+.quotes-breadcrumb h1 {
+  margin: 0;
+  color: var(--quote-text);
+  font-size: 16px;
+  font-weight: 700;
+}
+.quotes-breadcrumb small { color: var(--quote-muted); font-size: 11px; }
+.quotes-control-center { width: 100%; min-width: 0; gap: 8px; }
+.quotes-search {
+  display: flex;
+  width: 100%;
+  min-width: 60px;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--quote-border);
+  border-radius: 4px;
+  background: var(--quote-surface);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.quotes-search:focus-within {
+  border-color: var(--quote-focus);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--quote-focus) 20%, transparent);
+}
+.quotes-search input {
+  width: 100%;
+  min-height: 24px;
+  padding: 2px 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+}
+.quotes-control-center .quotes-status-filter {
+  flex: 0 0 150px;
+  width: 150px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--quote-border);
+  border-radius: 4px;
+  background: var(--quote-surface);
+  color: var(--quote-text);
+}
+.quotes-control-end { flex: 0 0 auto; gap: 10px; white-space: nowrap; }
+.quotes-view-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--quote-border);
+  border-radius: 4px;
+  background: var(--quote-surface-muted);
+}
+.quotes-view-switch button {
+  display: grid;
+  width: 32px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  color: var(--quote-muted);
+  background: transparent;
+  cursor: pointer;
+}
+.quotes-view-switch button:focus-visible,
+.quotes-pagination button:focus-visible,
+.quotes-control-center .quotes-status-filter:focus-visible {
+  outline: 2px solid var(--quote-focus);
+  outline-offset: 2px;
+}
+.quotes-view-switch button.active {
+  color: var(--quote-accent);
+  background: var(--quote-surface);
+  box-shadow: var(--quote-control-shadow);
+}
+.quotes-pagination-label { color: var(--quote-muted); font-size: 11px; font-weight: 500; }
+.quotes-pagination {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--quote-border);
+  border-radius: 4px;
+  background: var(--quote-surface);
+}
+.quotes-pagination button {
+  display: grid;
+  width: 28px;
+  height: 27px;
+  place-items: center;
+  border: 0;
+  color: var(--quote-muted);
+  background: transparent;
+  cursor: pointer;
+}
+.quotes-pagination button + button { border-left: 1px solid var(--quote-border); }
+.quotes-pagination button:disabled { cursor: not-allowed; opacity: .4; }
+.cashier-action-primary {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border: 1px solid var(--quote-border);
+  border-radius: 4px;
+  color: #fff;
+  background: var(--quote-action);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.cashier-action-primary:hover { background: var(--quote-action-hover); }
+.cashier-action-primary mat-icon { width: 16px; height: 16px; font-size: 16px; }

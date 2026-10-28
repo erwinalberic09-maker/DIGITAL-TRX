@@ -1,0 +1,1040 @@
+<main class="quotes-page" aria-labelledby="quotes-title">
+  <app-module-control-panel>
+    <div controlPanelStart class="quotes-control-start">
+      @if (canCreate()) {
+        <button type="button" class="cashier-action-primary" (click)="openCreate()">
+          <mat-icon>add</mat-icon>
+          <span>Nouvelle cotation</span>
+        </button>
+      }
+      @if (selectedCount() > 0 && canDelete()) {
+        <button type="button" class="cashier-action-danger" (click)="deleteSelectedQuotes()" title="Supprimer la sélection">
+          <mat-icon>delete_outline</mat-icon>
+          <span>Supprimer ({{ selectedCount() }})</span>
+        </button>
+      }
+      <div class="quotes-breadcrumb" aria-label="Fil d’Ariane">
+        <h1 id="quotes-title">Cotations maritimes</h1>
+        <small>Développement commercial & transit</small>
+      </div>
+    </div>
+    <div controlPanelCenter class="quotes-control-center">
+      <div class="quotes-search">
+        <mat-icon aria-hidden="true">search</mat-icon>
+        <input
+          id="quotes-control-search"
+          type="search"
+          [value]="quoteSearch()"
+          (input)="searchQuotes($any($event.target).value)"
+          placeholder="Rechercher par référence, client, objet…"
+          aria-label="Rechercher dans les cotations" />
+      </div>
+      <select
+        id="quote-status-filter"
+        class="quotes-status-filter"
+        [value]="statusFilter()"
+        aria-label="Filtrer par statut"
+        (change)="filterByStatus($any($event.target).value)">
+        <option value="">Tous les statuts</option>
+        @for (quoteStatus of statuses; track quoteStatus) {
+          <option [value]="quoteStatus">{{ statusLabel(quoteStatus) }}</option>
+        }
+      </select>
+    </div>
+    <div controlPanelEnd class="quotes-control-end">
+      <div class="quotes-view-switch" role="group" aria-label="Vue des cotations">
+        <button
+          type="button"
+          [class.active]="view() === 'list'"
+          [attr.aria-pressed]="view() === 'list'"
+          aria-label="Vue liste"
+          title="Vue liste"
+          (click)="view.set('list')">
+          <mat-icon aria-hidden="true">reorder</mat-icon>
+        </button>
+        <button
+          type="button"
+          [class.active]="view() === 'kanban'"
+          [attr.aria-pressed]="view() === 'kanban'"
+          aria-label="Vue Kanban"
+          title="Vue Kanban"
+          (click)="view.set('kanban')">
+          <mat-icon aria-hidden="true">view_kanban</mat-icon>
+        </button>
+      </div>
+      <span class="quotes-pagination-label" aria-live="polite">{{ paginationLabel() }}</span>
+      <div class="quotes-pagination" aria-label="Pagination des cotations">
+        <button type="button" (click)="previousPage()" [disabled]="!canPrevPage()" aria-label="Page précédente" title="Précédent">
+          <mat-icon>chevron_left</mat-icon>
+        </button>
+        <button type="button" (click)="nextPage()" [disabled]="!canNextPage()" aria-label="Page suivante" title="Suivant">
+          <mat-icon>chevron_right</mat-icon>
+        </button>
+      </div>
+    </div>
+  </app-module-control-panel>
+
+  @if (feedback()) {
+    <p class="feedback" role="status">{{ feedback() }}</p>
+  }
+  @if (quoteService.error()) {
+    <p class="feedback feedback-error" role="alert">{{ quoteService.error() }}</p>
+  }
+
+  @if (quoteService.isLoading()) {
+    <div class="loading-state" role="status"><mat-icon>progress_activity</mat-icon>Chargement des cotations…</div>
+  } @else if (filteredQuotes().length === 0) {
+    <section class="empty-state">
+      <div class="empty-icon"><mat-icon>directions_boat</mat-icon></div>
+      <h2>{{ quoteService.quotes().length === 0 ? 'Aucune cotation maritime pour le moment' : 'Aucun résultat' }}</h2>
+      <p>{{ quoteService.quotes().length === 0
+        ? 'Remplissez une fiche de demande de cotation maritime conforme aux standards Transimex.'
+        : 'Modifiez la recherche ou le filtre pour afficher des cotations.' }}</p>
+      @if (canCreate() && quoteService.quotes().length === 0) {
+        <button type="button" class="primary-action" (click)="openCreate()">
+          <mat-icon>add</mat-icon>Créer une cotation maritime
+        </button>
+      }
+    </section>
+  } @else {
+    @if (view() === 'list') {
+      <div class="w-full min-h-[380px] pb-32">
+        <app-module-data-table
+          [ariaLabel]="'Cotations commerciales et maritimes'"
+          [tableId]="'quotes-list-table'"
+          [tableClass]="'w-full text-left text-sm border-collapse bg-white dark:bg-transparent odoo-table shadow-xs border border-slate-200 dark:border-none rounded-lg'">
+          <thead moduleTableHead>
+            <tr class="odoo-head-row select-none">
+              <th scope="col" class="py-2.5 px-3 text-center w-8">
+                @if (canSelect()) {
+                  <input
+                    type="checkbox"
+                    id="select-all-checkbox"
+                    [checked]="isAllSelected()"
+                    (change)="onToggleSelectAll()"
+                    aria-label="Sélectionner toutes les cotations"
+                    class="odoo-checkbox"
+                  />
+                } @else {
+                  <span class="text-slate-600 dark:text-slate-400 font-semibold">#</span>
+                }
+              </th>
+              <th scope="col" class="py-2.5 px-3 font-semibold whitespace-nowrap w-36">
+                <button
+                  type="button"
+                  (click)="toggleSort('quoteNumber')"
+                  class="inline-flex items-center gap-1 font-semibold hover:text-[#0b5ed7] dark:hover:text-[#8cc2ff] cursor-pointer transition-colors"
+                  title="Trier par référence">
+                  <span>Référence</span>
+                  @if (sortField() === 'quoteNumber') {
+                    <mat-icon class="text-xs !w-4 !h-4 !leading-4 text-[#0b5ed7] dark:text-[#8cc2ff]">
+                      {{ sortDirection() === 'asc' ? 'arrow_upward' : 'arrow_downward' }}
+                    </mat-icon>
+                  }
+                </button>
+              </th>
+              <th scope="col" class="py-2.5 px-3 font-semibold whitespace-nowrap min-w-[180px]">
+                <button
+                  type="button"
+                  (click)="toggleSort('prospect')"
+                  class="inline-flex items-center gap-1 font-semibold hover:text-[#0b5ed7] dark:hover:text-[#8cc2ff] cursor-pointer transition-colors"
+                  title="Trier par client">
+                  <span>Client / Société</span>
+                  @if (sortField() === 'prospect') {
+                    <mat-icon class="text-xs !w-4 !h-4 !leading-4 text-[#0b5ed7] dark:text-[#8cc2ff]">
+                      {{ sortDirection() === 'asc' ? 'arrow_upward' : 'arrow_downward' }}
+                    </mat-icon>
+                  }
+                </button>
+              </th>
+              <th scope="col" class="py-2.5 px-3 font-semibold min-w-[220px]">
+                <button
+                  type="button"
+                  (click)="toggleSort('title')"
+                  class="inline-flex items-center gap-1 font-semibold hover:text-[#0b5ed7] dark:hover:text-[#8cc2ff] cursor-pointer transition-colors"
+                  title="Trier par objet">
+                  <span>Objet & Itinéraire</span>
+                  @if (sortField() === 'title') {
+                    <mat-icon class="text-xs !w-4 !h-4 !leading-4 text-[#0b5ed7] dark:text-[#8cc2ff]">
+                      {{ sortDirection() === 'asc' ? 'arrow_upward' : 'arrow_downward' }}
+                    </mat-icon>
+                  }
+                </button>
+              </th>
+              <th scope="col" class="py-2.5 px-3 font-semibold whitespace-nowrap w-40">
+                <button
+                  type="button"
+                  (click)="toggleSort('assignedTo')"
+                  class="inline-flex items-center gap-1 font-semibold hover:text-[#0b5ed7] dark:hover:text-[#8cc2ff] cursor-pointer transition-colors"
+                  title="Trier par commercial">
+                  <span>Commercial</span>
+                  @if (sortField() === 'assignedTo') {
+                    <mat-icon class="text-xs !w-4 !h-4 !leading-4 text-[#0b5ed7] dark:text-[#8cc2ff]">
+                      {{ sortDirection() === 'asc' ? 'arrow_upward' : 'arrow_downward' }}
+                    </mat-icon>
+                  }
+                </button>
+              </th>
+              <th scope="col" class="py-2.5 px-3 font-semibold text-right whitespace-nowrap w-36">
+                <button
+                  type="button"
+                  (click)="toggleSort('totalAmount')"
+                  class="inline-flex items-center justify-end gap-1 font-semibold hover:text-[#0b5ed7] dark:hover:text-[#8cc2ff] cursor-pointer transition-colors w-full"
+                  title="Trier par montant">
+                  <span>Montant chiffré</span>
+                  @if (sortField() === 'totalAmount') {
+                    <mat-icon class="text-xs !w-4 !h-4 !leading-4 text-[#0b5ed7] dark:text-[#8cc2ff]">
+                      {{ sortDirection() === 'asc' ? 'arrow_upward' : 'arrow_downward' }}
+                    </mat-icon>
+                  }
+                </button>
+              </th>
+              <th scope="col" class="py-2.5 px-3 font-semibold whitespace-nowrap w-32">
+                <button
+                  type="button"
+                  (click)="toggleSort('validUntil')"
+                  class="inline-flex items-center gap-1 font-semibold hover:text-[#0b5ed7] dark:hover:text-[#8cc2ff] cursor-pointer transition-colors"
+                  title="Trier par validité">
+                  <span>Validité</span>
+                  @if (sortField() === 'validUntil') {
+                    <mat-icon class="text-xs !w-4 !h-4 !leading-4 text-[#0b5ed7] dark:text-[#8cc2ff]">
+                      {{ sortDirection() === 'asc' ? 'arrow_upward' : 'arrow_downward' }}
+                    </mat-icon>
+                  }
+                </button>
+              </th>
+              <th scope="col" class="py-2.5 px-3 font-semibold text-center whitespace-nowrap w-28">
+                <button
+                  type="button"
+                  (click)="toggleSort('status')"
+                  class="inline-flex items-center justify-center gap-1 font-semibold hover:text-[#0b5ed7] dark:hover:text-[#8cc2ff] cursor-pointer transition-colors w-full"
+                  title="Trier par statut">
+                  <span>Statut</span>
+                  @if (sortField() === 'status') {
+                    <mat-icon class="text-xs !w-4 !h-4 !leading-4 text-[#0b5ed7] dark:text-[#8cc2ff]">
+                      {{ sortDirection() === 'asc' ? 'arrow_upward' : 'arrow_downward' }}
+                    </mat-icon>
+                  }
+                </button>
+              </th>
+            </tr>
+          </thead>
+          <tbody moduleTableBody class="divide-y divide-slate-200 dark:divide-white/5 bg-transparent">
+            @for (quote of displayedQuotes(); track quote.id) {
+              <tr
+                class="odoo-data-row select-none cursor-pointer"
+                [class.odoo-row-selected]="isSelected(quote.id)"
+                (dblclick)="openEdit(quote)">
+                <td class="py-2.5 px-3 text-center">
+                  @if (canSelect()) {
+                    <input
+                      type="checkbox"
+                      [checked]="isSelected(quote.id)"
+                      (change)="onToggleSelect(quote.id)"
+                      aria-label="Sélectionner la cotation"
+                      class="odoo-checkbox"
+                    />
+                  } @else {
+                    <span class="text-slate-500">•</span>
+                  }
+                </td>
+                <td class="py-2.5 px-3 whitespace-nowrap text-slate-900 dark:text-slate-100 font-medium">
+                  <button type="button" class="reference-link bg-transparent border-none p-0 cursor-pointer font-inherit text-left" (click)="openEdit(quote)" title="Ouvrir la cotation">{{ quote.quoteNumber }}</button>
+                </td>
+                <td class="py-2.5 px-3 whitespace-nowrap text-slate-900 dark:text-slate-100 font-normal">
+                  <a class="quote-related-link" [routerLink]="['/prospects']"
+                    [queryParams]="{ prospectId: quote.prospectId }">{{ quote.prospectName || prospectLabel(quote.prospectId) }}</a>
+                  @if (quote.contactId && quote.contactName) {
+                    <small><a class="quote-related-link" [routerLink]="['/crm-commercial']"
+                      [queryParams]="{ view: 'clients', prospectId: quote.prospectId, contactId: quote.contactId }">Contact : {{ quote.contactName }}</a></small>
+                  }
+                  @if (quote.opportunityId) {
+                    <small><a class="quote-related-link" [routerLink]="['/crm-commercial']"
+                      [queryParams]="{ view: 'pipeline', opportunityId: quote.opportunityId }">
+                      CRM : {{ quote.opportunityTitle || 'Ouvrir l’opportunité' }}
+                    </a></small>
+                  }
+                  @if (quote.dossierId && quote.dossierNumber) {
+                    <small><a class="quote-related-link" [routerLink]="['/dossiers']"
+                      [queryParams]="{ dossierId: quote.dossierId }">Dossier : {{ quote.dossierNumber }}</a></small>
+                  }
+                </td>
+                <td class="py-2.5 px-3 text-slate-800 dark:text-slate-200 font-normal">
+                  <span class="block font-medium text-slate-900 dark:text-slate-100">{{ quote.title }}</span>
+                  @if (quote.seaFreight?.portOfLoading || quote.seaFreight?.portOfDischarge) {
+                    <small class="route-hint text-slate-500 dark:text-slate-400 font-mono text-[11px]">
+                      {{ quote.seaFreight?.portOfLoading || 'Départ' }} → {{ quote.seaFreight?.portOfDischarge || 'Arrivée' }}
+                    </small>
+                  }
+                </td>
+
+                <!-- Commercial -->
+                <td class="py-2.5 px-3 whitespace-nowrap text-slate-700 dark:text-slate-300 font-normal">
+                  {{ quote.assignedToName || assigneeLabel(quote.assignedTo) }}
+                </td>
+
+                <!-- Montant chiffré -->
+                <td class="py-2.5 px-3 text-right whitespace-nowrap text-slate-900 dark:text-slate-100 font-semibold tabular-nums">
+                  {{ formatAmount(quote.totalAmount, quote.currency) }}
+                </td>
+
+                <!-- Validité -->
+                <td class="py-2.5 px-3 whitespace-nowrap text-slate-700 dark:text-slate-300 font-normal">
+                  {{ quote.validUntil ? (quote.validUntil | date:'dd/MM/yyyy') : '—' }}
+                </td>
+
+                <!-- Statut (Badges Odoo identiques à la Caisse, dernière colonne) -->
+                <td class="py-2.5 px-3 text-center whitespace-nowrap">
+                  @switch (quote.status) {
+                    @case ('accepted') {
+                      <span class="odoo-badge-posted">Acceptée</span>
+                    }
+                    @case ('sent') {
+                      <span class="odoo-badge-sent">Envoyée</span>
+                    }
+                    @case ('rejected') {
+                      <span class="odoo-badge-cancelled">Refusée</span>
+                    }
+                    @case ('expired') {
+                      <span class="odoo-badge-expired">Expirée</span>
+                    }
+                    @default {
+                      <span class="odoo-badge-draft">Brouillon</span>
+                    }
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </app-module-data-table>
+      </div>
+    } @else {
+      <div class="quotes-kanban" aria-label="Cotations par statut">
+        @for (column of statusColumns(); track column.status) {
+          <section class="quotes-kanban-column" [attr.aria-label]="'Statut ' + statusLabel(column.status)">
+            <header>
+              <h2>{{ statusLabel(column.status) }}</h2>
+              <span>{{ column.quotes.length }}</span>
+            </header>
+            @for (quote of column.quotes; track quote.id) {
+              <article class="quote-kanban-card">
+                <div class="quote-kanban-card-heading">
+                  <h3>{{ quote.quoteNumber }}</h3>
+                  <span [class]="'status-pill ' + statusClass(quote.status)">{{ statusLabel(quote.status) }}</span>
+                </div>
+                <p class="quote-kanban-title">{{ quote.title }}</p>
+                <p><a class="quote-related-link" [routerLink]="['/prospects']"
+                  [queryParams]="{ prospectId: quote.prospectId }">{{ quote.prospectName || prospectLabel(quote.prospectId) }}</a></p>
+                @if (quote.contactId && quote.contactName) {
+                  <p><a class="quote-related-link" [routerLink]="['/crm-commercial']"
+                    [queryParams]="{ view: 'clients', prospectId: quote.prospectId, contactId: quote.contactId }">Contact : {{ quote.contactName }}</a></p>
+                }
+                @if (quote.opportunityId) {
+                  <a class="quote-related-link" [routerLink]="['/crm-commercial']"
+                    [queryParams]="{ view: 'pipeline', opportunityId: quote.opportunityId }">
+                    CRM : {{ quote.opportunityTitle || 'Ouvrir l’opportunité' }}
+                  </a>
+                }
+                @if (quote.dossierId && quote.dossierNumber) {
+                  <a class="quote-related-link" [routerLink]="['/dossiers']"
+                    [queryParams]="{ dossierId: quote.dossierId }">Dossier : {{ quote.dossierNumber }}</a>
+                }
+                @if (quote.seaFreight?.portOfLoading || quote.seaFreight?.portOfDischarge) {
+                  <small class="route-hint">
+                    {{ quote.seaFreight?.portOfLoading || 'Départ' }} → {{ quote.seaFreight?.portOfDischarge || 'Arrivée' }}
+                  </small>
+                }
+                <div class="quote-kanban-details">
+                  <strong>{{ formatAmount(quote.totalAmount, quote.currency) }}</strong>
+                  @if (quote.validUntil) {
+                    <span>Valide jusqu’au {{ quote.validUntil | date:'dd/MM/yyyy' }}</span>
+                  }
+                </div>
+                <div class="quote-kanban-footer">
+                  <span>{{ quote.assignedToName || assigneeLabel(quote.assignedTo) }}</span>
+                  <div class="row-actions">
+                    @if (canUpdate()) {
+                      <button type="button" class="icon-action" aria-label="Modifier la cotation" title="Modifier" (click)="openEdit(quote)">
+                        <mat-icon>edit</mat-icon>
+                      </button>
+                    }
+                    @if (canDelete()) {
+                      <button type="button" class="icon-action danger-action" aria-label="Supprimer la cotation" title="Supprimer" (click)="deleteQuote(quote)">
+                        <mat-icon>delete_outline</mat-icon>
+                      </button>
+                    }
+                  </div>
+                </div>
+              </article>
+            } @empty {
+              <p class="quotes-kanban-empty">Aucune cotation</p>
+            }
+          </section>
+        }
+      </div>
+    }
+  }
+
+  @if (quoteService.templates().length > 0) {
+    <section class="templates-section" aria-labelledby="templates-title">
+      <div>
+        <p class="quotes-eyebrow">Structures réutilisables</p>
+        <h2 id="templates-title">Modèles de chiffrage partagés</h2>
+      </div>
+      <div class="template-list">
+        @for (template of quoteService.templates(); track template.id) {
+          <article class="template-card">
+            <div class="template-icon"><mat-icon>view_column</mat-icon></div>
+            <div class="template-info">
+              <strong>{{ template.name }}</strong>
+              <span>{{ template.columns.length }} colonnes de chiffrage</span>
+            </div>
+            @if (canCreate()) {
+              <button type="button" class="secondary-action" (click)="openCreate(); applyTemplate(template.id)">
+                Utiliser
+              </button>
+            }
+            @if (canDeleteTemplate() && (template.createdBy === currentUserId() || canAssign())) {
+              <button type="button" class="icon-action danger-action" aria-label="Supprimer le modèle" (click)="deleteTemplate(template)">
+                <mat-icon>delete_outline</mat-icon>
+              </button>
+            }
+          </article>
+        }
+      </div>
+    </section>
+  }
+</main>
+
+@if (isEditorOpen()) {
+  <div class="modal-backdrop" role="presentation" tabindex="-1" (click)="closeEditor()" (keydown.escape)="closeEditor()">
+    <section class="quote-editor odoo-sheet-container" role="dialog" aria-modal="true" aria-labelledby="editor-title" tabindex="-1" (click)="$event.stopPropagation()" (keydown)="$event.stopPropagation()">
+      <!-- EN-TÊTE OFFICIEL TRANSIMEX -->
+      <header class="editor-header odoo-sheet-header">
+        <div class="transimex-brand-row">
+          <div class="transimex-brand-box">
+            <span class="transimex-logo-title">TRANSIMEX</span>
+            <span class="transimex-logo-subtitle">Global Logistics Provider</span>
+          </div>
+          <div class="odoo-sheet-titles">
+            <h1 id="editor-title" class="odoo-doc-title">FICHE DE DEMANDE DE COTATION MARITIME</h1>
+            <span class="odoo-doc-subtitle">SEA FREIGHT QUOTATION REQUEST FORM</span>
+          </div>
+        </div>
+        <button type="button" class="icon-action close-action" aria-label="Fermer" (click)="closeEditor()">
+          <mat-icon>close</mat-icon>
+        </button>
+      </header>
+
+      <div class="editor-content odoo-sheet-body">
+        @if (error()) { <p class="feedback feedback-error" role="alert">{{ error() }}</p> }
+
+        <!-- BARRE DE GESTION RAPIDE ODOO (Statut, Attribution, Devise, Modèle) -->
+        <div class="odoo-control-strip">
+          <div class="strip-field">
+            <label for="quote-meta-title">Objet de la demande / Subject</label>
+            <input
+              id="quote-meta-title"
+              type="text"
+              [value]="title()"
+              (input)="title.set($any($event.target).value)"
+              placeholder="Ex. Fret maritime Conteneur 40' Douala - Le Havre" />
+          </div>
+          <div class="strip-field strip-field-narrow">
+            <label for="quote-meta-currency">Devise / Currency</label>
+            <input
+              id="quote-meta-currency"
+              type="text"
+              [value]="currency()"
+              (input)="currency.set($any($event.target).value)"
+              maxlength="3"
+              placeholder="XAF" />
+          </div>
+          <div class="strip-field">
+            <label for="quote-meta-status">Statut / Status</label>
+            <select
+              id="quote-meta-status"
+              [value]="status()"
+              (change)="status.set($any($event.target).value)">
+              @for (quoteStatus of statuses; track quoteStatus) {
+                <option [value]="quoteStatus">{{ statusLabel(quoteStatus) }}</option>
+              }
+            </select>
+          </div>
+          @if (canAssign()) {
+            <div class="strip-field">
+              <label for="quote-meta-assignee">Commercial assigné / Sales rep</label>
+              <select
+                id="quote-meta-assignee"
+                [value]="assignedTo()"
+                (change)="assignedTo.set($any($event.target).value)">
+                <option value="">Sélectionner un commercial</option>
+                @for (assignee of quoteService.assignees(); track assignee.id) {
+                  <option [value]="assignee.id">{{ assignee.firstName }} {{ assignee.lastName }}</option>
+                }
+              </select>
+            </div>
+          }
+        </div>
+
+        <!-- SECTION 1: Informations sur le client / Client Information -->
+        <section class="odoo-section" aria-labelledby="section-client-title">
+          <h2 id="section-client-title" class="odoo-section-banner">
+            Informations sur le client / Client Information
+          </h2>
+          <div class="odoo-section-grid">
+            <div class="odoo-field col-span-2">
+              <label for="field-company-name">Nom de la société / Company Name *</label>
+              <div class="client-picker-row">
+                <input
+                  id="field-company-name"
+                  type="text"
+                  [value]="clientSearch()"
+                  (input)="onClientSearchInput($any($event.target).value)"
+                  placeholder="Rechercher ou saisir la raison sociale de l'entreprise…" />
+                <select
+                  [value]="prospectId()"
+                  [disabled]="!!opportunityId()"
+                  (change)="onProspectSelected($any($event.target).value)"
+                  aria-label="Sélectionner un client existant">
+                  <option value="">-- Clients existants --</option>
+                  @for (prospect of filteredProspects(); track prospect.id) {
+                    <option [value]="prospect.id">{{ prospect.companyName || prospect.name }}</option>
+                  }
+                </select>
+                <button type="button" class="secondary-action mini-action" (click)="toggleNewProspect()" title="Créer un nouveau prospect">
+                  <mat-icon>{{ showNewProspect() ? 'close' : 'add' }}</mat-icon>
+                  <span>{{ showNewProspect() ? 'Annuler' : 'Nouveau client' }}</span>
+                </button>
+              </div>
+            </div>
+
+            @if (showNewProspect()) {
+              <div class="col-span-2 new-prospect-panel">
+                <div class="new-prospect-grid">
+                  <div class="odoo-field">
+                    <label for="field-contact-record">Contact enregistré / Shared contact</label>
+                    <select id="field-contact-record" [value]="contactId()" [disabled]="!prospectId()"
+                      (change)="onContactSelected($any($event.target).value)">
+                      <option value="">Aucun contact lié</option>
+                      @for (contact of quoteService.contacts(); track contact.id) {
+                        <option [value]="contact.id">{{ contact.fullName }}@if (contact.jobTitle) { · {{ contact.jobTitle }} }</option>
+                      }
+                    </select>
+                    @if (prospectId()) {
+                      <a class="quote-related-link" [routerLink]="['/prospects']"
+                        [queryParams]="{ prospectId: prospectId() }">Ouvrir la fiche partagée Contacts</a>
+                    }
+                  </div>
+
+                  <div class="odoo-field">
+                    <label for="new-prop-contact">Contact direct</label>
+                    <input id="new-prop-contact" type="text" [value]="newProspectContact()" (input)="newProspectContact.set($any($event.target).value)" placeholder="Nom complet" />
+                  </div>
+                  <div class="odoo-field">
+                    <label for="new-prop-email">Email</label>
+                    <input id="new-prop-email" type="email" [value]="newProspectEmail()" (input)="newProspectEmail.set($any($event.target).value)" placeholder="contact@entreprise.com" />
+                  </div>
+                  <div class="odoo-field">
+                    <label for="new-prop-phone">Téléphone</label>
+                    <input id="new-prop-phone" type="tel" [value]="newProspectPhone()" (input)="newProspectPhone.set($any($event.target).value)" placeholder="+237 ..." />
+                  </div>
+                </div>
+                <button type="button" class="primary-action mini-action" [disabled]="isCreatingProspect()" (click)="createProspect()">
+                  <mat-icon>check</mat-icon>
+                  <span>{{ isCreatingProspect() ? 'Création…' : 'Enregistrer et lier ce client' }}</span>
+                </button>
+              </div>
+            }
+
+            <div class="odoo-field">
+              <label for="field-contact-name">Nom du contact / Contact Name :</label>
+              <input
+                id="field-contact-name"
+                type="text"
+                [value]="seaContactName()"
+                (input)="seaContactName.set($any($event.target).value)"
+                placeholder="Ex. M. Asseng Alberic" />
+            </div>
+
+            <div class="odoo-field">
+              <label for="field-phone">Téléphone / Phone :</label>
+              <input
+                id="field-phone"
+                type="tel"
+                [value]="seaPhone()"
+                (input)="seaPhone.set($any($event.target).value)"
+                placeholder="Ex. +237 620 363 043" />
+            </div>
+
+            <div class="odoo-field">
+              <label for="field-email">Email / Email :</label>
+              <input
+                id="field-email"
+                type="email"
+                [value]="seaEmail()"
+                (input)="seaEmail.set($any($event.target).value)"
+                placeholder="Ex. client@entreprise.cm" />
+            </div>
+
+            <div class="odoo-field">
+              <label for="field-address">Adresse / Address :</label>
+              <input
+                id="field-address"
+                type="text"
+                [value]="seaAddress()"
+                (input)="seaAddress.set($any($event.target).value)"
+                placeholder="Ex. Zone Portuaire, Bonabéri, Douala" />
+            </div>
+          </div>
+        </section>
+
+        <!-- SECTION 2: Détails de l'expédition / Shipment Details -->
+        <section class="odoo-section" aria-labelledby="section-shipment-title">
+          <h2 id="section-shipment-title" class="odoo-section-banner">
+            Détails de l'expédition / Shipment Details
+          </h2>
+          <div class="odoo-section-grid">
+            <div class="odoo-field">
+              <label for="field-goods-type">Type de marchandise / Type of Goods :</label>
+              <input
+                id="field-goods-type"
+                type="text"
+                [value]="seaGoodsType()"
+                (input)="seaGoodsType.set($any($event.target).value)"
+                placeholder="Ex. Équipements industriels, Bois, Cacao…" />
+            </div>
+
+            <div class="odoo-field">
+              <label for="field-goods-desc">Description / Description :</label>
+              <input
+                id="field-goods-desc"
+                type="text"
+                [value]="seaGoodsDescription()"
+                (input)="seaGoodsDescription.set($any($event.target).value)"
+                placeholder="Précisions sur la nature du fret…" />
+            </div>
+
+            <div class="odoo-field">
+              <label for="field-gross-weight">Poids brut total (kg) / Total Gross Weight (kg) :</label>
+              <input
+                id="field-gross-weight"
+                type="number"
+                min="0"
+                step="any"
+                [value]="seaGrossWeightKg() ?? ''"
+                (input)="seaGrossWeightKg.set($any($event.target).value === '' ? null : +$any($event.target).value)"
+                placeholder="Ex. 12500" />
+            </div>
+
+            <div class="odoo-field">
+              <label for="field-total-volume">Volume total (m³) / Total Volume (m³) :</label>
+              <input
+                id="field-total-volume"
+                type="number"
+                min="0"
+                step="any"
+                [value]="seaTotalVolumeM3() ?? ''"
+                (input)="seaTotalVolumeM3.set($any($event.target).value === '' ? null : +$any($event.target).value)"
+                placeholder="Ex. 48.5" />
+            </div>
+
+            <div class="odoo-field">
+              <label for="field-packages-count">Nombre de colis / Number of Packages :</label>
+              <input
+                id="field-packages-count"
+                type="number"
+                min="1"
+                step="1"
+                [value]="seaPackagesCount() ?? ''"
+                (input)="seaPackagesCount.set($any($event.target).value === '' ? null : +$any($event.target).value)"
+                placeholder="Ex. 24" />
+            </div>
+
+            <div class="odoo-field">
+              <label for="field-packaging-type">Type d'emballage / Packaging Type :</label>
+              <input
+                id="field-packaging-type"
+                type="text"
+                [value]="seaPackagingType()"
+                (input)="seaPackagingType.set($any($event.target).value)"
+                placeholder="Ex. Palettes, Caisses bois, Fûts, Big bags…" />
+            </div>
+          </div>
+        </section>
+
+        <!-- SECTION 3: Itinéraire souhaité / Preferred Route -->
+        <section class="odoo-section" aria-labelledby="section-route-title">
+          <h2 id="section-route-title" class="odoo-section-banner">
+            Itinéraire souhaité / Preferred Route
+          </h2>
+          <div class="odoo-section-grid">
+            <div class="odoo-field">
+              <label for="field-pol">Port de chargement / Port of Loading :</label>
+              <input
+                id="field-pol"
+                type="text"
+                [value]="seaPortOfLoading()"
+                (input)="seaPortOfLoading.set($any($event.target).value)"
+                placeholder="Ex. Douala Port (CMDLA), Kribi (CMKRI), Le Havre…" />
+            </div>
+
+            <div class="odoo-field">
+              <label for="field-pod">Port de déchargement / Port of Discharge :</label>
+              <input
+                id="field-pod"
+                type="text"
+                [value]="seaPortOfDischarge()"
+                (input)="seaPortOfDischarge.set($any($event.target).value)"
+                placeholder="Ex. Anvers (BEANR), Marseille (FRMRS), Shanghai…" />
+            </div>
+
+            <div class="odoo-field">
+              <label for="field-incoterm">Incoterm (EXW, FOB, CFR, DAP, CIF, etc.) :</label>
+              <input
+                id="field-incoterm"
+                type="text"
+                [value]="seaIncoterm()"
+                (input)="seaIncoterm.set($any($event.target).value)"
+                placeholder="Ex. FOB, CIF, DAP Douala" />
+            </div>
+
+            <div class="odoo-field">
+              <label for="field-inland">Transport intérieur requis ? / Need inland transport? :</label>
+              <select
+                id="field-inland"
+                [value]="seaNeedInlandTransport() === null ? '' : seaNeedInlandTransport() ? 'yes' : 'no'"
+                (change)="seaNeedInlandTransport.set($any($event.target).value === '' ? null : $any($event.target).value === 'yes')">
+                <option value="">Choisir une option</option>
+                <option value="no">Non / No</option>
+                <option value="yes">Oui / Yes (Post/Pré-acheminement terrestre)</option>
+              </select>
+            </div>
+
+            <div class="odoo-field">
+              <label for="field-etd">Date estimée de départ / Estimated Departure Date :</label>
+              <input
+                id="field-etd"
+                type="date"
+                [value]="seaEstimatedDepartureDate() ?? ''"
+                (input)="seaEstimatedDepartureDate.set($any($event.target).value || null)" />
+            </div>
+
+            <div class="odoo-field">
+              <label for="field-eta">Date estimée d'arrivée / Estimated Arrival Date :</label>
+              <input
+                id="field-eta"
+                type="date"
+                [value]="seaEstimatedArrivalDate() ?? ''"
+                (input)="seaEstimatedArrivalDate.set($any($event.target).value || null)" />
+            </div>
+          </div>
+        </section>
+
+        <!-- SECTION 4: Type de service souhaité / Type of Service Required -->
+        <section class="odoo-section" aria-labelledby="section-service-title">
+          <h2 id="section-service-title" class="odoo-section-banner">
+            Type de service souhaité / Type of Service Required
+          </h2>
+          <div class="odoo-checkbox-options-grid">
+            <label class="odoo-checkbox-pill">
+              <input
+                type="checkbox"
+                [checked]="serviceFcl()"
+                (change)="serviceFcl.set($any($event.target).checked)" />
+              <span class="box-label"><strong>[ ] FCL</strong> / Full Container Load (Conteneur complet)</span>
+            </label>
+
+            <label class="odoo-checkbox-pill">
+              <input
+                type="checkbox"
+                [checked]="serviceLcl()"
+                (change)="serviceLcl.set($any($event.target).checked)" />
+              <span class="box-label"><strong>[ ] LCL</strong> / Less than Container Load (Groupage maritime)</span>
+            </label>
+
+            <label class="odoo-checkbox-pill">
+              <input
+                type="checkbox"
+                [checked]="serviceRoro()"
+                (change)="serviceRoro.set($any($event.target).checked)" />
+              <span class="box-label"><strong>[ ] RO/RO</strong> (Véhicules / Vehicles)</span>
+            </label>
+
+            <label class="odoo-checkbox-pill">
+              <input
+                type="checkbox"
+                [checked]="serviceBreakBulk()"
+                (change)="serviceBreakBulk.set($any($event.target).checked)" />
+              <span class="box-label"><strong>[ ] Break Bulk</strong> (Conventionnel / Hors gabarit)</span>
+            </label>
+
+            <div class="odoo-other-input-row col-span-2">
+              <span class="box-label"><strong>[ ] Autre / Other :</strong></span>
+              <input
+                type="text"
+                [value]="serviceOther()"
+                (input)="serviceOther.set($any($event.target).value)"
+                placeholder="Préciser le type de service particulier…" />
+            </div>
+          </div>
+        </section>
+
+        <!-- SECTION 5: Documents disponibles / Available Documents -->
+        <section class="odoo-section" aria-labelledby="section-docs-title">
+          <h2 id="section-docs-title" class="odoo-section-banner">
+            Documents disponibles / Available Documents
+          </h2>
+          <div class="odoo-checkbox-options-grid">
+            <label class="odoo-checkbox-pill">
+              <input
+                type="checkbox"
+                [checked]="docCommercialInvoice()"
+                (change)="docCommercialInvoice.set($any($event.target).checked)" />
+              <span class="box-label">[ ] Facture commerciale / Commercial Invoice</span>
+            </label>
+
+            <label class="odoo-checkbox-pill">
+              <input
+                type="checkbox"
+                [checked]="docPackingList()"
+                (change)="docPackingList.set($any($event.target).checked)" />
+              <span class="box-label">[ ] Liste de colisage / Packing List</span>
+            </label>
+
+            <label class="odoo-checkbox-pill">
+              <input
+                type="checkbox"
+                [checked]="docCertificateOfOrigin()"
+                (change)="docCertificateOfOrigin.set($any($event.target).checked)" />
+              <span class="box-label">[ ] Certificat d'origine / Certificate of Origin</span>
+            </label>
+
+            <label class="odoo-checkbox-pill">
+              <input
+                type="checkbox"
+                [checked]="docMsdsTechnicalSheet()"
+                (change)="docMsdsTechnicalSheet.set($any($event.target).checked)" />
+              <span class="box-label">[ ] Fiche technique / MSDS</span>
+            </label>
+
+            <div class="odoo-other-input-row col-span-2">
+              <span class="box-label"><strong>[ ] Autre / Other :</strong></span>
+              <input
+                type="text"
+                [value]="docOther()"
+                (input)="docOther.set($any($event.target).value)"
+                placeholder="Certificat phytosanitaire, EUR1, etc." />
+            </div>
+          </div>
+        </section>
+
+        <!-- SECTION 6: Services additionnels requis / Additional Services Needed -->
+        <section class="odoo-section" aria-labelledby="section-addons-title">
+          <h2 id="section-addons-title" class="odoo-section-banner">
+            Services additionnels requis / Additional Services Needed
+          </h2>
+          <div class="odoo-checkbox-options-grid">
+            <label class="odoo-checkbox-pill">
+              <input
+                type="checkbox"
+                [checked]="addonCustomsClearance()"
+                (change)="addonCustomsClearance.set($any($event.target).checked)" />
+              <span class="box-label">[ ] Dédouanement / Customs Clearance</span>
+            </label>
+
+            <label class="odoo-checkbox-pill">
+              <input
+                type="checkbox"
+                [checked]="addonCargoInsurance()"
+                (change)="addonCargoInsurance.set($any($event.target).checked)" />
+              <span class="box-label">[ ] Assurance transport / Cargo Insurance</span>
+            </label>
+
+            <label class="odoo-checkbox-pill">
+              <input
+                type="checkbox"
+                [checked]="addonWarehousing()"
+                (change)="addonWarehousing.set($any($event.target).checked)" />
+              <span class="box-label">[ ] Entreposage / Warehousing</span>
+            </label>
+
+            <label class="odoo-checkbox-pill">
+              <input
+                type="checkbox"
+                [checked]="addonPortHandling()"
+                (change)="addonPortHandling.set($any($event.target).checked)" />
+              <span class="box-label">[ ] Manutention portuaire / Port Handling</span>
+            </label>
+
+            <label class="odoo-checkbox-pill col-span-2">
+              <input
+                type="checkbox"
+                [checked]="addonTracking()"
+                (change)="addonTracking.set($any($event.target).checked)" />
+              <span class="box-label">[ ] Suivi & traçabilité / Tracking</span>
+            </label>
+          </div>
+        </section>
+
+        <!-- SECTION 7: Chiffrage & Lignes de cotation (Structure Odoo compacte) -->
+        <section class="odoo-section" aria-labelledby="section-pricing-title">
+          <div class="pricing-header-row">
+            <h2 id="section-pricing-title" class="odoo-section-banner flex-1">
+              Détails du chiffrage / Cost Breakdown & Quotation Lines
+            </h2>
+            <div class="pricing-actions-inline">
+              <button type="button" class="secondary-action mini-action" (click)="addRow()">
+                <mat-icon>add</mat-icon>Ajouter une prestation
+              </button>
+            </div>
+          </div>
+
+          <!-- Configuration des colonnes compacte -->
+          <div class="add-column-form compact-add-column">
+            <label class="field-label-sm">
+              <span>Nouvelle colonne :</span>
+              <input
+                type="text"
+                [value]="columnLabelDraft()"
+                (input)="columnLabelDraft.set($any($event.target).value)"
+                placeholder="Ex. Devise, Frais portuaires…" />
+            </label>
+            <label class="field-label-sm">
+              <span>Type :</span>
+              <select [value]="columnTypeDraft()" (change)="columnTypeDraft.set($any($event.target).value)">
+                @for (columnType of columnTypes; track columnType) {
+                  <option [value]="columnType">{{ columnTypeLabel(columnType) }}</option>
+                }
+              </select>
+            </label>
+            <button type="button" class="secondary-action mini-action" (click)="addColumn()">
+              <mat-icon>add</mat-icon>Ajouter colonne
+            </button>
+            @if (totalColumnOptions().length > 1) {
+              <label class="field-label-sm ml-auto">
+                <span>Colonne du total :</span>
+                <select [value]="totalColumnId()" (change)="totalColumnId.set($any($event.target).value)">
+                  @for (col of totalColumnOptions(); track col.id) {
+                    <option [value]="col.id">{{ col.label }}</option>
+                  }
+                </select>
+              </label>
+            }
+          </div>
+
+          <!-- Grille de chiffrage épurée Odoo -->
+          <div class="table-scroll editor-table-scroll odoo-table-wrapper">
+            <table class="editor-table odoo-table">
+              <thead>
+                <tr>
+                  @for (column of columns(); track column.id) {
+                    <th>
+                      <div class="column-heading">
+                        <span>{{ column.label }}</span>
+                        @if (columns().length > 1) {
+                          <button type="button" class="icon-action danger-action mini-btn" [attr.aria-label]="'Supprimer la colonne ' + column.label" (click)="removeColumn(column.id)">
+                            <mat-icon>close</mat-icon>
+                          </button>
+                        }
+                      </div>
+                    </th>
+                  }
+                  <th class="row-action-heading"><span class="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of rows(); track $index; let rowIndex = $index) {
+                  <tr>
+                    @for (column of columns(); track column.id) {
+                      <td>
+                        @if (column.type === 'checkbox') {
+                          <input type="checkbox" [checked]="cellValue(row, column) === true" [attr.aria-label]="column.label" (change)="updateCell(rowIndex, column, $event)" />
+                        } @else {
+                          <input
+                            [type]="column.type === 'number' || column.type === 'amount' ? 'number' : column.type === 'date' ? 'date' : 'text'"
+                            [step]="column.type === 'number' || column.type === 'amount' ? 'any' : null"
+                            [min]="column.type === 'amount' ? 0 : null"
+                            [value]="cellValue(row, column)"
+                            [placeholder]="column.type === 'amount' ? '0' : 'Saisir…'"
+                            [attr.aria-label]="column.label"
+                            (input)="updateCell(rowIndex, column, $event)" />
+                        }
+                      </td>
+                    }
+                    <td class="row-actions">
+                      <button type="button" class="icon-action danger-action mini-btn" aria-label="Supprimer la ligne" (click)="removeRow(rowIndex)">
+                        <mat-icon>delete_outline</mat-icon>
+                      </button>
+                    </td>
+                  </tr>
+                } @empty {
+                  <tr><td [attr.colspan]="columns().length + 1" class="empty-row">Aucune prestation chiffrée. Cliquez sur « Ajouter une prestation » ci-dessus.</td></tr>
+                }
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th [attr.colspan]="columns().length || 1">TOTAL GÉNÉRAL CALCULÉ :</th>
+                  <td class="amount-cell">{{ formatAmount(draftTotal(), currency()) }}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <!-- Modèle partagé & Date de validité -->
+          <div class="odoo-section-grid mt-3">
+            <div class="odoo-field">
+              <label for="field-validity">Date de validité de l'offre / Valid Until :</label>
+              <input
+                id="field-validity"
+                type="date"
+                [value]="validUntil()"
+                (input)="validUntil.set($any($event.target).value)" />
+            </div>
+
+            @if (canSaveTemplate() && !editingId()) {
+              <div class="odoo-field">
+                <label class="checkbox-label-odoo">
+                  <input type="checkbox" [checked]="saveTemplate()" (change)="saveTemplate.set($any($event.target).checked)" />
+                  <span>Enregistrer la structure comme modèle partagé Transimex</span>
+                </label>
+                @if (saveTemplate()) {
+                  <input
+                    type="text"
+                    [value]="templateName()"
+                    (input)="templateName.set($any($event.target).value)"
+                    placeholder="Nom du modèle (Ex. Fret FCL Export Asie)"
+                    class="mt-1" />
+                }
+              </div>
+            }
+          </div>
+        </section>
+
+        <!-- PIED DE FICHE OFFICIEL TRANSIMEX -->
+        <footer class="transimex-official-footer-note">
+          <p><strong>Merci de retourner cette fiche complétée à :</strong></p>
+          <p>Email : <a href="mailto:info@transimex-cm.com">info@transimex-cm.com</a> | Téléphone : <strong>+237 620 363 043</strong></p>
+          <p>Site web : <a href="http://www.transimex-cm.com" target="_blank" rel="noopener noreferrer">http://www.transimex-cm.com</a></p>
+        </footer>
+      </div>
+
+      <!-- FOOTER D'ACTIONS FLOTTANT / MODAL ODOO -->
+      <footer class="editor-footer odoo-footer-actions">
+        <div class="footer-summary-badge">
+          <span>Montant total de la cotation :</span>
+          <strong class="total-display">{{ formatAmount(draftTotal(), currency()) }}</strong>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="secondary-action" [disabled]="isSaving()" (click)="closeEditor()">
+            Annuler
+          </button>
+          <button type="button" class="primary-action odoo-btn-save" [disabled]="isSaving() || isCreatingProspect()" (click)="saveQuote()">
+            <mat-icon>{{ isSaving() ? 'hourglass_top' : 'check_circle' }}</mat-icon>
+            <span>{{ isSaving() ? 'Enregistrement en cours…' : (editingId() ? 'Mettre à jour la cotation' : 'Valider & Enregistrer la cotation') }}</span>
+          </button>
+        </div>
+      </footer>
+    </section>
+  </div>
+}

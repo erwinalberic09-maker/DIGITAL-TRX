@@ -5,7 +5,7 @@
       <h1 id="access-control-title">Gestion des accès</h1>
       <p class="access-subtitle">Rôles, permissions et affectations utilisateurs</p>
     </div>
-    <button type="button" class="icon-button refresh-button" (click)="loadInitialData()" title="Actualiser" aria-label="Actualiser les données">
+    <button type="button" class="icon-button refresh-button" (click)="loadInitialData(true)" title="Actualiser" aria-label="Actualiser les données">
       <mat-icon>refresh</mat-icon>
     </button>
   </header>
@@ -16,20 +16,29 @@
   @if (accessControl.error()) {
     <p class="feedback error" role="alert">{{ accessControl.error() }}</p>
   }
+  @if (initialLoadError()) {
+    <p class="feedback error" role="alert">{{ initialLoadError() }}</p>
+  }
 
   <nav class="access-tabs" aria-label="Sections de gestion des accès" role="tablist">
-    <button type="button" role="tab" [attr.aria-selected]="activeView() === 'roles'" [class.active]="activeView() === 'roles'" (click)="activeView.set('roles')">
-      <mat-icon>admin_panel_settings</mat-icon><span>Rôles et permissions</span>
-    </button>
-    <button type="button" role="tab" [attr.aria-selected]="activeView() === 'users'" [class.active]="activeView() === 'users'" (click)="activeView.set('users')">
-      <mat-icon>group</mat-icon><span>Utilisateurs</span>
-    </button>
-    <button type="button" role="tab" [attr.aria-selected]="activeView() === 'audit'" [class.active]="activeView() === 'audit'" (click)="activeView.set('audit'); refreshAudit()">
-      <mat-icon>history</mat-icon><span>Historique</span>
-    </button>
+    @if (can('access.roles.read')) {
+      <button type="button" role="tab" [attr.aria-selected]="activeView() === 'roles'" [class.active]="activeView() === 'roles'" (click)="activeView.set('roles')">
+        <mat-icon>admin_panel_settings</mat-icon><span>Rôles et permissions</span>
+      </button>
+    }
+    @if (can('access.users.read')) {
+      <button type="button" role="tab" [attr.aria-selected]="activeView() === 'users'" [class.active]="activeView() === 'users'" (click)="openUsersView()">
+        <mat-icon>group</mat-icon><span>Utilisateurs</span>
+      </button>
+    }
+    @if (can('access.audit.read')) {
+      <button type="button" role="tab" [attr.aria-selected]="activeView() === 'audit'" [class.active]="activeView() === 'audit'" (click)="openAuditView()">
+        <mat-icon>history</mat-icon><span>Historique</span>
+      </button>
+    }
   </nav>
 
-  @if (activeView() === 'roles') {
+  @if (activeView() === 'roles' && can('access.roles.read')) {
     <section class="roles-workspace" aria-label="Gestion des rôles">
       <aside class="role-rail" aria-label="Liste des rôles">
         <div class="rail-heading">
@@ -95,34 +104,58 @@
 
           @if (scopeError()) { <p class="feedback error" role="alert">{{ scopeError() }}</p> }
 
-          <div class="permission-table-wrap">
-            <table class="permission-table">
-              <thead><tr><th>Permission</th><th>Clé</th><th>Périmètre JSON</th></tr></thead>
-              <tbody>
-                @for (group of permissionGroups(); track group.resourceKey) {
-                  <tr class="resource-row"><th colspan="3">{{ group.resourceKey }}</th></tr>
-                  @for (permission of group.permissions; track permission.permissionKey) {
-                    <tr>
-                      <td>
-                        <label class="permission-check">
-                          <input type="checkbox" [checked]="isPermissionGranted(permission.permissionKey)" [disabled]="!can('access.permissions.assign')" (change)="togglePermission(permission, $event)" />
-                          <span>{{ permission.label }}</span>
-                          @if (permission.isSensitive) { <mat-icon class="sensitive-icon" title="Permission sensible">lock</mat-icon> }
-                        </label>
-                        <small>{{ permission.description }}</small>
-                      </td>
-                      <td><code>{{ permission.permissionKey }}</code></td>
-                      <td>
-                        <input class="scope-input" type="text" spellcheck="false" [attr.aria-label]="'Périmètre pour ' + permission.permissionKey" [value]="scopeDraft(permission.permissionKey)" [disabled]="!isPermissionGranted(permission.permissionKey) || !can('access.permissions.assign')" (input)="onScopeDraftInput(permission.permissionKey, $event)" />
-                      </td>
-                    </tr>
-                  }
-                } @empty {
-                  <tr><td colspan="3" class="empty-state">Le catalogue de permissions est vide.</td></tr>
-                }
-              </tbody>
-            </table>
-          </div>
+          @if (can('access.permissions.read')) {
+            <div class="module-accordions" aria-label="Catalogue des permissions par module">
+              @for (moduleGroup of modulePermissionGroups(); track moduleGroup.moduleId) {
+                <details class="module-accordion" [attr.open]="moduleGroup.moduleId === 'dashboard' ? true : null">
+                  <summary class="module-accordion-header">
+                    <div class="module-header-info">
+                      @if (moduleGroup.moduleIcon.endsWith('.svg')) {
+                        <img class="module-icon-img" [src]="moduleGroup.moduleIcon" alt="" aria-hidden="true" />
+                      } @else {
+                        <mat-icon class="module-icon">{{ moduleGroup.moduleIcon }}</mat-icon>
+                      }
+                      <div class="module-title-wrap">
+                        <span class="module-name">{{ moduleGroup.moduleLabel }}</span>
+                        <span class="module-desc">{{ moduleGroup.moduleDescription }}</span>
+                      </div>
+                    </div>
+                    <div class="module-header-meta">
+                      <span class="module-badge">{{ moduleGroup.permissions.length }} permission{{ moduleGroup.permissions.length > 1 ? 's' : '' }}</span>
+                      <mat-icon class="module-chevron">expand_more</mat-icon>
+                    </div>
+                  </summary>
+
+                  <div class="module-accordion-content">
+                    <table class="permission-table">
+                      <thead><tr><th>Permission</th><th>Clé</th><th>Périmètre JSON</th></tr></thead>
+                      <tbody>
+                        @for (permission of moduleGroup.permissions; track permission.permissionKey) {
+                          <tr>
+                            <td>
+                              <label class="permission-check">
+                                <input type="checkbox" [checked]="isPermissionGranted(permission.permissionKey)" [disabled]="!can('access.permissions.assign')" (change)="togglePermission(permission, $event)" />
+                                <span>{{ permission.label }}</span>
+                              </label>
+                              <small>{{ permission.description }}</small>
+                            </td>
+                            <td><code>{{ permission.permissionKey }}</code></td>
+                            <td>
+                              <input class="scope-input" type="text" spellcheck="false" [attr.aria-label]="'Périmètre pour ' + permission.permissionKey" [value]="scopeDraft(permission.permissionKey)" [disabled]="!isPermissionGranted(permission.permissionKey) || !can('access.permissions.assign')" (input)="onScopeDraftInput(permission.permissionKey, $event)" />
+                            </td>
+                          </tr>
+                        }
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              } @empty {
+                <p class="empty-state">Le catalogue de permissions est vide.</p>
+              }
+            </div>
+          } @else {
+            <p class="feedback error" role="status">Le catalogue des permissions n’est pas accessible avec tes droits actuels.</p>
+          }
         } @else {
           <div class="empty-detail"><mat-icon>admin_panel_settings</mat-icon><p>Sélectionne un rôle pour consulter ses permissions.</p></div>
         }
@@ -130,7 +163,7 @@
     </section>
   }
 
-  @if (activeView() === 'users') {
+  @if (activeView() === 'users' && can('access.users.read')) {
     <section class="users-workspace" aria-label="Affectations utilisateurs">
       <aside class="user-rail" aria-label="Liste des utilisateurs">
         <label class="search-field">
@@ -143,10 +176,10 @@
               <button type="button" class="user-item" [class.selected]="selectedUserId() === user.id" (click)="selectUser(user)">
                 <span class="user-item-name">{{ user.firstName }} {{ user.lastName }}</span>
                 <span class="user-item-email">{{ user.email }}</span>
-                <span class="user-item-roles" aria-label="Rôles affectés">
-                  @for (assignment of user.roles; track assignment.role.id) {
-                    <span class="role-chip">{{ assignment.role.label }}</span>
-                  } @empty {
+                <span class="user-item-roles" aria-label="Rôle affecté">
+                  @if (user.roles.length > 0) {
+                    <span class="role-chip">{{ user.roles[0].role.label }}</span>
+                  } @else {
                     <span class="role-chip role-chip-empty">Aucun rôle affecté</span>
                   }
                 </span>
@@ -170,34 +203,51 @@
           </div>
 
           <section class="access-section">
-            <div class="section-heading"><h3>Rôles affectés</h3></div>
-            @if (can('access.users.assign_roles')) {
+            <div class="section-heading"><h3>Rôle unique attribué</h3></div>
+            @if (userAssignmentError()) {
+              <p class="feedback error" role="alert">{{ userAssignmentError() }}</p>
+            }
+
+            <div class="current-role-block">
+              @if (currentUserRole(); as currentRole) {
+                <div class="assignment-item">
+                  <div class="assignment-info">
+                    <span class="role-name">{{ currentRole.role?.label || currentRole.roleKey }}</span>
+                    <small>{{ currentRole.expiresAt ? ('Expire le ' + (currentRole.expiresAt | date:'short')) : 'Rôle permanent (sans expiration)' }}</small>
+                  </div>
+                  @if (can('access.users.assign_roles')) {
+                    <button type="button" class="icon-button danger-icon" title="Retirer le rôle" [attr.aria-label]="'Retirer le rôle ' + (currentRole.role?.label || currentRole.roleKey)" (click)="revokeRole(currentRole)">
+                      <mat-icon>remove_circle_outline</mat-icon>
+                    </button>
+                  }
+                </div>
+              } @else {
+                <p class="empty-state">Aucun rôle attribué à cet employé.</p>
+              }
+            </div>
+
+            @if (can('access.users.assign_roles') && can('access.roles.read')) {
               <div class="inline-assignment">
-                <select aria-label="Rôle à attribuer" [value]="userRoleDraft()" (change)="userRoleDraft.set($any($event.target).value)">
-                  <option value="">Choisir un rôle</option>
+                <select aria-label="Choisir un rôle" [value]="userRoleDraft()" (change)="userRoleDraft.set($any($event.target).value)">
+                  <option value="">{{ currentUserRole() ? 'Remplacer par un autre rôle...' : 'Attribuer un rôle...' }}</option>
                   @for (role of accessControl.roles(); track role.id) {
-                    @if (role.isActive && isAssignableRole(role)) { <option [value]="role.id">{{ role.label }}</option> }
+                    @if (role.isActive && role.id !== currentUserRole()?.roleId) {
+                      <option [value]="role.id">{{ role.label }}</option>
+                    }
                   }
                 </select>
-                <button type="button" class="primary-button" [disabled]="!userRoleDraft()" (click)="assignSelectedRole()">Attribuer</button>
+                <button type="button" class="primary-button" [disabled]="!userRoleDraft() || accessControl.isLoading()" (click)="assignSelectedRole()">
+                  {{ currentUserRole() ? 'Remplacer le rôle' : 'Attribuer le rôle' }}
+                </button>
               </div>
+            } @else if (can('access.users.assign_roles')) {
+              <p class="feedback error" role="status">La consultation des rôles est nécessaire pour attribuer un rôle.</p>
             }
-            <ul class="assignment-list">
-              @for (assignment of access.roleAssignments; track assignment.roleId) {
-                <li>
-                  <span>{{ assignment.role?.label || assignment.roleKey }}</span>
-                  <small>{{ assignment.expiresAt ? ('Expire le ' + assignment.expiresAt) : 'Sans expiration' }}</small>
-                  @if (can('access.users.assign_roles')) {
-                    <button type="button" class="icon-button danger-icon" title="Retirer le rôle" [attr.aria-label]="'Retirer le rôle ' + (assignment.role?.label || assignment.roleKey)" (click)="revokeRole(assignment)"><mat-icon>remove_circle_outline</mat-icon></button>
-                  }
-                </li>
-              } @empty { <li class="empty-state">Aucun rôle attribué.</li> }
-            </ul>
           </section>
 
           <section class="access-section">
             <div class="section-heading"><h3>Exceptions individuelles</h3></div>
-            @if (can('access.users.override')) {
+            @if (can('access.users.override') && can('access.permissions.read')) {
               <div class="override-form">
                 <select aria-label="Permission" [value]="overridePermissionDraft()" (change)="overridePermissionDraft.set($any($event.target).value)">
                   <option value="">Choisir une permission</option>
@@ -213,6 +263,8 @@
                 <input type="datetime-local" aria-label="Expiration facultative" [value]="overrideExpirationDraft()" (input)="overrideExpirationDraft.set($any($event.target).value)" />
                 <button type="button" class="secondary-button" [disabled]="!overridePermissionDraft() || !overrideReasonDraft().trim()" (click)="saveOverride()">Enregistrer l’exception</button>
               </div>
+            } @else if (can('access.users.override')) {
+              <p class="feedback error" role="status">La consultation du catalogue des permissions est nécessaire pour créer une exception.</p>
             }
             @if (scopeError()) { <p class="feedback error" role="alert">{{ scopeError() }}</p> }
             <ul class="override-list">
@@ -235,7 +287,7 @@
     </section>
   }
 
-  @if (activeView() === 'audit') {
+  @if (activeView() === 'audit' && can('access.audit.read')) {
     <section class="audit-workspace" aria-label="Historique des changements d’accès">
       <div class="section-heading"><div><p class="section-kicker">Traçabilité</p><h2>Historique des accès</h2></div><button type="button" class="secondary-button" (click)="refreshAudit()"><mat-icon>refresh</mat-icon>Actualiser</button></div>
       <div class="table-wrap">
@@ -256,5 +308,9 @@
         </table>
       </div>
     </section>
+  }
+
+  @if (!can('access.roles.read') && !can('access.users.read') && !can('access.audit.read')) {
+    <p class="feedback error" role="status">Aucune section de gestion des accès ne t’est accordée.</p>
   }
 </main>

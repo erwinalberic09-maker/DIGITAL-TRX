@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { NotificationService } from './notification.service';
-import { vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 describe('NotificationService', () => {
   let service: NotificationService;
@@ -49,7 +49,7 @@ describe('NotificationService', () => {
     const notifs = service.getNotifications();
     expect(notifs.length).toBe(1);
     expect(notifs[0].type).toBe('error');
-    expect(notifs[0].sticky).toBe(true);
+    expect(notifs[0].sticky).toBe(false);
   });
 
   it('devrait supprimer une notification par dismiss()', () => {
@@ -78,6 +78,19 @@ describe('NotificationService', () => {
     expect(service.getNotifications().length).toBe(1);
 
     vi.advanceTimersByTime(1600);
+    expect(service.getNotifications().length).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it('devrait auto-dismiss une notification sans durée spécifiée après 10000 ms par défaut', () => {
+    vi.useFakeTimers();
+    service.success('Succès standard');
+    expect(service.getNotifications().length).toBe(1);
+
+    vi.advanceTimersByTime(9000);
+    expect(service.getNotifications().length).toBe(1);
+
+    vi.advanceTimersByTime(1100);
     expect(service.getNotifications().length).toBe(0);
     vi.useRealTimers();
   });
