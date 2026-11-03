@@ -69,6 +69,18 @@
                       Dupliquer
                     </button>
                   }
+                  @if (canPostCashierOperations()) {
+                    <button
+                      type="button"
+                      (click)="onPostSelectedAction()"
+                      [disabled]="isPosting()"
+                      class="flex w-full items-center gap-3 px-3.5 py-2 text-left font-medium text-emerald-600 transition-colors hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                      role="menuitem"
+                      id="cashier-action-post">
+                      <mat-icon class="!h-4.5 !w-4.5 !text-[17px] text-emerald-500">check_circle</mat-icon>
+                      Comptabiliser
+                    </button>
+                  }
                   @if (canCancelCashierOperations()) {
                     <button type="button" (click)="onCancelSelectedAction()" [disabled]="isCancelling()" class="flex w-full items-center gap-3 px-3.5 py-2 text-left font-medium text-rose-600 transition-colors hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-rose-400 dark:hover:bg-rose-950/30" role="menuitem">
                       <mat-icon class="!h-4.5 !w-4.5 !text-[17px] text-rose-500">cancel</mat-icon>
@@ -95,7 +107,8 @@
               placeholder="Rechercher…"
               aria-label="Rechercher dans les opérations de caisse"
               class="min-w-[60px] flex-grow bg-transparent text-xs text-slate-900 outline-none placeholder:text-slate-400 dark:text-white"
-              id="cashier-control-search" />
+              id="cashier-control-search"
+              name="search" />
           </div>
         }
       </div>
@@ -153,6 +166,7 @@
                 <input
                   type="checkbox"
                   id="select-all-checkbox"
+                  name="select-all-checkbox"
                   [checked]="isAllSelected()"
                   (change)="onToggleSelectAll()"
                   aria-label="Sélectionner toutes les lignes"
@@ -228,7 +242,13 @@
             <tr class="odoo-row-editing" id="inline-add-row" [formGroup]="transactionForm" (keydown)="onAddKeydown($event)">
               <!-- Checkbox -->
               <td class="py-2 px-3 text-center align-middle">
-                <input type="checkbox" disabled class="odoo-checkbox opacity-40" />
+                <input
+                  type="checkbox"
+                  id="inline-add-row-checkbox"
+                  name="inline-add-row-checkbox"
+                  disabled
+                  aria-label="Ligne d'ajout rapide"
+                  class="odoo-checkbox opacity-40" />
               </td>
 
               <!-- Date (Soulignée avec popover calendrier Odoo) -->
@@ -410,7 +430,13 @@
                 >
                   <!-- Checkbox -->
                   <td class="py-2 px-3 text-center align-middle">
-                    <input type="checkbox" disabled class="odoo-checkbox opacity-40" />
+                    <input
+                      type="checkbox"
+                      [id]="'inline-edit-checkbox-' + tx.id"
+                      [name]="'inline-edit-checkbox-' + tx.id"
+                      disabled
+                      aria-label="Ligne en cours d'édition"
+                      class="odoo-checkbox opacity-40" />
                   </td>
 
                   <!-- Date (Soulignée avec popover calendrier Odoo) -->
@@ -578,9 +604,11 @@
                     @if (canSelect()) {
                       <input
                         type="checkbox"
+                        [id]="'cashier-tx-select-' + tx.id"
+                        [name]="'cashier-tx-select-' + tx.id"
                         [checked]="tx.selected"
                         (change)="onToggleSelect(tx)"
-                        aria-label="Sélectionner la ligne"
+                        [attr.aria-label]="'Sélectionner la transaction ' + (tx.libelle || tx.id)"
                         class="odoo-checkbox"
                       />
                     } @else {
