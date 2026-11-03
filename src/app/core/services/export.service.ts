@@ -125,6 +125,14 @@ export class ExportService {
     return this.exportQuotesPdf([quote], options);
   }
 
+  protected createPdfDocument(): jsPDF {
+    return new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+    });
+  }
+
   /**
    * Génère et télécharge le dossier PDF pour une ou plusieurs cotations sélectionnées
    * - Mise en page professionnelle A4 Transimex Transit & Maritime
@@ -159,17 +167,6 @@ export class ExportService {
 
     doc.save(filename);
     return true;
-  }
-
-  /**
-   * Crée l'instance jsPDF pour l'export (méthode protégée pour l'extensibilité et les tests)
-   */
-  public createPdfDocument(): jsPDF {
-    return new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4',
-    });
   }
 
   /**

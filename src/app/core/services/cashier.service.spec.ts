@@ -693,9 +693,7 @@ describe('CashierService - Architecture Hybride & Signals', () => {
       const success = await service.postSelected();
 
       expect(success).toBe(true);
-      expect((capturedBody as { status: string; ids: string[] }).status).toBe('posted');
-      expect((capturedBody as { status: string; ids: string[] }).ids).toEqual(expect.arrayContaining(['draft-1', 'draft-2']));
-      expect((capturedBody as { status: string; ids: string[] }).ids.length).toBe(2);
+      expect(capturedBody).toEqual({ ids: ['draft-2', 'draft-1'], status: 'posted' });
       const txs = service.allTransactions();
       expect(txs.every((t) => t.status === 'posted')).toBe(true);
       expect(txs.every((t) => !t.selected)).toBe(true);
