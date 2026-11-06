@@ -73,7 +73,6 @@ describe('CashierService - Architecture Hybride & Signals', () => {
         },
       ],
     });
-
     service = TestBed.inject(CashierService);
   });
 
